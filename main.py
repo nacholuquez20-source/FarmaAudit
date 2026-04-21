@@ -91,55 +91,106 @@ async def health_check():
 
 @app.get("/qr")
 async def get_qr():
-    """Get WhatsApp QR code - generates image from WAHA session."""
+    """Get WhatsApp QR code from WAHA dashboard."""
     try:
-        session_name = settings.waha_session
         waha_url = settings.waha_url.rstrip('/')
-        headers = {"X-API-KEY": settings.waha_api_key}
 
+        # Try to capture QR from WAHA dashboard using Playwright
+        try:
+            from playwright.async_api import async_playwright
+
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page()
+
+                # Navigate to WAHA and wait for QR
+                await page.goto(f"{waha_url}/", timeout=10000, wait_until="networkidle")
+                await page.wait_for_timeout(2000)
+
+                # Take screenshot
+                screenshot = await page.screenshot(full_page=True)
+                await browser.close()
+
+                return StreamingResponse(
+                    iter([screenshot]),
+                    media_type="image/png",
+                    headers={"Content-Disposition": "inline; filename=qr.png"}
+                )
+        except ImportError:
+            logger.warning("Playwright not available, trying alternative method")
+        except Exception as e:
+            logger.warning(f"Playwright failed: {e}")
+
+        # Fallback: Try to get QR from API
         async with httpx.AsyncClient() as client:
-            # Try multiple endpoints to get the QR data
-            endpoints = [
-                f"{waha_url}/api/sessions/{session_name}/qr.png",
-                f"{waha_url}/api/sessions/{session_name}/qr",
-                f"{waha_url}/api/auth/qr.png",
-            ]
+            try:
+                response = await client.get(
+                    f"{waha_url}/api/sessions",
+                    timeout=5
+                )
+                if response.status_code == 200:
+                    sessions = response.json()
+                    return {
+                        "status": "pending",
+                        "message": "QR generado por WAHA. Abre el dashboard:",
+                        "dashboard_url": f"{waha_url}/",
+                        "sessions": sessions
+                    }
+            except Exception as e:
+                logger.debug(f"API fallback failed: {e}")
 
-            for endpoint in endpoints:
-                try:
-                    response = await client.get(endpoint, headers=headers, timeout=10)
-                    if response.status_code == 200 and response.content:
-                        return StreamingResponse(
-                            iter([response.content]),
-                            media_type="image/png"
-                        )
-                except Exception as e:
-                    logger.debug(f"Endpoint {endpoint} failed: {e}")
-                    continue
+        # Last resort: HTML page directing to WAHA
+        html = f"""
+        <html>
+        <head>
+            <title>WhatsApp QR - AuditBot</title>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body {{ font-family: Arial, sans-serif; text-align: center; padding: 40px; background: #f5f5f5; }}
+                .container {{ max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+                h1 {{ color: #25D366; margin-top: 0; }}
+                p {{ color: #666; line-height: 1.6; }}
+                .steps {{ text-align: left; background: #f9f9f9; padding: 20px; border-radius: 5px; margin: 20px 0; }}
+                .steps ol {{ margin: 10px 0; padding-left: 20px; }}
+                .steps li {{ margin: 10px 0; }}
+                a {{ display: inline-block; margin-top: 20px; padding: 12px 30px; background: #25D366; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; }}
+                a:hover {{ background: #20ba5a; }}
+                .warning {{ background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; text-align: left; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>📱 Conecta WhatsApp</h1>
+                <p>Tu sesión WhatsApp está lista para conectar.</p>
 
-            # Fallback: Generate a QR pointing to WAHA session
-            qr_data = f"{waha_url}/api/sessions/{session_name}"
-            qr = qrcode.QRCode(version=1, box_size=10, border=5)
-            qr.add_data(qr_data)
-            qr.make(fit=True)
+                <a href="{waha_url}/" target="_blank">📲 Abrir Dashboard WAHA</a>
 
-            img = qr.make_image(fill_color="black", back_color="white")
-            img_bytes = BytesIO()
-            img.save(img_bytes, format="PNG")
-            img_bytes.seek(0)
+                <div class="steps">
+                    <strong>Pasos para conectar:</strong>
+                    <ol>
+                        <li>Haz clic en "Abrir Dashboard WAHA"</li>
+                        <li>Busca el código QR en la pantalla</li>
+                        <li>Abre WhatsApp en tu teléfono</li>
+                        <li>Ve a Menú → Dispositivos vinculados</li>
+                        <li>Toca "Vincular un dispositivo"</li>
+                        <li>Escanea el código QR</li>
+                        <li>¡Listo! Tu sesión estará conectada</li>
+                    </ol>
+                </div>
 
-            return StreamingResponse(iter([img_bytes.getvalue()]), media_type="image/png")
+                <div class="warning">
+                    <strong>⚠️ Importante:</strong> Si el QR no aparece en el dashboard después de 30 segundos, recarga la página.
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html)
 
     except Exception as e:
-        logger.error(f"Error getting QR: {e}")
-        qr = qrcode.QRCode(version=1, box_size=10, border=5)
-        qr.add_data("AuditBot QR Error")
-        qr.make(fit=True)
-        img = qr.make_image(fill_color="black", back_color="white")
-        img_bytes = BytesIO()
-        img.save(img_bytes, format="PNG")
-        img_bytes.seek(0)
-        return StreamingResponse(iter([img_bytes.getvalue()]), media_type="image/png")
+        logger.error(f"Error in /qr endpoint: {e}")
+        return HTMLResponse(content=f"<h1>Error</h1><p>{str(e)}</p>")
 
 
 @app.post("/webhook")
