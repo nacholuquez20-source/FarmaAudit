@@ -93,9 +93,36 @@ async def health_check():
 
 @app.get("/qr")
 async def get_qr():
-    """Get WhatsApp QR code from WAHA logs."""
-    waha_url = settings.waha_url.rstrip('/')
+    """Get WhatsApp QR code from Evolution API."""
+    evo_url = settings.waha_url.rstrip("/")
+    instance = settings.waha_session
+    headers = {"apikey": settings.waha_api_key}
 
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{evo_url}/instance/fetchInstances",
+                headers=headers,
+                timeout=10,
+            )
+            instances = response.json() if response.status_code == 200 else []
+
+            qr_response = await client.get(
+                f"{evo_url}/instance/qrcode/{instance}?image=true",
+                headers=headers,
+                timeout=15,
+            )
+
+            if qr_response.status_code == 200:
+                qr_data = qr_response.json()
+                base64_img = qr_data.get("base64", "")
+                if base64_img and "base64," in base64_img:
+                    img_bytes = base64.b64decode(base64_img.split("base64,")[1])
+                    return StreamingResponse(iter([img_bytes]), media_type="image/png")
+    except Exception as e:
+        logger.error(f"Error getting QR from Evolution API: {e}")
+
+    # Fallback HTML
     html = f"""
     <!DOCTYPE html>
     <html lang="es">
@@ -188,16 +215,50 @@ async def get_qr():
 
 @app.post("/webhook")
 async def webhook(request: Request):
-    """WAHA webhook entry point."""
+    """Evolution API webhook entry point."""
     try:
         payload_data = await request.json()
 
-        # Sanitize payload
+        # Evolution API webhook format
+        event = payload_data.get("event", "")
+        if event != "messages.upsert":
+            return {"status": "ignored", "event": event}
+
+        data = payload_data.get("data", {})
+        key = data.get("key", {})
+
+        # Skip outgoing messages
+        if key.get("fromMe"):
+            return {"status": "ignored", "from_me": True}
+
+        remote_jid = key.get("remoteJid", "")
+        phone = remote_jid.replace("@s.whatsapp.net", "").replace("@c.us", "").replace("+", "")
+
+        message = data.get("message", {})
+        message_type = data.get("messageType", "conversation")
+
+        # Extract content based on type
+        contenido = None
+        tipo = "text"
+        media_url = None
+
+        if message_type == "conversation":
+            contenido = message.get("conversation")
+        elif message_type == "extendedTextMessage":
+            contenido = message.get("extendedTextMessage", {}).get("text")
+        elif message_type == "audioMessage":
+            tipo = "audio"
+            media_url = message.get("audioMessage", {}).get("url")
+        elif message_type in ("imageMessage", "documentMessage"):
+            tipo = "image"
+            contenido = message.get(message_type, {}).get("caption")
+            media_url = message.get(message_type, {}).get("url")
+
         payload = WAHAPayload(
-            telefono=payload_data.get("phone", "").replace("+", "").replace("@c.us", ""),
-            tipo=payload_data.get("type", "text"),  # text, audio, image
-            contenido=payload_data.get("text") or payload_data.get("caption"),
-            media_url=(payload_data.get("media") or {}).get("url"),
+            telefono=phone,
+            tipo=tipo,
+            contenido=contenido,
+            media_url=media_url,
         )
 
         if not payload.telefono:
@@ -206,10 +267,7 @@ async def webhook(request: Request):
 
         logger.info(f"Received message from {payload.telefono} (type: {payload.tipo})")
 
-        # Get WAHA client
         waha_client = WAHAClient()
-
-        # Route message
         route = get_router()
         result = await route.handle_message(payload, waha_client)
 
