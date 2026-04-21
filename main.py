@@ -5,8 +5,10 @@ from datetime import datetime
 import json
 
 from fastapi import FastAPI, Request, Depends
+from fastapi.responses import FileResponse, HTMLResponse
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import pytz
+import httpx
 
 from config import get_settings
 from models import WAHAPayload, ConversationState
@@ -83,6 +85,66 @@ async def health_check():
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
     }
+
+
+@app.get("/qr")
+async def get_qr():
+    """Get WhatsApp QR code from WAHA."""
+    try:
+        session_name = settings.waha_session
+        waha_url = settings.waha_url.rstrip('/')
+        headers = {"X-API-KEY": settings.waha_api_key}
+
+        async with httpx.AsyncClient() as client:
+            # Intentar obtener el QR como PNG
+            try:
+                response = await client.get(
+                    f"{waha_url}/api/sessions/{session_name}/qr.png",
+                    headers=headers,
+                    timeout=10
+                )
+                if response.status_code == 200:
+                    return FileResponse(
+                        content=response.content,
+                        media_type="image/png",
+                        filename="qr.png"
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to get QR as PNG: {e}")
+
+            # Fallback: proporcionar HTML con enlace directo a WAHA
+            html = f"""
+            <html>
+            <head>
+                <title>WhatsApp QR Code</title>
+                <style>
+                    body {{ font-family: Arial; text-align: center; padding: 40px; }}
+                    .container {{ max-width: 600px; margin: 0 auto; }}
+                    h1 {{ color: #25D366; }}
+                    a {{ display: inline-block; margin-top: 20px; padding: 10px 20px;
+                       background: #25D366; color: white; text-decoration: none; border-radius: 5px; }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>📱 WhatsApp QR Code</h1>
+                    <p>Abre WAHA para ver el código QR:</p>
+                    <a href="{waha_url}/" target="_blank">Abrir WAHA Dashboard</a>
+                    <p style="margin-top: 30px; color: #666;">
+                        <strong>Pasos:</strong><br>
+                        1. Abre WAHA Dashboard<br>
+                        2. Navega a Sessions<br>
+                        3. Escanea el código QR con WhatsApp<br>
+                        4. Listo! 🎉
+                    </p>
+                </div>
+            </body>
+            </html>
+            """
+            return HTMLResponse(content=html)
+    except Exception as e:
+        logger.error(f"Error getting QR: {e}")
+        return {"error": str(e)}
 
 
 @app.post("/webhook")
