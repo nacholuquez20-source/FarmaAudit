@@ -11,6 +11,8 @@ import pytz
 import httpx
 import qrcode
 from io import BytesIO
+import base64
+import re
 
 from config import get_settings
 from models import WAHAPayload, ConversationState
@@ -91,106 +93,97 @@ async def health_check():
 
 @app.get("/qr")
 async def get_qr():
-    """Get WhatsApp QR code from WAHA dashboard."""
-    try:
-        waha_url = settings.waha_url.rstrip('/')
+    """Get WhatsApp QR code from WAHA logs."""
+    waha_url = settings.waha_url.rstrip('/')
 
-        # Try to capture QR from WAHA dashboard using Playwright
-        try:
-            from playwright.async_api import async_playwright
+    html = f"""
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>WhatsApp QR - AuditBot</title>
+        <style>
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+            body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }}
+            .container {{ background: white; border-radius: 15px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); max-width: 600px; width: 100%; padding: 40px; }}
+            h1 {{ color: #25D366; margin-bottom: 10px; text-align: center; font-size: 28px; }}
+            .subtitle {{ text-align: center; color: #666; margin-bottom: 30px; font-size: 14px; }}
+            .status-box {{ background: #e8f5e9; border-left: 4px solid #25D366; padding: 15px; margin: 20px 0; border-radius: 5px; }}
+            .status-box p {{ color: #2e7d32; margin: 5px 0; }}
+            .methods {{ display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin: 30px 0; }}
+            .method {{ border: 2px solid #ddd; padding: 20px; border-radius: 10px; text-align: center; cursor: pointer; transition: all 0.3s; }}
+            .method:hover {{ border-color: #25D366; background: #f0f8f5; }}
+            .method-icon {{ font-size: 32px; margin-bottom: 10px; }}
+            .method h3 {{ color: #333; margin-bottom: 10px; font-size: 16px; }}
+            .method p {{ color: #666; font-size: 13px; margin-bottom: 10px; }}
+            .method a {{ display: inline-block; padding: 8px 16px; background: #25D366; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; font-size: 13px; transition: background 0.3s; }}
+            .method a:hover {{ background: #20ba5a; }}
+            .divider {{ text-align: center; color: #999; margin: 30px 0; font-size: 14px; }}
+            .logs-info {{ background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0; }}
+            .logs-info p {{ color: #666; font-size: 13px; line-height: 1.6; margin: 10px 0; }}
+            .logs-info code {{ background: white; padding: 2px 6px; border-radius: 3px; font-family: monospace; }}
+            .steps {{ background: #f9f9f9; padding: 20px; border-radius: 10px; margin: 20px 0; }}
+            .steps h3 {{ color: #333; margin-bottom: 15px; }}
+            .steps ol {{ padding-left: 20px; }}
+            .steps li {{ margin: 10px 0; color: #666; line-height: 1.6; }}
+            @media (max-width: 600px) {{
+                .methods {{ grid-template-columns: 1fr; }}
+                .container {{ padding: 20px; }}
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>📱 Conecta WhatsApp</h1>
+            <p class="subtitle">Tu sesión está lista para autenticar</p>
 
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
-                page = await browser.new_page()
+            <div class="status-box">
+                <p>✅ <strong>Sesión activa:</strong> default</p>
+                <p>📍 <strong>Estado:</strong> Esperando código QR</p>
+            </div>
 
-                # Navigate to WAHA and wait for QR
-                await page.goto(f"{waha_url}/", timeout=10000, wait_until="networkidle")
-                await page.wait_for_timeout(2000)
-
-                # Take screenshot
-                screenshot = await page.screenshot(full_page=True)
-                await browser.close()
-
-                return StreamingResponse(
-                    iter([screenshot]),
-                    media_type="image/png",
-                    headers={"Content-Disposition": "inline; filename=qr.png"}
-                )
-        except ImportError:
-            logger.warning("Playwright not available, trying alternative method")
-        except Exception as e:
-            logger.warning(f"Playwright failed: {e}")
-
-        # Fallback: Try to get QR from API
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(
-                    f"{waha_url}/api/sessions",
-                    timeout=5
-                )
-                if response.status_code == 200:
-                    sessions = response.json()
-                    return {
-                        "status": "pending",
-                        "message": "QR generado por WAHA. Abre el dashboard:",
-                        "dashboard_url": f"{waha_url}/",
-                        "sessions": sessions
-                    }
-            except Exception as e:
-                logger.debug(f"API fallback failed: {e}")
-
-        # Last resort: HTML page directing to WAHA
-        html = f"""
-        <html>
-        <head>
-            <title>WhatsApp QR - AuditBot</title>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <style>
-                body {{ font-family: Arial, sans-serif; text-align: center; padding: 40px; background: #f5f5f5; }}
-                .container {{ max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
-                h1 {{ color: #25D366; margin-top: 0; }}
-                p {{ color: #666; line-height: 1.6; }}
-                .steps {{ text-align: left; background: #f9f9f9; padding: 20px; border-radius: 5px; margin: 20px 0; }}
-                .steps ol {{ margin: 10px 0; padding-left: 20px; }}
-                .steps li {{ margin: 10px 0; }}
-                a {{ display: inline-block; margin-top: 20px; padding: 12px 30px; background: #25D366; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; }}
-                a:hover {{ background: #20ba5a; }}
-                .warning {{ background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; text-align: left; }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>📱 Conecta WhatsApp</h1>
-                <p>Tu sesión WhatsApp está lista para conectar.</p>
-
-                <a href="{waha_url}/" target="_blank">📲 Abrir Dashboard WAHA</a>
-
-                <div class="steps">
-                    <strong>Pasos para conectar:</strong>
-                    <ol>
-                        <li>Haz clic en "Abrir Dashboard WAHA"</li>
-                        <li>Busca el código QR en la pantalla</li>
-                        <li>Abre WhatsApp en tu teléfono</li>
-                        <li>Ve a Menú → Dispositivos vinculados</li>
-                        <li>Toca "Vincular un dispositivo"</li>
-                        <li>Escanea el código QR</li>
-                        <li>¡Listo! Tu sesión estará conectada</li>
-                    </ol>
+            <div class="methods">
+                <div class="method">
+                    <div class="method-icon">🌐</div>
+                    <h3>Dashboard WAHA</h3>
+                    <p>Ver QR en la interfaz web</p>
+                    <a href="{waha_url}/" target="_blank">Abrir</a>
                 </div>
-
-                <div class="warning">
-                    <strong>⚠️ Importante:</strong> Si el QR no aparece en el dashboard después de 30 segundos, recarga la página.
+                <div class="method">
+                    <div class="method-icon">📋</div>
+                    <h3>Logs Railway</h3>
+                    <p>Copiar QR desde logs</p>
+                    <a href="https://railway.app" target="_blank">Ver Logs</a>
                 </div>
             </div>
-        </body>
-        </html>
-        """
-        return HTMLResponse(content=html)
 
-    except Exception as e:
-        logger.error(f"Error in /qr endpoint: {e}")
-        return HTMLResponse(content=f"<h1>Error</h1><p>{str(e)}</p>")
+            <div class="logs-info">
+                <strong>💡 El código QR está en los logs de WAHA</strong>
+                <p>Busca en los logs de Railway/WAHA mensajes que contengan caracteres especiales (bloques blancos/negros). Eso es el código QR en formato ASCII.</p>
+            </div>
+
+            <div class="steps">
+                <h3>Pasos para conectar:</h3>
+                <ol>
+                    <li><strong>Abre el Dashboard WAHA</strong> o consulta los logs de Railway</li>
+                    <li><strong>Localiza el código QR</strong> (bloques blancos y negros)</li>
+                    <li><strong>En tu teléfono:</strong> Abre WhatsApp</li>
+                    <li><strong>Ve a:</strong> Menú (⋮) → Dispositivos vinculados</li>
+                    <li><strong>Toca:</strong> "Vincular un dispositivo"</li>
+                    <li><strong>Escanea el código QR</strong> con tu cámara</li>
+                    <li><strong>¡Listo!</strong> Tu sesión se conectará automáticamente</li>
+                </ol>
+            </div>
+
+            <div class="divider">
+                ¿Problemas? Recarga esta página o intenta en 5 minutos
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
 
 
 @app.post("/webhook")
