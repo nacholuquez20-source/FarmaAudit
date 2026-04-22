@@ -74,13 +74,21 @@ class SheetsManager:
             return self._cache[sheet_name][0]
         return None
 
+    @staticmethod
+    def _normalize_phone(phone: str) -> str:
+        """Normalize phone numbers for matching across data sources."""
+        if not phone:
+            return ""
+        return "".join(ch for ch in str(phone) if ch.isdigit())
+
     # ========== Maestro_Auditores ==========
 
     def get_auditor(self, telefono: str) -> Optional[Auditor]:
         """Get auditor by phone number."""
+        telefono_norm = self._normalize_phone(telefono)
         auditores = self.get_all_auditores()
         for aud in auditores:
-            if str(aud.telefono) == telefono:
+            if self._normalize_phone(aud.telefono) == telefono_norm:
                 return aud
         return None
 
@@ -173,8 +181,9 @@ class SheetsManager:
         try:
             sheet = self._get_sheet("Conversaciones")
             rows = sheet.get_all_records()
+            telefono_norm = self._normalize_phone(telefono)
             for row in rows:
-                if row.get("Telefono") == telefono:
+                if self._normalize_phone(row.get("Telefono")) == telefono_norm:
                     return Conversacion(
                         telefono=row.get("Telefono", ""),
                         estado_actual=ConversationState(row.get("Estado_actual", "idle")),
@@ -199,16 +208,17 @@ class SheetsManager:
             sheet = self._get_sheet("Conversaciones")
             rows = sheet.get_all_records()
             row_idx = None
+            telefono_norm = self._normalize_phone(telefono)
 
             for idx, row in enumerate(rows):
-                if row.get("Telefono") == telefono:
+                if self._normalize_phone(row.get("Telefono")) == telefono_norm:
                     row_idx = idx + 2  # +1 for header, +1 for 1-based indexing
                     break
 
             if row_idx is None:
                 # Create new row
                 sheet.append_row([
-                    telefono,
+                    telefono_norm,
                     estado.value,
                     id_pendiente or "",
                     ultimo_mensaje,

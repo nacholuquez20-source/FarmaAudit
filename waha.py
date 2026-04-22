@@ -23,12 +23,21 @@ class TwilioClient:
         self.client = Client(self.account_sid, self.auth_token)
         logger.info(f"Twilio WhatsApp client initialized: {self.phone_number}")
 
+    @staticmethod
+    def _normalize_whatsapp_number(phone: str) -> str:
+        """Format a phone number for Twilio WhatsApp delivery."""
+        phone = (phone or "").strip()
+        if phone.startswith("whatsapp:"):
+            return phone
+        if phone.startswith("+"):
+            return f"whatsapp:{phone}"
+        return f"whatsapp:+{phone}"
+
     async def send_text(self, phone: str, text: str) -> bool:
         """Send text message via Twilio WhatsApp."""
         try:
-            # Format phone number: add whatsapp: prefix if not present
-            to_number = f"whatsapp:{phone}" if not phone.startswith("whatsapp:") else phone
-            from_number = f"whatsapp:{self.phone_number}"
+            to_number = self._normalize_whatsapp_number(phone)
+            from_number = self._normalize_whatsapp_number(self.phone_number)
 
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
@@ -50,8 +59,8 @@ class TwilioClient:
     ) -> bool:
         """Send file (photo/document) via Twilio WhatsApp."""
         try:
-            to_number = f"whatsapp:{phone}" if not phone.startswith("whatsapp:") else phone
-            from_number = f"whatsapp:{self.phone_number}"
+            to_number = self._normalize_whatsapp_number(phone)
+            from_number = self._normalize_whatsapp_number(self.phone_number)
 
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(

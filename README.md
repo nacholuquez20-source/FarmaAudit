@@ -4,7 +4,7 @@ Sistema de auditoría de calidad para 23 sucursales de farmacias vía WhatsApp. 
 
 ## Features
 
-✅ **WhatsApp Integration** — WAHA API para mensajería bidireccional
+✅ **WhatsApp Integration** — Twilio WhatsApp Business API
 ✅ **IA Parser** — Claude Sonnet para extracción de hallazgos
 ✅ **Audio Transcription** — OpenAI Whisper para mensajes de voz
 ✅ **Photo Storage** — Google Drive para fotos de auditoría
@@ -20,7 +20,7 @@ Sistema de auditoría de calidad para 23 sucursales de farmacias vía WhatsApp. 
 - **Audio**: OpenAI Whisper API
 - **Database**: Google Sheets (gspread)
 - **Storage**: Google Drive API
-- **Messaging**: WAHA (WhatsApp HTTP API)
+- **Messaging**: Twilio WhatsApp Business API
 - **Scheduling**: APScheduler
 - **Deployment**: Railway (Docker)
 
@@ -31,7 +31,7 @@ Sistema de auditoría de calidad para 23 sucursales de farmacias vía WhatsApp. 
   - Google Sheets API
   - Google Drive API
 - Service Account credentials (JSON)
-- WAHA instance en Railway
+- Cuenta Twilio con WhatsApp habilitado
 - Anthropic API key
 - OpenAI API key
 
@@ -65,9 +65,9 @@ Completá todos los valores en `.env`:
 ```env
 ANTHROPIC_API_KEY=sk-ant-xxx
 OPENAI_API_KEY=sk-xxx
-WAHA_URL=https://waha-production-0227.up.railway.app
-WAHA_API_KEY=auditbot123
-WAHA_SESSION=default
+TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_AUTH_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_PHONE_NUMBER=+14155238886
 GOOGLE_SHEETS_ID=xxxxxxxxxxxxxxxxxxxxx
 GOOGLE_SERVICE_ACCOUNT_JSON=xxxxxxxxxxxxxxxxxxxxx  # Base64-encoded
 GOOGLE_DRIVE_FOLDER_ID=xxxxxxxxxxxxxxxxxxxxx
@@ -125,15 +125,15 @@ git push -u origin main
 5. Agregá variables de entorno en Project Settings:
    - ANTHROPIC_API_KEY
    - OPENAI_API_KEY
-   - WAHA_URL, WAHA_API_KEY, WAHA_SESSION
+   - TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER
    - GOOGLE_SHEETS_ID
    - GOOGLE_SERVICE_ACCOUNT_JSON
    - GOOGLE_DRIVE_FOLDER_ID
    - COORDINADOR_TEL
 
-### 3. Configurá WAHA webhook
+### 3. Configurá Twilio webhook
 
-En WAHA panel, configurá el webhook a:
+En Twilio Console, configurá el webhook de WhatsApp a:
 
 ```
 https://tu-railway-app.up.railway.app/webhook
@@ -153,7 +153,7 @@ curl http://localhost:8000/health
 
 ### `POST /webhook`
 
-WAHA webhook entry point. Recibe mensajes de WhatsApp.
+Twilio WhatsApp webhook entry point. Recibe mensajes de WhatsApp.
 
 **Payload:**
 ```json
@@ -225,7 +225,7 @@ auditbot/
 ├── router.py            # State machine logic
 ├── parser.py            # Claude API integration
 ├── sheets.py            # Google Sheets CRUD
-├── waha.py              # WAHA client
+├── waha.py              # Twilio client
 ├── audio.py             # Whisper transcription
 ├── drive.py             # Google Drive upload
 ├── models.py            # Pydantic/dataclass models
@@ -276,11 +276,11 @@ Asegurate que el archivo `.env` existe y tiene todas las variables.
 - Compartí el spreadsheet con el email del Service Account
 - Creá todas las hojas descritas en SETUP_SHEETS.md
 
-### WAHA no recibe/envía mensajes
+### Twilio no recibe/envía mensajes
 
-- Verificá que WAHA_URL, WAHA_API_KEY y WAHA_SESSION sean correctos
-- Confirmá que el webhook en WAHA apunta a `{app_url}/webhook`
-- Revísá los logs de WAHA para errores
+- Verificá que TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN y TWILIO_PHONE_NUMBER sean correctos
+- Confirmá que el webhook en Twilio apunta a `{app_url}/webhook`
+- Revísá los logs de Railway y Twilio para errores
 
 ### Claude parser devuelve JSON inválido
 

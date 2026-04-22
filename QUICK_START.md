@@ -76,12 +76,12 @@ curl -X POST http://localhost:8000/webhook \
   }'
 ```
 
-### 6. Configurar WAHA Webhook
+### 6. Configurar Twilio Webhook
 
-En tu instancia WAHA:
+En Twilio Console:
 - Endpoint: `https://tu-app.railway.app/webhook` (cuando deployés)
 - Método: POST
-- Eventos: message.received
+- Content-Type: `application/x-www-form-urlencoded` / `form-data`
 
 ### 7. Deploy en Railway
 
@@ -139,8 +139,9 @@ auditbot/
 |----------|--------|-----------|
 | `ANTHROPIC_API_KEY` | ✅ Configurado | console.anthropic.com |
 | `OPENAI_API_KEY` | ✅ Configurado | platform.openai.com |
-| `WAHA_URL` | ✅ Configurado | https://waha-production-0227.up.railway.app |
-| `WAHA_API_KEY` | ✅ Configurado | auditbot123 |
+| `TWILIO_ACCOUNT_SID` | ✅ Configurado | ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx |
+| `TWILIO_AUTH_TOKEN` | ✅ Configurado | xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx |
+| `TWILIO_PHONE_NUMBER` | ✅ Configurado | +14155238886 |
 | `GOOGLE_SHEETS_ID` | ✅ Configurado | 1xr8SWx... |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | ⚠️ Pendiente | setup_env.py |
 | `GOOGLE_DRIVE_FOLDER_ID` | ✅ Configurado | 1Rs5pfc... |

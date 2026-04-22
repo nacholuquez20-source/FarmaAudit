@@ -5,14 +5,9 @@ from datetime import datetime
 import json
 
 from fastapi import FastAPI, Request, Depends
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import pytz
-import httpx
-import qrcode
-from io import BytesIO
-import base64
-import re
 
 from config import get_settings
 from models import WAHAPayload, ConversationState
@@ -98,121 +93,68 @@ async def health_check():
 
 
 @app.get("/qr")
-async def get_qr():
-    """Get WhatsApp QR code from Evolution API."""
-    evo_url = settings.waha_url.rstrip("/")
-    instance = settings.waha_session
-    headers = {"apikey": settings.waha_api_key}
-
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{evo_url}/instance/fetchInstances",
-                headers=headers,
-                timeout=10,
-            )
-            instances = response.json() if response.status_code == 200 else []
-
-            qr_response = await client.get(
-                f"{evo_url}/instance/qrcode/{instance}?image=true",
-                headers=headers,
-                timeout=15,
-            )
-
-            if qr_response.status_code == 200:
-                qr_data = qr_response.json()
-                base64_img = qr_data.get("base64", "")
-                if base64_img and "base64," in base64_img:
-                    img_bytes = base64.b64decode(base64_img.split("base64,")[1])
-                    return StreamingResponse(iter([img_bytes]), media_type="image/png")
-    except Exception as e:
-        logger.error(f"Error getting QR from Evolution API: {e}")
-
-    # Fallback HTML
-    html = f"""
-    <!DOCTYPE html>
-    <html lang="es">
-    <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>WhatsApp QR - AuditBot</title>
-        <style>
-            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-            body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }}
-            .container {{ background: white; border-radius: 15px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); max-width: 600px; width: 100%; padding: 40px; }}
-            h1 {{ color: #25D366; margin-bottom: 10px; text-align: center; font-size: 28px; }}
-            .subtitle {{ text-align: center; color: #666; margin-bottom: 30px; font-size: 14px; }}
-            .status-box {{ background: #e8f5e9; border-left: 4px solid #25D366; padding: 15px; margin: 20px 0; border-radius: 5px; }}
-            .status-box p {{ color: #2e7d32; margin: 5px 0; }}
-            .methods {{ display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin: 30px 0; }}
-            .method {{ border: 2px solid #ddd; padding: 20px; border-radius: 10px; text-align: center; cursor: pointer; transition: all 0.3s; }}
-            .method:hover {{ border-color: #25D366; background: #f0f8f5; }}
-            .method-icon {{ font-size: 32px; margin-bottom: 10px; }}
-            .method h3 {{ color: #333; margin-bottom: 10px; font-size: 16px; }}
-            .method p {{ color: #666; font-size: 13px; margin-bottom: 10px; }}
-            .method a {{ display: inline-block; padding: 8px 16px; background: #25D366; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; font-size: 13px; transition: background 0.3s; }}
-            .method a:hover {{ background: #20ba5a; }}
-            .divider {{ text-align: center; color: #999; margin: 30px 0; font-size: 14px; }}
-            .logs-info {{ background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0; }}
-            .logs-info p {{ color: #666; font-size: 13px; line-height: 1.6; margin: 10px 0; }}
-            .logs-info code {{ background: white; padding: 2px 6px; border-radius: 3px; font-family: monospace; }}
-            .steps {{ background: #f9f9f9; padding: 20px; border-radius: 10px; margin: 20px 0; }}
-            .steps h3 {{ color: #333; margin-bottom: 15px; }}
-            .steps ol {{ padding-left: 20px; }}
-            .steps li {{ margin: 10px 0; color: #666; line-height: 1.6; }}
-            @media (max-width: 600px) {{
-                .methods {{ grid-template-columns: 1fr; }}
-                .container {{ padding: 20px; }}
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>📱 Conecta WhatsApp</h1>
-            <p class="subtitle">Tu sesión está lista para autenticar</p>
-
-            <div class="status-box">
-                <p>✅ <strong>Sesión activa:</strong> default</p>
-                <p>📍 <strong>Estado:</strong> Esperando código QR</p>
+async def qr_info():
+    """Legacy endpoint kept for compatibility in Twilio mode."""
+    return HTMLResponse(
+        content="""
+        <!DOCTYPE html>
+        <html lang="es">
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>AuditBot Twilio</title>
+            <style>
+                body { font-family: Arial, sans-serif; background: #f6f7fb; color: #1f2937; margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+                .card { max-width: 720px; width: 100%; background: white; border-radius: 16px; padding: 32px; box-shadow: 0 14px 40px rgba(15, 23, 42, 0.12); }
+                h1 { margin: 0 0 12px; font-size: 28px; }
+                p { line-height: 1.6; margin: 12px 0; }
+                code { background: #eef2ff; padding: 2px 6px; border-radius: 6px; }
+            </style>
+        </head>
+        <body>
+            <div class="card">
+                <h1>AuditBot en modo Twilio</h1>
+                <p>Este proyecto ya no usa QR de WAHA/Evolution para conectarse a WhatsApp.</p>
+                <p>La integraciÃ³n activa es Twilio WhatsApp Business API, y el webhook debe apuntar a <code>/webhook</code>.</p>
+                <p>Si querÃ©s verificar conectividad, revisÃ¡ los logs de Railway y confirmÃ¡ que Twilio estÃ© enviando eventos al webhook.</p>
             </div>
+        </body>
+        </html>
+        """,
+        media_type="text/html",
+    )
 
-            <div class="methods">
-                <div class="method">
-                    <div class="method-icon">🌐</div>
-                    <h3>Evolution Manager</h3>
-                    <p>Dashboard para administrar WhatsApp</p>
-                    <a href="{evo_url}/manager" target="_blank">Abrir</a>
-                </div>
+
+@app.get("/qr-legacy")
+async def get_qr_legacy():
+    """Legacy endpoint kept only for compatibility."""
+    return HTMLResponse(
+        content="""
+        <!DOCTYPE html>
+        <html lang="es">
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>AuditBot Legacy</title>
+            <style>
+                body { font-family: Arial, sans-serif; background: #f6f7fb; color: #1f2937; margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+                .card { max-width: 720px; width: 100%; background: white; border-radius: 16px; padding: 32px; box-shadow: 0 14px 40px rgba(15, 23, 42, 0.12); }
+                h1 { margin: 0 0 12px; font-size: 28px; }
+                p { line-height: 1.6; margin: 12px 0; }
+                code { background: #eef2ff; padding: 2px 6px; border-radius: 6px; }
+            </style>
+        </head>
+        <body>
+            <div class="card">
+                <h1>Ruta legacy</h1>
+                <p>La integración activa es Twilio WhatsApp Business API.</p>
+                <p>Usá <code>/webhook</code> para recibir mensajes.</p>
             </div>
-
-            <div class="logs-info">
-                <strong>💡 Accede a Evolution Manager para ver el QR</strong>
-                <p>Ingresa al dashboard de Evolution API con tu API key y haz clic en "Get QR Code" para visualizar el código que debes escanear con WhatsApp.</p>
-            </div>
-
-            <div class="steps">
-                <h3>Pasos para conectar:</h3>
-                <ol>
-                    <li><strong>Abre Evolution Manager</strong> desde el botón de arriba</li>
-                    <li><strong>Haz clic en "Get QR Code"</strong> para generar el código</li>
-                    <li><strong>En tu teléfono:</strong> Abre WhatsApp</li>
-                    <li><strong>Ve a:</strong> Menú (⋮) → Dispositivos vinculados</li>
-                    <li><strong>Toca:</strong> "Vincular un dispositivo"</li>
-                    <li><strong>Escanea el código QR</strong> con tu cámara</li>
-                    <li><strong>¡Listo!</strong> Tu sesión se conectará automáticamente</li>
-                </ol>
-            </div>
-
-            <div class="divider">
-                ¿Problemas? Recarga esta página o intenta en 5 minutos
-            </div>
-        </div>
-    </body>
-    </html>
-    """
-    return HTMLResponse(content=html)
-
-
+        </body>
+        </html>
+        """,
+        media_type="text/html",
+    )
 @app.post("/webhook")
 async def webhook(request: Request):
     """Twilio WhatsApp webhook entry point."""
@@ -220,8 +162,8 @@ async def webhook(request: Request):
         # Twilio sends form-data, not JSON
         form_data = await request.form()
 
-        # Extract sender phone (remove whatsapp: prefix and +)
-        from_number = form_data.get("From", "").replace("whatsapp:", "").replace("+", "")
+        # Extract sender phone as digits only for consistent matching
+        from_number = "".join(ch for ch in form_data.get("From", "") if ch.isdigit())
         if not from_number:
             logger.warning("Received payload without From number")
             return {"status": "invalid_payload"}
@@ -289,7 +231,7 @@ async def check_expired_confirmations():
             # Notify auditor
             await twilio_client.send_text(
                 pendiente.telefono_auditor,
-                "⏰ Tu confirmación expiró. Envíame un nuevo hallazgo cuando estés listo.",
+                "â° Tu confirmaciÃ³n expirÃ³. EnvÃ­ame un nuevo hallazgo cuando estÃ©s listo.",
             )
 
             # Reset conversation state
@@ -323,10 +265,10 @@ async def check_expired_audit_sessions():
                 punto = checklist[sesion.punto_actual]
                 await twilio_client.send_text(
                     sesion.telefono_auditor,
-                    f"⏰ Recordatorio: estás en el punto {punto.punto_orden}/{sesion.total_puntos} de tu auditoría.\n"
-                    f"Mandá tu observación o escribe 'saltar' para omitir este punto.",
+                    f"â° Recordatorio: estÃ¡s en el punto {punto.punto_orden}/{sesion.total_puntos} de tu auditorÃ­a.\n"
+                    f"MandÃ¡ tu observaciÃ³n o escribe 'saltar' para omitir este punto.",
                 )
-            # Don't reset the session — just send reminder
+            # Don't reset the session â€” just send reminder
 
         if expired_sesiones:
             logger.info(f"Sent reminders for {len(expired_sesiones)} expired audit sessions")
@@ -346,13 +288,13 @@ async def daily_summary_job():
         # TODO: Implement query to get today's reports from Reportes sheet
         # This would require extending SheetsManager with a method to query by date
 
-        summary = f"""📊 **Resumen Diario AuditBot**
+        summary = f"""ðŸ“Š **Resumen Diario AuditBot**
 
 Fecha: {datetime.now().strftime('%Y-%m-%d')}
 
-[Resumen en construcción]
+[Resumen en construcciÃ³n]
 
-Para más detalles, consulta la hoja de Reportes."""
+Para mÃ¡s detalles, consulta la hoja de Reportes."""
 
         twilio_client = TwilioClient()
         await twilio_client.send_text(settings.coordinador_tel, summary)
@@ -371,3 +313,4 @@ if __name__ == "__main__":
         port=settings.port,
         log_level="info",
     )
+

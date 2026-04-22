@@ -610,7 +610,7 @@ EDITAR → Hacer cambios""",
                 payload.telefono,
                 f"✅ Iniciando auditoría en {sucursal.nombre}",
             )
-            await self._enviar_siguiente_punto(sesion, checklist, waha_client, payload.telefono)
+            await self._enviar_siguiente_punto(sesion, checklist, twilio_client, payload.telefono)
 
             return "auditoria_started"
         except Exception as e:
@@ -663,7 +663,7 @@ EDITAR → Hacer cambios""",
 
                     # Send next point
                     checklist = await self.sheets.get_checklist()
-                    await self._enviar_siguiente_punto(sesion, checklist, waha_client, payload.telefono)
+                    await self._enviar_siguiente_punto(sesion, checklist, twilio_client, payload.telefono)
                     return "punto_omitido"
 
                 if cmd == "pausar":
@@ -829,7 +829,7 @@ EDITAR → Hacer cambios""",
 
             # Send next point
             checklist = await self.sheets.get_checklist()
-            await self._enviar_siguiente_punto(sesion, checklist, waha_client, payload.telefono)
+            await self._enviar_siguiente_punto(sesion, checklist, twilio_client, payload.telefono)
             return "punto_evaluado"
         except Exception as e:
             logger.error(f"Error handling en_auditoria: {e}")
@@ -879,7 +879,7 @@ EDITAR → Hacer cambios""",
                 )
 
                 checklist = await self.sheets.get_checklist()
-                await self._enviar_siguiente_punto(sesion, checklist, waha_client, payload.telefono)
+                await self._enviar_siguiente_punto(sesion, checklist, twilio_client, payload.telefono)
                 return "auditoria_resumed"
             else:
                 await twilio_client.send_text(
