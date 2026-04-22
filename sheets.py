@@ -527,6 +527,9 @@ class SheetsManager:
                         ))
 
             return expiradas
+        except GSpreadException as e:
+            logger.warning(f"Sesiones_Auditoria sheet is missing or unavailable: {e}")
+            return []
         except Exception as e:
             logger.error(f"Failed to get expired sesiones: {e}")
             raise
