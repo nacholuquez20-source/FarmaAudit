@@ -8,7 +8,8 @@ from typing import Optional, Tuple
 
 from models import (
     ConversationState, WAHAPayload, Auditor, Conversacion,
-    ParserResponse, Reporte, Gestion, Severidad, ChecklistPunto, SesionAuditoria, PuntoEvalResult
+    ParserResponse, Reporte, Gestion, Severidad, ChecklistPunto, SesionAuditoria, PuntoEvalResult,
+    ItemBloque, ResultadoItem, StockItem, DesvioLibre
 )
 from sheets import SheetsManager
 from parser import AuditParser
@@ -60,6 +61,18 @@ class ConversationRouter:
                 return await self._handle_idle_state(payload, auditor, conv, twilio_client)
             elif conv.estado_actual == ConversationState.SELECCIONANDO_SUCURSAL:
                 return await self._handle_seleccionando_sucursal(payload, conv, twilio_client)
+            elif conv.estado_actual == ConversationState.EN_BLOQUE:
+                return await self._handle_en_bloque(payload, conv, twilio_client)
+            elif conv.estado_actual == ConversationState.CONFIRMANDO_BLOQUE:
+                return await self._handle_confirmando_bloque(payload, conv, twilio_client)
+            elif conv.estado_actual == ConversationState.STOCK_LOOP:
+                return await self._handle_stock_loop(payload, conv, twilio_client)
+            elif conv.estado_actual == ConversationState.EN_STOCK_ITEM:
+                return await self._handle_en_stock_item(payload, conv, twilio_client)
+            elif conv.estado_actual == ConversationState.DESVIO_LIBRE:
+                return await self._handle_desvio_libre(payload, conv, twilio_client)
+            elif conv.estado_actual == ConversationState.COMPROMISOS:
+                return await self._handle_compromisos(payload, conv, twilio_client)
             elif conv.estado_actual == ConversationState.EN_AUDITORIA:
                 return await self._handle_en_auditoria(payload, conv, twilio_client)
             elif conv.estado_actual == ConversationState.AUDITORIA_PAUSADA:
@@ -91,10 +104,10 @@ class ConversationRouter:
         if payload.contenido and payload.contenido.startswith("/"):
             return await self._handle_command(payload, auditor, twilio_client)
 
-        # Check for guided audit trigger ("inicio", "empezar", "comenzar", "start")
+        # Check for guided audit trigger ("hola", "inicio", "empezar", "comenzar", "start")
         if payload.tipo == "text" and payload.contenido:
             trigger = payload.contenido.lower().strip()
-            if trigger in {"inicio", "empezar", "comenzar", "start"}:
+            if trigger in {"hola", "inicio", "empezar", "comenzar", "start"}:
                 return await self._iniciar_seleccion_sucursal(payload, twilio_client)
 
         # Process audit finding
@@ -991,3 +1004,597 @@ EDITAR → Hacer cambios""",
         except Exception as e:
             logger.error(f"Error closing audit: {e}")
             return "error"
+
+    # ========== Block-Based Audit Handlers ==========
+
+    async def _handle_en_bloque(
+        self,
+        payload: WAHAPayload,
+        conv: Conversacion,
+        twilio_client: TwilioClient,
+    ) -> str:
+        """Handle auditor response in block evaluation state."""
+        try:
+            # Check for pause/continue commands
+            if payload.tipo == "text" and payload.contenido:
+                cmd = payload.contenido.upper().strip()
+                if cmd == "PAUSAR":
+                    self.sheets.update_conversacion(
+                        telefono=payload.telefono,
+                        estado=ConversationState.AUDITORIA_PAUSADA,
+                    )
+                    await twilio_client.send_text(
+                        payload.telefono,
+                        "⏸️ Auditoría pausada. Mandá 'continuar' cuando estés listo.",
+                    )
+                    return "auditoria_pausada"
+
+            # Get session
+            sesion = self.sheets.get_sesion(conv.id_pendiente or "")
+            if not sesion:
+                await twilio_client.send_text(payload.telefono, "❌ Sesión no encontrada")
+                return "error"
+
+            # Get block items
+            bloques = self.sheets.get_checklist_bloques()
+            bloque_id = sesion.bloque_actual
+            if bloque_id not in bloques:
+                await twilio_client.send_text(payload.telefono, "❌ Bloque no encontrado")
+                return "error"
+
+            items = bloques[bloque_id]
+
+            # Transcribe audio if present
+            respuesta_auditor = payload.contenido or ""
+            if payload.tipo == "audio" and payload.media_url:
+                transcripcion = await self.transcriber.transcribe(payload.media_url)
+                if transcripcion:
+                    respuesta_auditor = transcripcion
+            elif payload.tipo == "image" and payload.media_url:
+                respuesta_auditor = payload.contenido or "(foto enviada)"
+
+            # Parse bloque response
+            resultados = await self.parser.parse_bloque(
+                bloque_id, f"Bloque {bloque_id}", items, respuesta_auditor
+            )
+            if not resultados:
+                await twilio_client.send_text(
+                    payload.telefono,
+                    "❌ No pude evaluar la respuesta. Intenta de nuevo.",
+                )
+                return "parse_error"
+
+            # Store resultados in session temporarily
+            sesion_data = json.loads(sesion.resultados_json) if sesion.resultados_json else {}
+            sesion_data[bloque_id] = [vars(r) for r in resultados]
+
+            self.sheets.update_sesion(
+                sesion.id_sesion,
+                estado=ConversationState.CONFIRMANDO_BLOQUE.value,
+                timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+                bloque_actual=bloque_id,
+                resultados_json=json.dumps(sesion_data, ensure_ascii=False),
+            )
+
+            # Send confirmation
+            bloque_nombre = items[0].descripcion.split(":")[0] if items else bloque_id
+            await twilio_client.send_bloque_confirmacion(
+                payload.telefono, bloque_id, f"Bloque {bloque_id}", items, resultados
+            )
+
+            return "bloque_respondido"
+        except Exception as e:
+            logger.error(f"Error in _handle_en_bloque: {e}", exc_info=True)
+            return "error"
+
+    async def _handle_confirmando_bloque(
+        self,
+        payload: WAHAPayload,
+        conv: Conversacion,
+        twilio_client: TwilioClient,
+    ) -> str:
+        """Handle block confirmation (SI/EDITAR/SALTAR)."""
+        try:
+            if payload.tipo != "text" or not payload.contenido:
+                await twilio_client.send_text(
+                    payload.telefono,
+                    "⚠️ Respondé SI, EDITAR o SALTAR BLOQUE",
+                )
+                return "invalid_response"
+
+            respuesta = payload.contenido.upper().strip()
+
+            # Get session
+            sesion = self.sheets.get_sesion(conv.id_pendiente or "")
+            if not sesion:
+                return "error"
+
+            if respuesta == "SI":
+                # Save bloque results
+                sesion_data = json.loads(sesion.resultados_json) if sesion.resultados_json else {}
+                bloques = self.sheets.get_checklist_bloques()
+                bloque_id = sesion.bloque_actual
+
+                if bloque_id in bloques and bloque_id in sesion_data:
+                    resultados = []
+                    for item_data in sesion_data[bloque_id]:
+                        resultados.append(ResultadoItem(**item_data))
+
+                    auditor = self.sheets.get_auditor(payload.telefono)
+                    auditor_nombre = auditor.nombre if auditor else "Auditor"
+
+                    # Save results and create Reportes/Gestiones
+                    self.sheets.save_bloque_resultado(
+                        sesion.id_sesion,
+                        bloque_id,
+                        sesion.sucursal_id,
+                        auditor_nombre,
+                        resultados,
+                    )
+
+                    # Check for ALTA severity and send immediate alerts
+                    for resultado in resultados:
+                        if resultado.tiene_desvio and resultado.severidad == "Alta":
+                            sucursal = self.sheets.get_sucursal(sesion.sucursal_id)
+                            sucursal_nombre = sucursal.nombre if sucursal else sesion.sucursal_id
+                            from config import get_settings
+                            settings = get_settings()
+                            if settings.coordinador_tel:
+                                await twilio_client.send_alerta_coordinador(
+                                    settings.coordinador_tel,
+                                    sucursal_nombre,
+                                    f"Bloque {bloque_id}",
+                                    resultado.descripcion_desvio or "",
+                                    "Alta",
+                                )
+
+                # Advance to next bloque
+                next_bloques = {"A": "B", "B": "C", "C": "D", "D": "STOCK_LOOP"}
+                next_state = next_bloques.get(bloque_id)
+
+                if next_state == "STOCK_LOOP":
+                    self.sheets.update_conversacion(
+                        telefono=payload.telefono,
+                        estado=ConversationState.STOCK_LOOP,
+                        id_pendiente=sesion.id_sesion,
+                    )
+                    await twilio_client.send_text(
+                        payload.telefono,
+                        "🔍 Verificación de Stock\n\n¿Cuántos productos querés verificar? (0 para saltar)",
+                    )
+                else:
+                    sesion.bloque_actual = next_state
+                    self.sheets.update_sesion(
+                        sesion.id_sesion,
+                        estado=ConversationState.EN_BLOQUE.value,
+                        timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+                        bloque_actual=next_state,
+                        resultados_json=json.dumps(sesion_data, ensure_ascii=False),
+                    )
+
+                    # Send next bloque
+                    bloques = self.sheets.get_checklist_bloques()
+                    if next_state in bloques:
+                        await twilio_client.send_bloque_prompt(
+                            payload.telefono, next_state, f"Bloque {next_state}",
+                            bloques[next_state]
+                        )
+
+                return "bloque_confirmado"
+
+            elif respuesta == "EDITAR":
+                # Re-send current bloque
+                self.sheets.update_conversacion(
+                    telefono=payload.telefono,
+                    estado=ConversationState.EN_BLOQUE,
+                    id_pendiente=sesion.id_sesion,
+                )
+                bloques = self.sheets.get_checklist_bloques()
+                bloque_id = sesion.bloque_actual
+                if bloque_id in bloques:
+                    await twilio_client.send_bloque_prompt(
+                        payload.telefono, bloque_id, f"Bloque {bloque_id}", bloques[bloque_id]
+                    )
+                return "bloque_reditado"
+
+            elif respuesta == "SALTAR BLOQUE" or respuesta == "SALTAR":
+                # Skip to next bloque without saving
+                next_bloques = {"A": "B", "B": "C", "C": "D", "D": "STOCK_LOOP"}
+                next_state = next_bloques.get(sesion.bloque_actual)
+
+                if next_state == "STOCK_LOOP":
+                    self.sheets.update_conversacion(
+                        telefono=payload.telefono,
+                        estado=ConversationState.STOCK_LOOP,
+                        id_pendiente=sesion.id_sesion,
+                    )
+                    await twilio_client.send_text(
+                        payload.telefono,
+                        "🔍 Verificación de Stock\n\n¿Cuántos productos querés verificar? (0 para saltar)",
+                    )
+                else:
+                    self.sheets.update_conversacion(
+                        telefono=payload.telefono,
+                        estado=ConversationState.EN_BLOQUE,
+                        id_pendiente=sesion.id_sesion,
+                    )
+                    sesion.bloque_actual = next_state
+                    self.sheets.update_sesion(
+                        sesion.id_sesion,
+                        estado=ConversationState.EN_BLOQUE.value,
+                        timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+                        bloque_actual=next_state,
+                    )
+
+                    bloques = self.sheets.get_checklist_bloques()
+                    if next_state in bloques:
+                        await twilio_client.send_bloque_prompt(
+                            payload.telefono, next_state, f"Bloque {next_state}",
+                            bloques[next_state]
+                        )
+
+                return "bloque_saltado"
+
+            else:
+                await twilio_client.send_text(
+                    payload.telefono,
+                    "⚠️ Respondé SI, EDITAR o SALTAR BLOQUE",
+                )
+                return "invalid_response"
+
+        except Exception as e:
+            logger.error(f"Error in _handle_confirmando_bloque: {e}", exc_info=True)
+            return "error"
+
+    async def _handle_stock_loop(
+        self,
+        payload: WAHAPayload,
+        conv: Conversacion,
+        twilio_client: TwilioClient,
+    ) -> str:
+        """Handle stock verification count input."""
+        try:
+            if payload.tipo != "text" or not payload.contenido:
+                await twilio_client.send_text(
+                    payload.telefono,
+                    "⚠️ Mandá un número o 0 para saltar",
+                )
+                return "invalid_response"
+
+            try:
+                cantidad = int(payload.contenido.strip())
+            except ValueError:
+                await twilio_client.send_text(
+                    payload.telefono,
+                    "⚠️ Mandá un número válido",
+                )
+                return "invalid_response"
+
+            sesion = self.sheets.get_sesion(conv.id_pendiente or "")
+            if not sesion:
+                return "error"
+
+            if cantidad == 0:
+                # Skip stock verification
+                self.sheets.update_conversacion(
+                    telefono=payload.telefono,
+                    estado=ConversationState.DESVIO_LIBRE,
+                    id_pendiente=sesion.id_sesion,
+                )
+                await twilio_client.send_text(
+                    payload.telefono,
+                    "📋 Desvíos Libres\n\nTiene algún desvío o hallazgo libre para reportar?\n\nMandá 'NO' si no hay más desvíos, o describí el problema.",
+                )
+                return "stock_skipped"
+            else:
+                # Start stock loop
+                sesion_aux = {
+                    "stock_count": cantidad,
+                    "stock_items": [],
+                    "stock_current": 0,
+                }
+                self.sheets.update_conversacion(
+                    telefono=payload.telefono,
+                    estado=ConversationState.EN_STOCK_ITEM,
+                    id_pendiente=sesion.id_sesion,
+                )
+                await twilio_client.send_text(
+                    payload.telefono,
+                    f"📦 Producto 1/{cantidad}\n\nMandá: Nombre / Stock Físico / Stock Sistema\n\nEj: Ibuprofeno 400 / 23 / 18",
+                )
+                return "stock_started"
+
+        except Exception as e:
+            logger.error(f"Error in _handle_stock_loop: {e}", exc_info=True)
+            return "error"
+
+    async def _handle_en_stock_item(
+        self,
+        payload: WAHAPayload,
+        conv: Conversacion,
+        twilio_client: TwilioClient,
+    ) -> str:
+        """Handle stock item entry."""
+        try:
+            if payload.tipo != "text" or not payload.contenido:
+                await twilio_client.send_text(
+                    payload.telefono,
+                    "⚠️ Mandá el formato: Nombre / Stock Físico / Stock Sistema",
+                )
+                return "invalid_response"
+
+            # Parse stock item
+            stock_item = await self.parser.parse_stock_item(payload.contenido)
+            if not stock_item:
+                await twilio_client.send_text(
+                    payload.telefono,
+                    "❌ No pude entender el formato. Intenta: Nombre / Físico / Sistema",
+                )
+                return "parse_error"
+
+            sesion = self.sheets.get_sesion(conv.id_pendiente or "")
+            if not sesion:
+                return "error"
+
+            # Save stock item
+            auditor = self.sheets.get_auditor(payload.telefono)
+            auditor_nombre = auditor.nombre if auditor else "Auditor"
+            self.sheets.save_stock_item(
+                sesion.id_sesion,
+                sesion.sucursal_id,
+                auditor_nombre,
+                stock_item,
+            )
+
+            # Update stock_items_json
+            stock_items = json.loads(sesion.stock_items_json) if sesion.stock_items_json else []
+            stock_items.append(vars(stock_item))
+            sesion.stock_items_json = json.dumps(stock_items, ensure_ascii=False)
+
+            self.sheets.update_sesion(
+                sesion.id_sesion,
+                estado=ConversationState.EN_STOCK_ITEM.value,
+                timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+                stock_items_json=sesion.stock_items_json,
+            )
+
+            # TODO: Track count and move to next or finish
+            # For now, continue with stock loop
+            await twilio_client.send_text(
+                payload.telefono,
+                f"✓ Registrado: {stock_item.nombre}\n\nMandá el próximo producto o 'listo'",
+            )
+
+            return "stock_item_guardado"
+
+        except Exception as e:
+            logger.error(f"Error in _handle_en_stock_item: {e}", exc_info=True)
+            return "error"
+
+    async def _handle_desvio_libre(
+        self,
+        payload: WAHAPayload,
+        conv: Conversacion,
+        twilio_client: TwilioClient,
+    ) -> str:
+        """Handle free-form deviations."""
+        try:
+            if payload.tipo != "text" or not payload.contenido:
+                await twilio_client.send_text(
+                    payload.telefono,
+                    "⚠️ Mandá 'NO' o describí el desvío",
+                )
+                return "invalid_response"
+
+            respuesta = payload.contenido.lower().strip()
+
+            if respuesta == "no":
+                # Move to compromisos
+                sesion = self.sheets.get_sesion(conv.id_pendiente or "")
+                if not sesion:
+                    return "error"
+
+                self.sheets.update_conversacion(
+                    telefono=payload.telefono,
+                    estado=ConversationState.COMPROMISOS,
+                    id_pendiente=sesion.id_sesion,
+                )
+                await twilio_client.send_text(
+                    payload.telefono,
+                    "📝 Compromisos\n\n¿Firmaron compromisos de corrección?\n\nSI / NO / PENDIENTE",
+                )
+                return "sin_desvios"
+
+            # Parse free deviation
+            desvio = await self.parser.parse_desvio_libre(payload.contenido)
+            if not desvio:
+                await twilio_client.send_text(
+                    payload.telefono,
+                    "❌ No pude procesar el desvío. Intenta de nuevo.",
+                )
+                return "parse_error"
+
+            sesion = self.sheets.get_sesion(conv.id_pendiente or "")
+            if not sesion:
+                return "error"
+
+            # Save deviation
+            auditor = self.sheets.get_auditor(payload.telefono)
+            auditor_nombre = auditor.nombre if auditor else "Auditor"
+            self.sheets.save_desvio_libre(
+                sesion.id_sesion,
+                sesion.sucursal_id,
+                auditor_nombre,
+                desvio,
+            )
+
+            # Update desvios_libres_json
+            desvios_libres = json.loads(sesion.desvios_libres_json) if sesion.desvios_libres_json else []
+            desvios_libres.append(vars(desvio))
+            sesion.desvios_libres_json = json.dumps(desvios_libres, ensure_ascii=False)
+
+            self.sheets.update_sesion(
+                sesion.id_sesion,
+                estado=ConversationState.DESVIO_LIBRE.value,
+                timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+                desvios_libres_json=sesion.desvios_libres_json,
+            )
+
+            # Send alert if ALTA
+            if desvio.severidad == "Alta":
+                from config import get_settings
+                settings = get_settings()
+                if settings.coordinador_tel:
+                    sucursal = self.sheets.get_sucursal(sesion.sucursal_id)
+                    sucursal_nombre = sucursal.nombre if sucursal else sesion.sucursal_id
+                    await twilio_client.send_alerta_coordinador(
+                        settings.coordinador_tel,
+                        sucursal_nombre,
+                        desvio.area_estimada,
+                        desvio.descripcion,
+                        "Alta",
+                    )
+
+            await twilio_client.send_text(
+                payload.telefono,
+                f"✓ Registrado desvío en {desvio.area_estimada}\n\n¿Hay más desvíos? Describí o mandá 'NO'",
+            )
+
+            return "desvio_registrado"
+
+        except Exception as e:
+            logger.error(f"Error in _handle_desvio_libre: {e}", exc_info=True)
+            return "error"
+
+    async def _handle_compromisos(
+        self,
+        payload: WAHAPayload,
+        conv: Conversacion,
+        twilio_client: TwilioClient,
+    ) -> str:
+        """Handle compromise commitments (SI/NO/PENDIENTE)."""
+        try:
+            if payload.tipo != "text" or not payload.contenido:
+                await twilio_client.send_text(
+                    payload.telefono,
+                    "⚠️ Respondé SI, NO o PENDIENTE",
+                )
+                return "invalid_response"
+
+            respuesta = payload.contenido.upper().strip()
+            if respuesta not in {"SI", "SÍ", "NO", "PENDIENTE"}:
+                await twilio_client.send_text(
+                    payload.telefono,
+                    "⚠️ Respondé SI, NO o PENDIENTE",
+                )
+                return "invalid_response"
+
+            sesion = self.sheets.get_sesion(conv.id_pendiente or "")
+            if not sesion:
+                return "error"
+
+            # Save commitment status
+            sesion.compromisos_firmados = respuesta
+            self.sheets.update_sesion(
+                sesion.id_sesion,
+                estado="completa",
+                timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+                compromisos_firmados=respuesta,
+            )
+
+            # Calculate final score and send summary
+            await self._cerrar_auditoria_bloques(sesion, twilio_client, payload.telefono)
+
+            return "compromisos_registrados"
+
+        except Exception as e:
+            logger.error(f"Error in _handle_compromisos: {e}", exc_info=True)
+            return "error"
+
+    async def _cerrar_auditoria_bloques(
+        self,
+        sesion: SesionAuditoria,
+        twilio_client: TwilioClient,
+        phone: str,
+    ) -> None:
+        """Close block-based audit and send summary."""
+        try:
+            # Calculate total score
+            resultados_por_bloque: Dict[str, List[ResultadoItem]] = {}
+            sesion_data = json.loads(sesion.resultados_json) if sesion.resultados_json else {}
+
+            puntaje_total = 0.0
+            puntaje_maximo = 0.0
+            desvios_count = 0
+            alta_count = 0
+            media_count = 0
+            baja_count = 0
+
+            for bloque_id, items_data in sesion_data.items():
+                resultados = [ResultadoItem(**item) for item in items_data]
+                resultados_por_bloque[bloque_id] = resultados
+
+                for resultado in resultados:
+                    if resultado.puntaje:
+                        puntaje_total += resultado.puntaje
+                        puntaje_maximo += 5
+                    if resultado.tiene_desvio:
+                        desvios_count += 1
+                        if resultado.severidad == "Alta":
+                            alta_count += 1
+                        elif resultado.severidad == "Media":
+                            media_count += 1
+                        else:
+                            baja_count += 1
+
+            stock_count = len(json.loads(sesion.stock_items_json) or [])
+
+            # Send final summary
+            from datetime import date
+            sucursal = self.sheets.get_sucursal(sesion.sucursal_id)
+            sucursal_nombre = sucursal.nombre if sucursal else sesion.sucursal_id
+
+            await twilio_client.send_resumen_final(
+                phone,
+                sucursal_nombre,
+                date.today().isoformat(),
+                puntaje_total,
+                puntaje_maximo,
+                resultados_por_bloque,
+                desvios_count,
+                alta_count,
+                media_count,
+                baja_count,
+                stock_count,
+                sesion.compromisos_firmados or "Sin respuesta",
+            )
+
+            # Send summary to coordinator
+            from config import get_settings
+            settings = get_settings()
+            if settings.coordinador_tel:
+                auditor = self.sheets.get_auditor(phone)
+                auditor_nombre = auditor.nombre if auditor else "Auditor"
+                coord_msg = (
+                    f"📊 **Auditoría Completada (Flujo Bloques)**\n\n"
+                    f"Auditor: {auditor_nombre}\n"
+                    f"Sucursal: {sucursal_nombre}\n"
+                    f"Puntaje: {puntaje_total:.1f}/{puntaje_maximo:.1f}\n"
+                    f"Desvíos: {desvios_count}\n"
+                    f"  🔴 Críticos: {alta_count}\n"
+                    f"  🟡 Importantes: {media_count}\n"
+                    f"  🟢 Leves: {baja_count}\n"
+                    f"Productos verificados: {stock_count}\n"
+                    f"Compromisos: {sesion.compromisos_firmados}\n"
+                    f"ID Sesión: {sesion.id_sesion}"
+                )
+                await twilio_client.send_text(settings.coordinador_tel, coord_msg)
+
+            # Reset conversation
+            self.sheets.update_conversacion(
+                telefono=phone,
+                estado=ConversationState.IDLE,
+            )
+
+        except Exception as e:
+            logger.error(f"Error closing block audit: {e}", exc_info=True)

@@ -13,7 +13,7 @@ from config import get_settings
 from models import (
     Auditor, Sucursal, AreaSubitem, Conversacion, Pendiente, Reporte,
     Gestion, ConversationState, Severidad, GestionState, ChecklistPunto,
-    SesionAuditoria
+    SesionAuditoria, ItemBloque, ResultadoItem, StockItem, DesvioLibre
 )
 
 logger = logging.getLogger(__name__)
@@ -418,6 +418,42 @@ class SheetsManager:
             logger.error(f"Failed to get checklist: {e}")
             raise
 
+    def get_checklist_bloques(self) -> Dict[str, List[ItemBloque]]:
+        """Get block-based checklist items grouped by block (cached 5 min)."""
+        cached = self._get_cache("Checklist_Plantillas_Bloques")
+        if cached:
+            return {
+                bloque: [ItemBloque(**item) for item in items]
+                for bloque, items in cached.items()
+            }
+
+        try:
+            sheet = self._get_sheet("Checklist_Plantillas")
+            rows = sheet.get_all_records()
+            bloques: Dict[str, List[ItemBloque]] = {}
+
+            for row in rows:
+                item = ItemBloque(
+                    item_id=row.get("item_id", ""),
+                    bloque=row.get("bloque", ""),
+                    descripcion=row.get("descripcion", ""),
+                    peso=int(row.get("peso", 5)),
+                )
+                bloque = item.bloque
+                if bloque not in bloques:
+                    bloques[bloque] = []
+                bloques[bloque].append(item)
+
+            self._set_cache(
+                "Checklist_Plantillas_Bloques",
+                {b: [vars(item) for item in items] for b, items in bloques.items()}
+            )
+            logger.info(f"Retrieved checklist bloques: {list(bloques.keys())}")
+            return bloques
+        except Exception as e:
+            logger.error(f"Failed to get checklist bloques: {e}")
+            raise
+
     # ========== Sesiones_Auditoria ==========
 
     def create_sesion(self, sesion: SesionAuditoria) -> str:
@@ -428,13 +464,18 @@ class SheetsManager:
                 sesion.id_sesion,
                 sesion.telefono_auditor,
                 sesion.sucursal_id,
+                sesion.estado,
+                sesion.timestamp_inicio,
+                sesion.timestamp_ultimo_punto,
                 sesion.punto_actual,
                 sesion.total_puntos,
                 sesion.hallazgos_json,
                 sesion.omitidos_json,
-                sesion.estado,
-                sesion.timestamp_inicio,
-                sesion.timestamp_ultimo_punto,
+                sesion.bloque_actual,
+                sesion.resultados_json,
+                sesion.stock_items_json,
+                sesion.desvios_libres_json,
+                sesion.compromisos_firmados,
             ])
             logger.info(f"Created sesion {sesion.id_sesion}")
             return sesion.id_sesion
@@ -453,13 +494,18 @@ class SheetsManager:
                         id_sesion=row.get("id_sesion", ""),
                         telefono_auditor=row.get("telefono_auditor", ""),
                         sucursal_id=row.get("sucursal_id", ""),
+                        estado=row.get("estado", "en_curso"),
+                        timestamp_inicio=row.get("timestamp_inicio", ""),
+                        timestamp_ultimo_punto=row.get("timestamp_ultimo_punto", ""),
                         punto_actual=int(row.get("punto_actual", 0)),
                         total_puntos=int(row.get("total_puntos", 0)),
                         hallazgos_json=row.get("hallazgos_json", "[]"),
                         omitidos_json=row.get("omitidos_json", "[]"),
-                        estado=row.get("estado", "en_curso"),
-                        timestamp_inicio=row.get("timestamp_inicio", ""),
-                        timestamp_ultimo_punto=row.get("timestamp_ultimo_punto", ""),
+                        bloque_actual=row.get("bloque_actual", "A"),
+                        resultados_json=row.get("resultados_json", "{}"),
+                        stock_items_json=row.get("stock_items_json", "[]"),
+                        desvios_libres_json=row.get("desvios_libres_json", "[]"),
+                        compromisos_firmados=row.get("compromisos_firmados", ""),
                     )
             return None
         except Exception as e:
@@ -469,11 +515,15 @@ class SheetsManager:
     def update_sesion(
         self,
         id_sesion: str,
-        punto_actual: int,
-        hallazgos_json: str,
-        omitidos_json: str,
         estado: str,
         timestamp_ultimo_punto: str,
+        bloque_actual: str = "A",
+        resultados_json: str = "{}",
+        stock_items_json: str = "[]",
+        desvios_libres_json: str = "[]",
+        punto_actual: int = 0,
+        hallazgos_json: str = "[]",
+        omitidos_json: str = "[]",
     ) -> None:
         """Update audit session."""
         try:
@@ -487,11 +537,15 @@ class SheetsManager:
                     break
 
             if row_idx is not None:
-                sheet.update_cell(row_idx, 4, punto_actual)
-                sheet.update_cell(row_idx, 6, hallazgos_json)
-                sheet.update_cell(row_idx, 7, omitidos_json)
-                sheet.update_cell(row_idx, 8, estado)
-                sheet.update_cell(row_idx, 10, timestamp_ultimo_punto)
+                sheet.update_cell(row_idx, 4, estado)
+                sheet.update_cell(row_idx, 5, timestamp_ultimo_punto)
+                sheet.update_cell(row_idx, 7, punto_actual)
+                sheet.update_cell(row_idx, 9, hallazgos_json)
+                sheet.update_cell(row_idx, 10, omitidos_json)
+                sheet.update_cell(row_idx, 11, bloque_actual)
+                sheet.update_cell(row_idx, 12, resultados_json)
+                sheet.update_cell(row_idx, 13, stock_items_json)
+                sheet.update_cell(row_idx, 14, desvios_libres_json)
                 logger.info(f"Updated sesion {id_sesion}")
             else:
                 logger.warning(f"Sesion {id_sesion} not found for update")
@@ -516,13 +570,18 @@ class SheetsManager:
                             id_sesion=row.get("id_sesion", ""),
                             telefono_auditor=row.get("telefono_auditor", ""),
                             sucursal_id=row.get("sucursal_id", ""),
+                            estado=row.get("estado", "en_curso"),
+                            timestamp_inicio=row.get("timestamp_inicio", ""),
+                            timestamp_ultimo_punto=timestamp_str,
                             punto_actual=int(row.get("punto_actual", 0)),
                             total_puntos=int(row.get("total_puntos", 0)),
                             hallazgos_json=row.get("hallazgos_json", "[]"),
                             omitidos_json=row.get("omitidos_json", "[]"),
-                            estado=row.get("estado", "en_curso"),
-                            timestamp_inicio=row.get("timestamp_inicio", ""),
-                            timestamp_ultimo_punto=timestamp_str,
+                            bloque_actual=row.get("bloque_actual", "A"),
+                            resultados_json=row.get("resultados_json", "{}"),
+                            stock_items_json=row.get("stock_items_json", "[]"),
+                            desvios_libres_json=row.get("desvios_libres_json", "[]"),
+                            compromisos_firmados=row.get("compromisos_firmados", ""),
                         ))
 
             return expiradas
@@ -531,6 +590,156 @@ class SheetsManager:
             return []
         except Exception as e:
             logger.error(f"Failed to get expired sesiones: {e}")
+            raise
+
+    # ========== Block-based Audit Methods ==========
+
+    def save_bloque_resultado(
+        self,
+        auditoria_id: str,
+        bloque_id: str,
+        sucursal_id: str,
+        auditor_nombre: str,
+        resultados: List[ResultadoItem],
+    ) -> None:
+        """Save block results and create Reportes + Gestiones for deviations."""
+        try:
+            from datetime import date
+            sesion = self.get_sesion(auditoria_id)
+            if not sesion:
+                logger.error(f"Sesion {auditoria_id} not found")
+                return
+
+            sucursal = self.get_sucursal(sucursal_id)
+            sucursal_nombre = sucursal.nombre if sucursal else sucursal_id
+
+            hoy = date.today().isoformat()
+            hora = datetime.utcnow().strftime("%H:%M")
+
+            for resultado in resultados:
+                if resultado.tiene_desvio and resultado.descripcion_desvio:
+                    severidad = Severidad(resultado.severidad or "Baja")
+                    reporte = Reporte(
+                        id="",
+                        fecha=hoy,
+                        hora=hora,
+                        cuadrilla="",
+                        auditor=auditor_nombre,
+                        id_sucursal=sucursal_id,
+                        sucursal=sucursal_nombre,
+                        area=f"Bloque {bloque_id}",
+                        subitem=resultado.item_id,
+                        descripcion=resultado.descripcion_desvio,
+                        severidad=severidad,
+                        creado_por_audio=False,
+                    )
+                    reporte_id = self.create_reporte(reporte)
+
+                    plazo = date.today() + timedelta(days=7)
+                    gestion = Gestion(
+                        id_gestion="",
+                        id_reporte=reporte_id,
+                        id_sucursal=sucursal_id,
+                        sucursal=sucursal_nombre,
+                        desvio=resultado.descripcion_desvio,
+                        severidad=severidad,
+                        responsable=sucursal.responsable if sucursal else "",
+                        tel_responsable=sucursal.tel_responsable if sucursal else "",
+                        plazo_fecha=plazo,
+                        plan_accion="",
+                        estado=GestionState.ABIERTA,
+                    )
+                    self.create_gestion(gestion)
+
+            logger.info(f"Saved bloque {bloque_id} results for sesion {auditoria_id}")
+        except Exception as e:
+            logger.error(f"Failed to save bloque resultado: {e}")
+            raise
+
+    def save_stock_item(
+        self,
+        auditoria_id: str,
+        sucursal_id: str,
+        auditor: str,
+        item: StockItem,
+    ) -> None:
+        """Save stock verification item to Control_Stock sheet."""
+        try:
+            sheet = self._get_sheet("Control_Stock")
+            diferencia = item.stock_fisico - item.stock_sistema
+            alerta = "SI" if abs(diferencia) > 0 else "NO"
+
+            sheet.append_row([
+                "",  # id (will be auto-generated)
+                auditoria_id,
+                sucursal_id,
+                datetime.utcnow().strftime("%Y-%m-%d"),
+                auditor,
+                item.nombre,
+                item.stock_fisico,
+                item.stock_sistema,
+                diferencia,
+                alerta,
+            ])
+
+            logger.info(f"Saved stock item {item.nombre} for sesion {auditoria_id}")
+        except Exception as e:
+            logger.error(f"Failed to save stock item: {e}")
+            raise
+
+    def save_desvio_libre(
+        self,
+        auditoria_id: str,
+        sucursal_id: str,
+        auditor_nombre: str,
+        desvio: DesvioLibre,
+    ) -> str:
+        """Create Reporte for free-form deviation, return reporte_id."""
+        try:
+            from datetime import date
+            sucursal = self.get_sucursal(sucursal_id)
+            sucursal_nombre = sucursal.nombre if sucursal else sucursal_id
+
+            hoy = date.today().isoformat()
+            hora = datetime.utcnow().strftime("%H:%M")
+
+            severidad = Severidad(desvio.severidad or "Baja")
+            reporte = Reporte(
+                id="",
+                fecha=hoy,
+                hora=hora,
+                cuadrilla="",
+                auditor=auditor_nombre,
+                id_sucursal=sucursal_id,
+                sucursal=sucursal_nombre,
+                area=desvio.area_estimada or "Observación libre",
+                subitem="",
+                descripcion=desvio.descripcion,
+                severidad=severidad,
+                creado_por_audio=False,
+            )
+            reporte_id = self.create_reporte(reporte)
+
+            plazo = date.today() + timedelta(days=7)
+            gestion = Gestion(
+                id_gestion="",
+                id_reporte=reporte_id,
+                id_sucursal=sucursal_id,
+                sucursal=sucursal_nombre,
+                desvio=desvio.descripcion,
+                severidad=severidad,
+                responsable=sucursal.responsable if sucursal else "",
+                tel_responsable=sucursal.tel_responsable if sucursal else "",
+                plazo_fecha=plazo,
+                plan_accion="",
+                estado=GestionState.ABIERTA,
+            )
+            self.create_gestion(gestion)
+
+            logger.info(f"Created reporte {reporte_id} for desvio libre")
+            return reporte_id
+        except Exception as e:
+            logger.error(f"Failed to save desvio libre: {e}")
             raise
 
     # ========== Utilities ==========

@@ -7,7 +7,10 @@ from typing import Optional
 from anthropic import AsyncAnthropic
 
 from config import get_settings
-from models import ParserResponse, Hallazgo, Severidad, ChecklistPunto, PuntoEvalResult
+from models import (
+    ParserResponse, Hallazgo, Severidad, ChecklistPunto, PuntoEvalResult,
+    ItemBloque, ResultadoItem, StockItem, DesvioLibre
+)
 from sheets import SheetsManager
 
 logger = logging.getLogger(__name__)
@@ -279,4 +282,242 @@ Responde SOLO con JSON:
             return None
         except Exception as e:
             logger.error(f"Failed to evaluate punto respuesta: {e}")
+            return None
+
+    async def parse_bloque(
+        self,
+        bloque_id: str,
+        bloque_nombre: str,
+        items: list[ItemBloque],
+        respuesta_auditor: str,
+    ) -> Optional[list[ResultadoItem]]:
+        """Evaluate auditor's response to a block and assign scores 1-5 to each item."""
+        try:
+            system_prompt = """Sos un auditor de calidad evaluando la respuesta de un inspector de farmacia.
+Tu tarea es evaluar cada ítem del bloque y asignar un puntaje de 1 a 5.
+
+ESCALA DE PUNTAJE:
+- 5: Cumplimiento total, estado excelente
+- 4: Cumplimiento adecuado con observaciones menores
+- 3: Cumplimiento parcial, requiere mejoras
+- 2: Incumplimiento significativo
+- 1: Incumplimiento total, crítico
+
+Responde EXCLUSIVAMENTE con JSON válido (un array de objetos), sin markdown ni explicaciones."""
+
+            items_text = "\n".join([f"- {item.item_id}: {item.descripcion}" for item in items])
+
+            prompt = f"""BLOQUE {bloque_id} — {bloque_nombre}
+
+ÍTEMS DEL BLOQUE:
+{items_text}
+
+RESPUESTA DEL AUDITOR:
+{respuesta_auditor}
+
+La respuesta puede ser:
+- Números separados por coma (ej: "3,4,4,5,3,2") → mapear en orden a los ítems
+- Descripción libre (texto o transcripción de audio) → inferir puntaje y desvíos para cada ítem
+- Combinación de números y texto
+
+Evalúa cada ítem en orden y detecta automáticamente desvíos.
+
+Responde SOLO con JSON array, un objeto por ítem en el mismo orden:
+[
+  {{
+    "item_id": "A1",
+    "puntaje": 1-5,
+    "tiene_desvio": true|false,
+    "descripcion_desvio": "descripción del problema o null si no hay desvío",
+    "severidad": "Alta"|"Media"|"Baja"|null
+  }},
+  ...
+]"""
+
+            response = await self.client.messages.create(
+                model=self.model,
+                max_tokens=2048,
+                system=system_prompt,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    }
+                ],
+            )
+
+            response_text = response.content[0].text.strip()
+
+            # Strip markdown if present
+            if response_text.startswith("```json"):
+                response_text = response_text[7:]
+            if response_text.startswith("```"):
+                response_text = response_text[3:]
+            if response_text.endswith("```"):
+                response_text = response_text[:-3]
+
+            response_text = response_text.strip()
+            parsed = json.loads(response_text)
+
+            resultados = []
+            for item_data in parsed:
+                resultado = ResultadoItem(
+                    item_id=item_data.get("item_id", ""),
+                    puntaje=item_data.get("puntaje"),
+                    tiene_desvio=bool(item_data.get("tiene_desvio", False)),
+                    descripcion_desvio=item_data.get("descripcion_desvio"),
+                    severidad=item_data.get("severidad"),
+                )
+                resultados.append(resultado)
+
+            logger.info(f"Parsed bloque {bloque_id}: {len(resultados)} items evaluated")
+            return resultados
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse bloque response as JSON: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to parse bloque: {e}")
+            return None
+
+    async def parse_stock_item(self, texto: str) -> Optional[StockItem]:
+        """Extract stock item (nombre, stock_fisico, stock_sistema) from free text."""
+        try:
+            system_prompt = """Sos un asistente que extrae información de stock de medicinas.
+El auditor proporciona información sobre un producto: nombre y dos números (stock físico / stock sistema).
+
+Ejemplos:
+- "Ibuprofeno 400 / 23 / 18" → nombre: "Ibuprofeno 400", fisico: 23, sistema: 18
+- "Aspirina 500mg: tengo 10, el sistema dice 15" → nombre: "Aspirina 500mg", fisico: 10, sistema: 15
+
+Responde EXCLUSIVAMENTE con JSON válido, sin markdown ni explicaciones."""
+
+            prompt = f"""Extrae información de stock del siguiente texto:
+{texto}
+
+Si puedes extraer la información completa, responde con:
+{{
+  "nombre": "nombre del producto",
+  "stock_fisico": número,
+  "stock_sistema": número
+}}
+
+Si NO puedes extraer información válida (faltan datos o son incoherentes), responde con:
+{{"nombre": null, "stock_fisico": null, "stock_sistema": null}}"""
+
+            response = await self.client.messages.create(
+                model=self.model,
+                max_tokens=512,
+                system=system_prompt,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    }
+                ],
+            )
+
+            response_text = response.content[0].text.strip()
+
+            if response_text.startswith("```json"):
+                response_text = response_text[7:]
+            if response_text.startswith("```"):
+                response_text = response_text[3:]
+            if response_text.endswith("```"):
+                response_text = response_text[:-3]
+
+            response_text = response_text.strip()
+            parsed = json.loads(response_text)
+
+            nombre = parsed.get("nombre")
+            fisico = parsed.get("stock_fisico")
+            sistema = parsed.get("stock_sistema")
+
+            if nombre and fisico is not None and sistema is not None:
+                item = StockItem(
+                    nombre=str(nombre),
+                    stock_fisico=int(fisico),
+                    stock_sistema=int(sistema),
+                )
+                logger.info(f"Parsed stock item: {item.nombre}")
+                return item
+
+            logger.warning(f"Could not extract valid stock item from: {texto}")
+            return None
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            logger.error(f"Failed to parse stock item: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to parse stock item: {e}")
+            return None
+
+    async def parse_desvio_libre(self, texto: str) -> Optional[DesvioLibre]:
+        """Extract free-form deviation (area, description, severity) from text."""
+        try:
+            system_prompt = """Sos un auditor de farmacia analizando observaciones libres.
+El auditor reporta un problema o desvío sin seguir una estructura fija.
+
+Tu tarea es extraer:
+- área_estimada: área de la farmacia (ej: "Vidriera", "Dispensario", "Caja", etc.)
+- descripcion: descripción clara del problema
+- severidad: Alta|Media|Baja
+
+Responde EXCLUSIVAMENTE con JSON válido, sin markdown ni explicaciones."""
+
+            prompt = f"""Analiza esta observación de auditoría y extrae los datos:
+{texto}
+
+Responde con JSON:
+{{
+  "area_estimada": "área de la farmacia",
+  "descripcion": "descripción del problema",
+  "severidad": "Alta"|"Media"|"Baja"
+}}
+
+Si no puedes extraer información válida, responde con:
+{{"area_estimada": null, "descripcion": null, "severidad": null}}"""
+
+            response = await self.client.messages.create(
+                model=self.model,
+                max_tokens=512,
+                system=system_prompt,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    }
+                ],
+            )
+
+            response_text = response.content[0].text.strip()
+
+            if response_text.startswith("```json"):
+                response_text = response_text[7:]
+            if response_text.startswith("```"):
+                response_text = response_text[3:]
+            if response_text.endswith("```"):
+                response_text = response_text[:-3]
+
+            response_text = response_text.strip()
+            parsed = json.loads(response_text)
+
+            area = parsed.get("area_estimada") or "Observación libre"
+            desc = parsed.get("descripcion")
+            sev = parsed.get("severidad") or "Media"
+
+            if desc:
+                desvio = DesvioLibre(
+                    area_estimada=str(area),
+                    descripcion=str(desc),
+                    severidad=str(sev),
+                )
+                logger.info(f"Parsed desvio libre: {area}")
+                return desvio
+
+            logger.warning(f"Could not extract valid desvio from: {texto}")
+            return None
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            logger.error(f"Failed to parse desvio libre: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to parse desvio libre: {e}")
             return None
