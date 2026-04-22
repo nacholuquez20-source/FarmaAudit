@@ -693,7 +693,7 @@ EDITAR → Hacer cambios""",
                         return await self._cerrar_auditoria(sesion, twilio_client, payload.telefono)
 
                     # Send next point
-                    checklist = await self.sheets.get_checklist()
+                    checklist = self.sheets.get_checklist()
                     await self._enviar_siguiente_punto(sesion, checklist, twilio_client, payload.telefono)
                     return "punto_omitido"
 
@@ -743,7 +743,7 @@ EDITAR → Hacer cambios""",
             if payload.tipo == "image" and payload.media_url:
                 try:
                     fecha = datetime.now().strftime("%Y%m%d")
-                    checklist = await self.sheets.get_checklist()
+                    checklist = self.sheets.get_checklist()
                     punto = checklist[sesion.punto_actual]
                     filename = f"{fecha}_{sesion.sucursal_id}_{punto.area.replace(' ','_')}_{punto.punto_orden}.jpg"
                     photo_url = await self.drive.upload_photo_from_url(
@@ -754,7 +754,7 @@ EDITAR → Hacer cambios""",
                     logger.warning(f"Failed to upload photo: {e}")
 
             # Evaluate response
-            checklist = await self.sheets.get_checklist()
+            checklist = self.sheets.get_checklist()
             punto = checklist[sesion.punto_actual]
             eval_result = await self.parser.evaluate_punto_respuesta(punto, respuesta)
 
@@ -859,7 +859,7 @@ EDITAR → Hacer cambios""",
                 return await self._cerrar_auditoria(sesion, twilio_client, payload.telefono)
 
             # Send next point
-            checklist = await self.sheets.get_checklist()
+            checklist = self.sheets.get_checklist()
             await self._enviar_siguiente_punto(sesion, checklist, twilio_client, payload.telefono)
             return "punto_evaluado"
         except Exception as e:
@@ -909,7 +909,7 @@ EDITAR → Hacer cambios""",
                     id_pendiente=conv.id_pendiente,
                 )
 
-                checklist = await self.sheets.get_checklist()
+                checklist = self.sheets.get_checklist()
                 await self._enviar_siguiente_punto(sesion, checklist, twilio_client, payload.telefono)
                 return "auditoria_resumed"
             else:
