@@ -184,12 +184,33 @@ class SheetsManager:
             telefono_norm = self._normalize_phone(telefono)
             for row in rows:
                 if self._normalize_phone(row.get("Telefono")) == telefono_norm:
+                    estado_raw = (
+                        row.get("Estado_actual")
+                        or row.get("estado_actual")
+                        or row.get("estado")
+                        or "idle"
+                    )
+                    id_pendiente = (
+                        row.get("ID_pendiente")
+                        or row.get("id_pendiente")
+                        or row.get("ID_Pendiente")
+                    )
+                    ultimo_mensaje = (
+                        row.get("Ultimo_mensaje")
+                        or row.get("ultimo_mensaje")
+                        or ""
+                    )
+                    timestamp_raw = (
+                        row.get("Timestamp")
+                        or row.get("timestamp")
+                        or row.get("timestamp_ultimo")
+                    )
                     return Conversacion(
                         telefono=row.get("Telefono", ""),
-                        estado_actual=ConversationState(row.get("Estado_actual", "idle")),
-                        id_pendiente=row.get("ID_pendiente"),
-                        ultimo_mensaje=row.get("Ultimo_mensaje", ""),
-                        timestamp=self._parse_datetime(row.get("Timestamp")),
+                        estado_actual=self._parse_conversation_state(str(estado_raw)),
+                        id_pendiente=id_pendiente,
+                        ultimo_mensaje=ultimo_mensaje,
+                        timestamp=self._parse_datetime(timestamp_raw),
                     )
             return None
         except Exception as e:
@@ -218,7 +239,7 @@ class SheetsManager:
             if row_idx is None:
                 # Create new row
                 sheet.append_row([
-                    telefono,
+                    telefono_norm,
                     estado.value,
                     id_pendiente or "",
                     ultimo_mensaje,
@@ -753,3 +774,15 @@ class SheetsManager:
             return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
         except ValueError:
             return None
+
+    @staticmethod
+    def _parse_conversation_state(value: Optional[str]) -> ConversationState:
+        """Parse a conversation state with safe fallback."""
+        raw = (value or "idle").strip()
+        try:
+            return ConversationState(raw)
+        except ValueError:
+            try:
+                return ConversationState(raw.lower())
+            except ValueError:
+                return ConversationState.IDLE
