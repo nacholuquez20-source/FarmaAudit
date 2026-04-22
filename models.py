@@ -12,6 +12,9 @@ class ConversationState(str, Enum):
     IDLE = "idle"
     ESPERANDO_CONFIRMACION = "esperando_confirmacion"
     ESPERANDO_EDICION = "esperando_edicion"
+    SELECCIONANDO_SUCURSAL = "seleccionando_sucursal"
+    EN_AUDITORIA = "en_auditoria"
+    AUDITORIA_PAUSADA = "auditoria_pausada"
 
 
 class Severidad(str, Enum):
@@ -59,6 +62,43 @@ class AreaSubitem:
 
     area: str
     subitems: List[str]
+
+
+@dataclass
+class ChecklistPunto:
+    """Single point in a guided audit checklist."""
+
+    punto_orden: int
+    area: str
+    descripcion: str
+    responsable_default: str
+    severidad_default: str
+
+
+@dataclass
+class PuntoEvalResult:
+    """Result from evaluating an auditor's response to a checklist point."""
+
+    tiene_desvio: bool
+    descripcion_desvio: str
+    severidad: str
+    ok_message: str
+
+
+@dataclass
+class SesionAuditoria:
+    """Active guided audit session."""
+
+    id_sesion: str
+    telefono_auditor: str
+    sucursal_id: str
+    punto_actual: int
+    total_puntos: int
+    hallazgos_json: str
+    omitidos_json: str
+    estado: str
+    timestamp_inicio: str
+    timestamp_ultimo_punto: str
 
 
 @dataclass

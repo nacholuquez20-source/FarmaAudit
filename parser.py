@@ -7,7 +7,7 @@ from typing import Optional
 from anthropic import AsyncAnthropic
 
 from config import get_settings
-from models import ParserResponse, Hallazgo, Severidad
+from models import ParserResponse, Hallazgo, Severidad, ChecklistPunto, PuntoEvalResult
 from sheets import SheetsManager
 
 logger = logging.getLogger(__name__)
@@ -163,7 +163,7 @@ PARSE ANTERIOR: {json.dumps(vars(previous_response), default=str, ensure_ascii=F
 
 Por favor, regenera el parse aplicando la corrección."""
 
-            response = self.client.messages.create(
+            response = await self.client.messages.create(
                 model=self.model,
                 max_tokens=2048,
                 system=system_prompt,
@@ -208,4 +208,75 @@ Por favor, regenera el parse aplicando la corrección."""
             return result
         except Exception as e:
             logger.error(f"Failed to apply correction: {e}")
+            return None
+
+    async def evaluate_punto_respuesta(
+        self,
+        punto: ChecklistPunto,
+        respuesta: str,
+    ) -> Optional[PuntoEvalResult]:
+        """Evaluate auditor's response to a checklist point."""
+        try:
+            system_prompt = """Sos un auditor de calidad evaluando la respuesta de un inspector de farmacia.
+Tu tarea es evaluar si hay un desvío (incumplimiento) en la respuesta.
+Respondé EXCLUSIVAMENTE con JSON válido, sin markdown ni explicaciones."""
+
+            prompt = f"""PUNTO AUDITADO:
+- Área: {punto.area}
+- Qué revisar: {punto.descripcion}
+- Severidad por default: {punto.severidad_default}
+
+RESPUESTA DEL AUDITOR:
+{respuesta}
+
+Evaluá si hay un desvío. Si la respuesta indica todo OK, tiene_desvio=false y descripcion_desvio vacío.
+Si hay un problema, especifica descripcion_desvio y asigna severidad (Alta/Media/Baja).
+
+Responde SOLO con JSON:
+{{
+  "tiene_desvio": true|false,
+  "descripcion_desvio": "descripción del problema o vacío si todo OK",
+  "severidad": "Alta|Media|Baja",
+  "ok_message": "mensaje corto de confirmación para el auditor"
+}}"""
+
+            response = await self.client.messages.create(
+                model=self.model,
+                max_tokens=1024,
+                system=system_prompt,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    }
+                ],
+            )
+
+            response_text = response.content[0].text.strip()
+
+            # Strip markdown if present
+            if response_text.startswith("```json"):
+                response_text = response_text[7:]
+            if response_text.startswith("```"):
+                response_text = response_text[3:]
+            if response_text.endswith("```"):
+                response_text = response_text[:-3]
+
+            response_text = response_text.strip()
+            parsed = json.loads(response_text)
+
+            result = PuntoEvalResult(
+                tiene_desvio=bool(parsed.get("tiene_desvio", False)),
+                descripcion_desvio=str(parsed.get("descripcion_desvio", "")),
+                severidad=str(parsed.get("severidad", punto.severidad_default)),
+                ok_message=str(parsed.get("ok_message", "Registrado.")),
+            )
+
+            logger.info(f"Evaluated punto {punto.punto_orden}: desvio={result.tiene_desvio}")
+            return result
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse evaluation response as JSON: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to evaluate punto respuesta: {e}")
             return None

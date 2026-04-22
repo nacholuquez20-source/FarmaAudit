@@ -1,9 +1,10 @@
-"""Evolution API client for AuditBot (WhatsApp integration)."""
+"""Twilio WhatsApp client for AuditBot."""
 
 import logging
 from typing import Optional
+import asyncio
 
-import httpx
+from twilio.rest import Client
 
 from config import get_settings
 from models import WAHAMessage
@@ -11,29 +12,33 @@ from models import WAHAMessage
 logger = logging.getLogger(__name__)
 
 
-class WAHAClient:
-    """Client for Evolution API (WhatsApp)."""
+class TwilioClient:
+    """Client for Twilio WhatsApp."""
 
     def __init__(self):
         settings = get_settings()
-        self.base_url = settings.waha_url.rstrip("/")
-        self.api_key = settings.waha_api_key
-        self.instance = settings.waha_session
-        self.client = httpx.AsyncClient(
-            base_url=self.base_url,
-            headers={"apikey": self.api_key},
-            timeout=15,
-        )
-        logger.info(f"Evolution API client initialized: {self.base_url}")
+        self.account_sid = settings.twilio_account_sid
+        self.auth_token = settings.twilio_auth_token
+        self.phone_number = settings.twilio_phone_number
+        self.client = Client(self.account_sid, self.auth_token)
+        logger.info(f"Twilio WhatsApp client initialized: {self.phone_number}")
 
     async def send_text(self, phone: str, text: str) -> bool:
-        """Send text message via Evolution API."""
+        """Send text message via Twilio WhatsApp."""
         try:
-            payload = {"number": phone, "text": text}
-            response = await self.client.post(
-                f"/message/sendText/{self.instance}", json=payload
+            # Format phone number: add whatsapp: prefix if not present
+            to_number = f"whatsapp:{phone}" if not phone.startswith("whatsapp:") else phone
+            from_number = f"whatsapp:{self.phone_number}"
+
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                lambda: self.client.messages.create(
+                    body=text,
+                    from_=from_number,
+                    to=to_number,
+                ),
             )
-            response.raise_for_status()
             logger.info(f"Sent text to {phone}")
             return True
         except Exception as e:
@@ -43,18 +48,21 @@ class WAHAClient:
     async def send_file(
         self, phone: str, file_url: str, caption: Optional[str] = None
     ) -> bool:
-        """Send file (photo/document) via Evolution API."""
+        """Send file (photo/document) via Twilio WhatsApp."""
         try:
-            payload = {
-                "number": phone,
-                "mediatype": "image",
-                "media": file_url,
-                "caption": caption or "",
-            }
-            response = await self.client.post(
-                f"/message/sendMedia/{self.instance}", json=payload
+            to_number = f"whatsapp:{phone}" if not phone.startswith("whatsapp:") else phone
+            from_number = f"whatsapp:{self.phone_number}"
+
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                lambda: self.client.messages.create(
+                    body=caption or "",
+                    media_url=file_url,
+                    from_=from_number,
+                    to=to_number,
+                ),
             )
-            response.raise_for_status()
             logger.info(f"Sent file to {phone}")
             return True
         except Exception as e:
@@ -67,11 +75,40 @@ class WAHAClient:
             return await self.send_file(message.phone, message.file_url, message.caption)
         return await self.send_text(message.phone, message.text)
 
-    async def close(self) -> None:
-        """Close HTTP client."""
-        await self.client.aclose()
+    async def send_punto(
+        self, phone: str, numero: int, total: int, area: str, descripcion: str
+    ) -> bool:
+        """Send a checklist point to auditor."""
+        text = f"""PUNTO {numero}/{total} — {area.upper()}
+{descripcion}
+
+Mandá audio, foto o texto con lo que observás.
+(Podés responder "saltar" para omitir este punto o "pausar" para retomar más tarde)"""
+        return await self.send_text(phone, text)
+
+    async def send_resumen_auditoria(
+        self,
+        phone: str,
+        sucursal: str,
+        total: int,
+        desvios: int,
+        omitidos: int,
+        detalle_desvios: str,
+    ) -> bool:
+        """Send audit completion summary to auditor."""
+        text = f"""✅ AUDITORÍA COMPLETADA
+
+Sucursal: {sucursal}
+Total de puntos: {total}
+Desvíos encontrados: {desvios}
+Puntos omitidos: {omitidos}
+
+{detalle_desvios}
+
+¡Gracias por tu auditoría!"""
+        return await self.send_text(phone, text)
 
 
-async def get_waha_client() -> WAHAClient:
-    """Get Evolution API client (dependency injection)."""
-    return WAHAClient()
+async def get_twilio_client() -> TwilioClient:
+    """Get Twilio WhatsApp client (dependency injection)."""
+    return TwilioClient()

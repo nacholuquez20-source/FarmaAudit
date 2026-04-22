@@ -12,7 +12,8 @@ from gspread.exceptions import GSpreadException
 from config import get_settings
 from models import (
     Auditor, Sucursal, AreaSubitem, Conversacion, Pendiente, Reporte,
-    Gestion, ConversationState, Severidad, GestionState
+    Gestion, ConversationState, Severidad, GestionState, ChecklistPunto,
+    SesionAuditoria
 )
 
 logger = logging.getLogger(__name__)
@@ -377,6 +378,147 @@ class SheetsManager:
             return gestion.id_gestion
         except Exception as e:
             logger.error(f"Failed to create gestion: {e}")
+            raise
+
+    # ========== Checklist_Plantillas ==========
+
+    def get_checklist(self) -> List[ChecklistPunto]:
+        """Get guided audit checklist (global, cached)."""
+        cached = self._get_cache("Checklist_Plantillas")
+        if cached:
+            return [ChecklistPunto(**row) for row in cached]
+
+        try:
+            sheet = self._get_sheet("Checklist_Plantillas")
+            rows = sheet.get_all_records()
+            puntos = [
+                ChecklistPunto(
+                    punto_orden=int(row.get("punto_orden", 0)),
+                    area=row.get("area", ""),
+                    descripcion=row.get("descripcion", ""),
+                    responsable_default=row.get("responsable_default", ""),
+                    severidad_default=row.get("severidad_default", "Media"),
+                )
+                for row in rows
+            ]
+            puntos.sort(key=lambda p: p.punto_orden)
+            self._set_cache("Checklist_Plantillas", [vars(p) for p in puntos])
+            logger.info(f"Retrieved {len(puntos)} checklist points")
+            return puntos
+        except Exception as e:
+            logger.error(f"Failed to get checklist: {e}")
+            raise
+
+    # ========== Sesiones_Auditoria ==========
+
+    def create_sesion(self, sesion: SesionAuditoria) -> str:
+        """Create guided audit session."""
+        try:
+            sheet = self._get_sheet("Sesiones_Auditoria")
+            sheet.append_row([
+                sesion.id_sesion,
+                sesion.telefono_auditor,
+                sesion.sucursal_id,
+                sesion.punto_actual,
+                sesion.total_puntos,
+                sesion.hallazgos_json,
+                sesion.omitidos_json,
+                sesion.estado,
+                sesion.timestamp_inicio,
+                sesion.timestamp_ultimo_punto,
+            ])
+            logger.info(f"Created sesion {sesion.id_sesion}")
+            return sesion.id_sesion
+        except Exception as e:
+            logger.error(f"Failed to create sesion: {e}")
+            raise
+
+    def get_sesion(self, id_sesion: str) -> Optional[SesionAuditoria]:
+        """Get audit session by ID."""
+        try:
+            sheet = self._get_sheet("Sesiones_Auditoria")
+            rows = sheet.get_all_records()
+            for row in rows:
+                if row.get("id_sesion") == id_sesion:
+                    return SesionAuditoria(
+                        id_sesion=row.get("id_sesion", ""),
+                        telefono_auditor=row.get("telefono_auditor", ""),
+                        sucursal_id=row.get("sucursal_id", ""),
+                        punto_actual=int(row.get("punto_actual", 0)),
+                        total_puntos=int(row.get("total_puntos", 0)),
+                        hallazgos_json=row.get("hallazgos_json", "[]"),
+                        omitidos_json=row.get("omitidos_json", "[]"),
+                        estado=row.get("estado", "en_curso"),
+                        timestamp_inicio=row.get("timestamp_inicio", ""),
+                        timestamp_ultimo_punto=row.get("timestamp_ultimo_punto", ""),
+                    )
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get sesion {id_sesion}: {e}")
+            raise
+
+    def update_sesion(
+        self,
+        id_sesion: str,
+        punto_actual: int,
+        hallazgos_json: str,
+        omitidos_json: str,
+        estado: str,
+        timestamp_ultimo_punto: str,
+    ) -> None:
+        """Update audit session."""
+        try:
+            sheet = self._get_sheet("Sesiones_Auditoria")
+            rows = sheet.get_all_records()
+            row_idx = None
+
+            for idx, row in enumerate(rows):
+                if row.get("id_sesion") == id_sesion:
+                    row_idx = idx + 2
+                    break
+
+            if row_idx is not None:
+                sheet.update_cell(row_idx, 4, punto_actual)
+                sheet.update_cell(row_idx, 6, hallazgos_json)
+                sheet.update_cell(row_idx, 7, omitidos_json)
+                sheet.update_cell(row_idx, 8, estado)
+                sheet.update_cell(row_idx, 10, timestamp_ultimo_punto)
+                logger.info(f"Updated sesion {id_sesion}")
+            else:
+                logger.warning(f"Sesion {id_sesion} not found for update")
+        except Exception as e:
+            logger.error(f"Failed to update sesion {id_sesion}: {e}")
+            raise
+
+    def get_sesiones_activas_expiradas(self, timeout_min: int = 15) -> List[SesionAuditoria]:
+        """Get active sessions that have exceeded timeout."""
+        try:
+            sheet = self._get_sheet("Sesiones_Auditoria")
+            rows = sheet.get_all_records()
+            expiradas = []
+            now = datetime.utcnow()
+
+            for row in rows:
+                if row.get("estado") == "en_curso":
+                    timestamp_str = row.get("timestamp_ultimo_punto", "")
+                    ts = self._parse_datetime(timestamp_str)
+                    if ts and (now - ts).total_seconds() > timeout_min * 60:
+                        expiradas.append(SesionAuditoria(
+                            id_sesion=row.get("id_sesion", ""),
+                            telefono_auditor=row.get("telefono_auditor", ""),
+                            sucursal_id=row.get("sucursal_id", ""),
+                            punto_actual=int(row.get("punto_actual", 0)),
+                            total_puntos=int(row.get("total_puntos", 0)),
+                            hallazgos_json=row.get("hallazgos_json", "[]"),
+                            omitidos_json=row.get("omitidos_json", "[]"),
+                            estado=row.get("estado", "en_curso"),
+                            timestamp_inicio=row.get("timestamp_inicio", ""),
+                            timestamp_ultimo_punto=timestamp_str,
+                        ))
+
+            return expiradas
+        except Exception as e:
+            logger.error(f"Failed to get expired sesiones: {e}")
             raise
 
     # ========== Utilities ==========

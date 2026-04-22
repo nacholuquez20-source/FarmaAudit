@@ -57,20 +57,79 @@ Limpieza       | ["piso", "vitrinas", "baños", "entrada"]
 
 ---
 
+## Hoja: Checklist_Plantillas
+
+Columnas (en orden):
+- **punto_orden** (Integer): Número secuencial del punto (1, 2, 3, ...)
+- **area** (String): Área a auditar
+- **descripcion** (String): Qué revisar en este punto
+- **responsable_default** (String): Responsable por default
+- **severidad_default** (String): "Alta", "Media" o "Baja"
+
+**Nota**: Esta es la plantilla global de puntos para el flujo guiado. Se usa para todas las sucursales.
+
+Ejemplo de checklist de farmacia:
+
+```
+punto_orden | area                | descripcion                                                           | responsable_default | severidad_default
+1           | Vidriera           | Verificar limpieza, orden y vigencia de productos expuestos.          | Encargado de local  | Media
+2           | Góndola Dermocosmética | Revisar orden de categorías, etiquetado de precios.                | Repositor           | Baja
+3           | Caja               | Control de fondo de caja, limpieza, cartelería obligatoria.            | Cajero/a            | Alta
+4           | Dispensario        | Cadena de frío, medicamentos por categoría, libro de psicotrópicos.   | Farmacéutico/a      | Alta
+5           | Limpieza general   | Pisos, estanterías, baño. Elementos de limpieza almacenados.          | Personal de limpieza| Media
+6           | Vencimientos       | Muestra de 10 productos. Ninguno vencido ni próximo a vencer (<30d).   | Encargado de local  | Alta
+```
+
+---
+
+## Hoja: Sesiones_Auditoria
+
+Columnas (en orden):
+- **id_sesion** (String): ID único de la sesión (ej: "ses_a1b2c3d4")
+- **telefono_auditor** (String): Teléfono del auditor que audita
+- **sucursal_id** (String): ID de la sucursal siendo auditada
+- **punto_actual** (Integer): Índice 0-based del punto actual
+- **total_puntos** (Integer): Total de puntos en el checklist
+- **hallazgos_json** (Text): JSON array con desvíos encontrados
+- **omitidos_json** (Text): JSON array con índices de puntos omitidos
+- **estado** (String): "en_curso", "pausada" o "completa"
+- **timestamp_inicio** (DateTime): ISO format
+- **timestamp_ultimo_punto** (DateTime): ISO format (para timeout de 15 min)
+
+Ejemplo:
+
+```
+id_sesion   | telefono_auditor | sucursal_id | punto_actual | total_puntos | hallazgos_json                           | omitidos_json | estado    | timestamp_inicio        | timestamp_ultimo_punto
+ses_a1b2c3d4| 5491166666666    | 001         | 3            | 6            | [{"punto": 2, "area": "Góndola", ...}] | [1]           | en_curso  | 2026-04-20T15:00:00     | 2026-04-20T15:15:00
+```
+
+**Nota**: Las sesiones activas expiran después de 15 minutos sin respuesta y el auditor recibe un recordatorio.
+
+---
+
 ## Hoja: Conversaciones
 
 Columnas:
 - **Telefono** (String): Teléfono del auditor
-- **Estado_actual** (String): "idle", "esperando_confirmacion" o "esperando_edicion"
-- **ID_pendiente** (String): ID del pendiente activo (vacío si idle)
+- **Estado_actual** (String): Estado actual de la conversación (ver estados abajo)
+- **ID_pendiente** (String): ID del pendiente (para flujo libre) o ID de sesión (para flujo guiado)
 - **Ultimo_mensaje** (String): Último mensaje recibido (para referencia)
 - **Timestamp** (DateTime): Última actualización
+
+**Estados posibles**:
+- `idle`: Sin conversación activa
+- `esperando_confirmacion`: Esperando SI/NO/EDITAR en flujo libre
+- `esperando_edicion`: Esperando corrección en flujo libre
+- `seleccionando_sucursal`: Esperando selección de sucursal (flujo guiado)
+- `en_auditoria`: Auditoría en curso, respondiendo puntos
+- `auditoria_pausada`: Auditoría pausada, esperando "continuar"
 
 Ejemplo:
 ```
 Telefono      | Estado_actual            | ID_pendiente | Ultimo_mensaje              | Timestamp
 5491166666666 | idle                     |              | Listo para nuevo hallazgo   | 2026-04-20T15:30:00
 5491177777777 | esperando_confirmacion   | abc12345     | Puntera desordenada         | 2026-04-20T15:25:00
+5491188888888 | en_auditoria             | ses_a1b2c3d4 | Puntera limpia              | 2026-04-20T15:35:00
 ```
 
 ---
