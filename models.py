@@ -13,7 +13,13 @@ class ConversationState(str, Enum):
     ESPERANDO_CONFIRMACION = "esperando_confirmacion"
     ESPERANDO_EDICION = "esperando_edicion"
     SELECCIONANDO_SUCURSAL = "seleccionando_sucursal"
-    EN_AUDITORIA = "en_auditoria"
+    EN_AUDITORIA = "en_auditoria"  # Legacy: punto-por-punto
+    EN_BLOQUE = "en_bloque"
+    CONFIRMANDO_BLOQUE = "confirmando_bloque"
+    STOCK_LOOP = "stock_loop"
+    EN_STOCK_ITEM = "en_stock_item"
+    DESVIO_LIBRE = "desvio_libre"
+    COMPROMISOS = "compromisos"
     AUDITORIA_PAUSADA = "auditoria_pausada"
 
 
@@ -76,6 +82,45 @@ class ChecklistPunto:
 
 
 @dataclass
+class ItemBloque:
+    """Item in a block-based audit checklist."""
+
+    item_id: str
+    bloque: str
+    descripcion: str
+    peso: int = 5
+
+
+@dataclass
+class ResultadoItem:
+    """Result from evaluating a single item in a block."""
+
+    item_id: str
+    puntaje: Optional[int]
+    tiene_desvio: bool
+    descripcion_desvio: Optional[str]
+    severidad: Optional[str]
+
+
+@dataclass
+class StockItem:
+    """Stock verification item."""
+
+    nombre: str
+    stock_fisico: int
+    stock_sistema: int
+
+
+@dataclass
+class DesvioLibre:
+    """Free-form deviation/finding."""
+
+    area_estimada: str
+    descripcion: str
+    severidad: str
+
+
+@dataclass
 class PuntoEvalResult:
     """Result from evaluating an auditor's response to a checklist point."""
 
@@ -92,13 +137,18 @@ class SesionAuditoria:
     id_sesion: str
     telefono_auditor: str
     sucursal_id: str
-    punto_actual: int
-    total_puntos: int
-    hallazgos_json: str
-    omitidos_json: str
     estado: str
     timestamp_inicio: str
     timestamp_ultimo_punto: str
+    punto_actual: int = 0
+    total_puntos: int = 0
+    hallazgos_json: str = "[]"
+    omitidos_json: str = "[]"
+    bloque_actual: str = "A"
+    resultados_json: str = "{}"
+    stock_items_json: str = "[]"
+    desvios_libres_json: str = "[]"
+    compromisos_firmados: str = ""
 
 
 @dataclass
