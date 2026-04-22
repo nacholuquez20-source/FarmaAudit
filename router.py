@@ -53,6 +53,8 @@ class ConversationRouter:
                     estado_actual=ConversationState.IDLE,
                 )
 
+            logger.debug(f"Message from {payload.telefono}: state={conv.estado_actual.value}, content={payload.contenido[:50] if payload.contenido else 'N/A'}")
+
             # Route based on state
             if conv.estado_actual == ConversationState.IDLE:
                 return await self._handle_idle_state(payload, auditor, conv, twilio_client)
@@ -70,7 +72,7 @@ class ConversationRouter:
                 await twilio_client.send_text(payload.telefono, "⚠️ Estado desconocido")
                 return "unknown_state"
         except Exception as e:
-            logger.error(f"Error handling message from {payload.telefono}: {e}")
+            logger.error(f"Error handling message from {payload.telefono}: {e}", exc_info=True)
             await twilio_client.send_text(
                 payload.telefono,
                 "❌ Error procesando tu mensaje. Intenta de nuevo.",
@@ -175,12 +177,16 @@ class ConversationRouter:
             datos_json=json.dumps(pending_data, ensure_ascii=False),
         )
 
+        logger.info(f"Created pendiente {id_pendiente} for {payload.telefono}")
+
         # Update conversation state
         self.sheets.update_conversacion(
             telefono=payload.telefono,
             estado=ConversationState.ESPERANDO_CONFIRMACION,
             id_pendiente=id_pendiente,
         )
+
+        logger.info(f"Updated state to ESPERANDO_CONFIRMACION for {payload.telefono}, pendiente={id_pendiente}")
 
         # Show draft for confirmation
         await self._show_draft(parse_result, photo_url, payload.telefono, twilio_client)
@@ -196,13 +202,16 @@ class ConversationRouter:
         if not payload.contenido:
             return "invalid_input"
 
-        answer = payload.contenido.upper().strip()
+        answer = payload.contenido.strip().upper()
+        logger.info(f"Confirmation response from {payload.telefono}: '{answer}'")
 
-        if answer == "SI":
-            # Confirm and create reports/gestiones
+        # Check for yes responses (with or without accent)
+        if answer in {"SI", "SÍ", "YES", "Y"}:
+            logger.info(f"Confirmed finding for {payload.telefono}")
             return await self._confirm_and_create(conv, twilio_client)
-        elif answer == "NO":
+        elif answer in {"NO", "N"}:
             # Discard
+            logger.info(f"Discarded finding for {payload.telefono}")
             await twilio_client.send_text(
                 payload.telefono,
                 "❌ Descartado. Envíame otro hallazgo cuando estés listo.",
@@ -213,8 +222,9 @@ class ConversationRouter:
                 estado=ConversationState.IDLE,
             )
             return "discarded"
-        elif answer == "EDITAR":
+        elif answer in {"EDITAR", "EDIT", "CORREGIR"}:
             # Move to edition state
+            logger.info(f"Edit requested for {payload.telefono}")
             self.sheets.update_conversacion(
                 telefono=payload.telefono,
                 estado=ConversationState.ESPERANDO_EDICION,
@@ -226,9 +236,10 @@ class ConversationRouter:
             )
             return "edit_requested"
         else:
+            logger.warning(f"Invalid confirmation response from {payload.telefono}: '{answer}'")
             await twilio_client.send_text(
                 payload.telefono,
-                "⚠️ Responde con SI, NO o EDITAR.",
+                "⚠️ Por favor responde con:\nSI - para confirmar\nNO - para descartar\nEDITAR - para hacer cambios",
             )
             return "invalid_response"
 

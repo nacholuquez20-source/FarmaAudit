@@ -218,7 +218,7 @@ class SheetsManager:
             if row_idx is None:
                 # Create new row
                 sheet.append_row([
-                    telefono_norm,
+                    telefono,
                     estado.value,
                     id_pendiente or "",
                     ultimo_mensaje,
@@ -227,8 +227,7 @@ class SheetsManager:
             else:
                 # Update existing row
                 sheet.update_cell(row_idx, 2, estado.value)
-                if id_pendiente:
-                    sheet.update_cell(row_idx, 3, id_pendiente)
+                sheet.update_cell(row_idx, 3, id_pendiente or "")
                 sheet.update_cell(row_idx, 4, ultimo_mensaje)
                 sheet.update_cell(row_idx, 5, datetime.utcnow().isoformat())
 
