@@ -110,6 +110,13 @@ class ConversationRouter:
             if trigger in {"hola", "inicio", "empezar", "comenzar", "start"}:
                 return await self._iniciar_seleccion_sucursal(payload, twilio_client)
 
+            await twilio_client.send_text(
+                payload.telefono,
+                "Escribí INICIO para comenzar la auditoría guiada.\n"
+                "Usá /ayuda para ver comandos.",
+            )
+            return "idle_waiting_start"
+
         # Process audit finding
         message_to_parse = payload.contenido or ""
 
