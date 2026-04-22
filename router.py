@@ -680,12 +680,12 @@ EDITAR → Hacer cambios""",
                     sesion.punto_actual += 1
                     sesion.timestamp_ultimo_punto = datetime.now().isoformat()
                     self.sheets.update_sesion(
-                        sesion.id_sesion,
-                        sesion.punto_actual,
-                        sesion.hallazgos_json,
-                        sesion.omitidos_json,
-                        sesion.estado,
-                        sesion.timestamp_ultimo_punto,
+                        id_sesion=sesion.id_sesion,
+                        estado=sesion.estado,
+                        timestamp_ultimo_punto=sesion.timestamp_ultimo_punto,
+                        punto_actual=sesion.punto_actual,
+                        hallazgos_json=sesion.hallazgos_json,
+                        omitidos_json=sesion.omitidos_json,
                     )
 
                     # Check if finished
@@ -700,12 +700,12 @@ EDITAR → Hacer cambios""",
                 if cmd == "pausar":
                     sesion.estado = "pausada"
                     self.sheets.update_sesion(
-                        sesion.id_sesion,
-                        sesion.punto_actual,
-                        sesion.hallazgos_json,
-                        sesion.omitidos_json,
-                        sesion.estado,
-                        sesion.timestamp_ultimo_punto,
+                        id_sesion=sesion.id_sesion,
+                        estado=sesion.estado,
+                        timestamp_ultimo_punto=sesion.timestamp_ultimo_punto,
+                        punto_actual=sesion.punto_actual,
+                        hallazgos_json=sesion.hallazgos_json,
+                        omitidos_json=sesion.omitidos_json,
                     )
                     self.sheets.update_conversacion(
                         telefono=payload.telefono,
@@ -846,12 +846,12 @@ EDITAR → Hacer cambios""",
             sesion.punto_actual += 1
             sesion.timestamp_ultimo_punto = datetime.now().isoformat()
             self.sheets.update_sesion(
-                sesion.id_sesion,
-                sesion.punto_actual,
-                sesion.hallazgos_json,
-                sesion.omitidos_json,
-                sesion.estado,
-                sesion.timestamp_ultimo_punto,
+                id_sesion=sesion.id_sesion,
+                estado=sesion.estado,
+                timestamp_ultimo_punto=sesion.timestamp_ultimo_punto,
+                punto_actual=sesion.punto_actual,
+                hallazgos_json=sesion.hallazgos_json,
+                omitidos_json=sesion.omitidos_json,
             )
 
             # Check if finished
@@ -895,12 +895,12 @@ EDITAR → Hacer cambios""",
                 sesion.estado = "en_curso"
                 sesion.timestamp_ultimo_punto = datetime.now().isoformat()
                 self.sheets.update_sesion(
-                    sesion.id_sesion,
-                    sesion.punto_actual,
-                    sesion.hallazgos_json,
-                    sesion.omitidos_json,
-                    sesion.estado,
-                    sesion.timestamp_ultimo_punto,
+                    id_sesion=sesion.id_sesion,
+                    estado=sesion.estado,
+                    timestamp_ultimo_punto=sesion.timestamp_ultimo_punto,
+                    punto_actual=sesion.punto_actual,
+                    hallazgos_json=sesion.hallazgos_json,
+                    omitidos_json=sesion.omitidos_json,
                 )
 
                 self.sheets.update_conversacion(
@@ -950,12 +950,12 @@ EDITAR → Hacer cambios""",
         try:
             sesion.estado = "completa"
             self.sheets.update_sesion(
-                sesion.id_sesion,
-                sesion.punto_actual,
-                sesion.hallazgos_json,
-                sesion.omitidos_json,
-                sesion.estado,
-                sesion.timestamp_ultimo_punto,
+                id_sesion=sesion.id_sesion,
+                estado=sesion.estado,
+                timestamp_ultimo_punto=sesion.timestamp_ultimo_punto,
+                punto_actual=sesion.punto_actual,
+                hallazgos_json=sesion.hallazgos_json,
+                omitidos_json=sesion.omitidos_json,
             )
 
             # Parse results

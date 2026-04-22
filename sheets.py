@@ -183,30 +183,44 @@ class SheetsManager:
             rows = sheet.get_all_records()
             telefono_norm = self._normalize_phone(telefono)
             for row in rows:
-                if self._normalize_phone(row.get("Telefono")) == telefono_norm:
+                telefono_row = self._first_value(
+                    row,
+                    "Telefono",
+                    "Telefono_Auditor",
+                )
+                if self._normalize_phone(telefono_row) == telefono_norm:
                     estado_raw = (
-                        row.get("Estado_actual")
-                        or row.get("estado_actual")
-                        or row.get("estado")
+                        self._first_value(
+                            row,
+                            "Estado_actual",
+                            "estado_actual",
+                            "Estado",
+                            "estado",
+                        )
                         or "idle"
                     )
-                    id_pendiente = (
-                        row.get("ID_pendiente")
-                        or row.get("id_pendiente")
-                        or row.get("ID_Pendiente")
+                    id_pendiente = self._first_value(
+                        row,
+                        "ID_pendiente",
+                        "id_pendiente",
+                        "ID_Pendiente",
+                        "Hallazgo_Temp",
                     )
-                    ultimo_mensaje = (
-                        row.get("Ultimo_mensaje")
-                        or row.get("ultimo_mensaje")
-                        or ""
+                    ultimo_mensaje = self._first_value(
+                        row,
+                        "Ultimo_mensaje",
+                        "ultimo_mensaje",
+                        "Hallazgo_Temp",
+                        default="",
                     )
-                    timestamp_raw = (
-                        row.get("Timestamp")
-                        or row.get("timestamp")
-                        or row.get("timestamp_ultimo")
+                    timestamp_raw = self._first_value(
+                        row,
+                        "Timestamp",
+                        "timestamp",
+                        "timestamp_ultimo",
                     )
                     return Conversacion(
-                        telefono=row.get("Telefono", ""),
+                        telefono=telefono_row,
                         estado_actual=self._parse_conversation_state(str(estado_raw)),
                         id_pendiente=id_pendiente,
                         ultimo_mensaje=ultimo_mensaje,
@@ -228,29 +242,81 @@ class SheetsManager:
         try:
             sheet = self._get_sheet("Conversaciones")
             rows = sheet.get_all_records()
+            headers = sheet.row_values(1)
             row_idx = None
             telefono_norm = self._normalize_phone(telefono)
+            timestamp_now = datetime.utcnow().isoformat()
 
             for idx, row in enumerate(rows):
-                if self._normalize_phone(row.get("Telefono")) == telefono_norm:
+                telefono_row = self._first_value(
+                    row,
+                    "Telefono",
+                    "Telefono_Auditor",
+                )
+                if self._normalize_phone(telefono_row) == telefono_norm:
                     row_idx = idx + 2  # +1 for header, +1 for 1-based indexing
                     break
 
+            def value_for_header(header: str) -> str:
+                if header in {"Telefono", "Telefono_Auditor"}:
+                    return telefono_norm
+                if header in {"Estado_actual", "estado_actual", "Estado", "estado"}:
+                    return estado.value
+                if header in {"ID_pendiente", "id_pendiente", "ID_Pendiente"}:
+                    return id_pendiente or ""
+                if header in {"Hallazgo_Temp"}:
+                    return id_pendiente or ""
+                if header in {"Ultimo_mensaje", "ultimo_mensaje"}:
+                    return ultimo_mensaje
+                if header in {"Timestamp", "timestamp", "timestamp_ultimo", "Timestamp_creacion", "Timeout_At", "Expira_en"}:
+                    return timestamp_now
+                return ""
+
             if row_idx is None:
-                # Create new row
-                sheet.append_row([
-                    telefono_norm,
-                    estado.value,
-                    id_pendiente or "",
-                    ultimo_mensaje,
-                    datetime.utcnow().isoformat(),
-                ])
+                # Create new row honoring the current sheet schema.
+                if headers:
+                    sheet.append_row([value_for_header(header.strip()) for header in headers])
+                else:
+                    sheet.append_row([
+                        telefono_norm,
+                        estado.value,
+                        id_pendiente or "",
+                        ultimo_mensaje,
+                        timestamp_now,
+                    ])
             else:
-                # Update existing row
-                sheet.update_cell(row_idx, 2, estado.value)
-                sheet.update_cell(row_idx, 3, id_pendiente or "")
-                sheet.update_cell(row_idx, 4, ultimo_mensaje)
-                sheet.update_cell(row_idx, 5, datetime.utcnow().isoformat())
+                # Update existing row honoring whichever schema is present.
+                header_to_col = {header.strip(): idx + 1 for idx, header in enumerate(headers) if header.strip()}
+
+                for header_name in ("Telefono", "Telefono_Auditor"):
+                    col = header_to_col.get(header_name)
+                    if col:
+                        sheet.update_cell(row_idx, col, telefono_norm)
+                        break
+
+                for header_name in ("Estado_actual", "estado_actual", "Estado", "estado"):
+                    col = header_to_col.get(header_name)
+                    if col:
+                        sheet.update_cell(row_idx, col, estado.value)
+                        break
+
+                for header_name in ("ID_pendiente", "id_pendiente", "ID_Pendiente", "Hallazgo_Temp"):
+                    col = header_to_col.get(header_name)
+                    if col:
+                        sheet.update_cell(row_idx, col, id_pendiente or "")
+                        break
+
+                for header_name in ("Ultimo_mensaje", "ultimo_mensaje"):
+                    col = header_to_col.get(header_name)
+                    if col:
+                        sheet.update_cell(row_idx, col, ultimo_mensaje)
+                        break
+
+                for header_name in ("Timestamp", "timestamp", "timestamp_ultimo", "Timestamp_creacion", "Timeout_At", "Expira_en"):
+                    col = header_to_col.get(header_name)
+                    if col:
+                        sheet.update_cell(row_idx, col, timestamp_now)
+                        break
 
             logger.info(f"Updated conversation for {telefono}: {estado.value}")
         except Exception as e:
@@ -786,3 +852,12 @@ class SheetsManager:
                 return ConversationState(raw.lower())
             except ValueError:
                 return ConversationState.IDLE
+
+    @staticmethod
+    def _first_value(row: Dict[str, Any], *keys: str, default: str = "") -> str:
+        """Return the first non-empty value from a row for the given keys."""
+        for key in keys:
+            value = row.get(key)
+            if value not in (None, ""):
+                return str(value)
+        return default
