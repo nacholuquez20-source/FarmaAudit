@@ -5,6 +5,7 @@ from datetime import datetime
 import json
 
 from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import PlainTextResponse
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import pytz
 
@@ -100,7 +101,7 @@ async def webhook_verify(request: Request):
 
     if mode == "subscribe" and token == settings.meta_verify_token:
         logger.info("Webhook verified with Meta")
-        return challenge
+        return PlainTextResponse(challenge)
     else:
         logger.warning(f"Webhook verification failed: mode={mode}, token_match={token == settings.meta_verify_token}")
         raise HTTPException(status_code=403, detail="Forbidden")
