@@ -76,12 +76,12 @@ curl -X POST http://localhost:8000/webhook \
   }'
 ```
 
-### 6. Configurar Twilio Webhook
+### 6. Configurar Meta Webhook
 
-En Twilio Console:
+En Meta Developers:
 - Endpoint: `https://tu-app.railway.app/webhook` (cuando deployés)
 - Método: POST
-- Content-Type: `application/x-www-form-urlencoded` / `form-data`
+- Content-Type: `application/json`
 
 ### 7. Deploy en Railway
 
@@ -115,7 +115,7 @@ auditbot/
 ├── router.py            # State machine ✅
 ├── parser.py            # Claude parser ✅
 ├── sheets.py            # Google Sheets CRUD ✅
-├── waha.py              # WhatsApp client ✅
+├── meta_client.py       # WhatsApp client ✅
 ├── audio.py             # Whisper transcription ✅
 ├── drive.py             # Google Drive upload ✅
 ├── models.py            # Data models ✅
@@ -139,9 +139,9 @@ auditbot/
 |----------|--------|-----------|
 | `ANTHROPIC_API_KEY` | ✅ Configurado | console.anthropic.com |
 | `OPENAI_API_KEY` | ✅ Configurado | platform.openai.com |
-| `TWILIO_ACCOUNT_SID` | ✅ Configurado | ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx |
-| `TWILIO_AUTH_TOKEN` | ✅ Configurado | xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx |
-| `TWILIO_PHONE_NUMBER` | ✅ Configurado | +14155238886 |
+| `META_PHONE_NUMBER_ID` | ✅ Configurado | 123456789012345 |
+| `META_ACCESS_TOKEN` | ✅ Configurado | xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx |
+| `META_VERIFY_TOKEN` | ✅ Configurado | auditbot_verify_2024 |
 | `GOOGLE_SHEETS_ID` | ✅ Configurado | 1xr8SWx... |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | ⚠️ Pendiente | setup_env.py |
 | `GOOGLE_DRIVE_FOLDER_ID` | ✅ Configurado | 1Rs5pfc... |

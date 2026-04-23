@@ -33,14 +33,14 @@ class ConversationRouter:
     async def handle_message(
         self,
         payload: WAHAPayload,
-        twilio_client: MetaClient,
+        meta_client: MetaClient,
     ) -> str:
         """Route message based on conversation state."""
         try:
             # Validate auditor
             auditor = self.sheets.get_auditor(payload.telefono)
             if not auditor or not auditor.activo:
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     "❌ No estás registrado como auditor. Contacta al coordinador.",
                 )
@@ -58,35 +58,35 @@ class ConversationRouter:
 
             # Route based on state
             if conv.estado_actual == ConversationState.IDLE:
-                return await self._handle_idle_state(payload, auditor, conv, twilio_client)
+                return await self._handle_idle_state(payload, auditor, conv, meta_client)
             elif conv.estado_actual == ConversationState.SELECCIONANDO_SUCURSAL:
-                return await self._handle_seleccionando_sucursal(payload, conv, twilio_client)
+                return await self._handle_seleccionando_sucursal(payload, conv, meta_client)
             elif conv.estado_actual == ConversationState.EN_BLOQUE:
-                return await self._handle_en_bloque(payload, conv, twilio_client)
+                return await self._handle_en_bloque(payload, conv, meta_client)
             elif conv.estado_actual == ConversationState.CONFIRMANDO_BLOQUE:
-                return await self._handle_confirmando_bloque(payload, conv, twilio_client)
+                return await self._handle_confirmando_bloque(payload, conv, meta_client)
             elif conv.estado_actual == ConversationState.STOCK_LOOP:
-                return await self._handle_stock_loop(payload, conv, twilio_client)
+                return await self._handle_stock_loop(payload, conv, meta_client)
             elif conv.estado_actual == ConversationState.EN_STOCK_ITEM:
-                return await self._handle_en_stock_item(payload, conv, twilio_client)
+                return await self._handle_en_stock_item(payload, conv, meta_client)
             elif conv.estado_actual == ConversationState.DESVIO_LIBRE:
-                return await self._handle_desvio_libre(payload, conv, twilio_client)
+                return await self._handle_desvio_libre(payload, conv, meta_client)
             elif conv.estado_actual == ConversationState.COMPROMISOS:
-                return await self._handle_compromisos(payload, conv, twilio_client)
+                return await self._handle_compromisos(payload, conv, meta_client)
             elif conv.estado_actual == ConversationState.EN_AUDITORIA:
-                return await self._handle_en_auditoria(payload, conv, twilio_client)
+                return await self._handle_en_auditoria(payload, conv, meta_client)
             elif conv.estado_actual == ConversationState.AUDITORIA_PAUSADA:
-                return await self._handle_auditoria_pausada(payload, conv, twilio_client)
+                return await self._handle_auditoria_pausada(payload, conv, meta_client)
             elif conv.estado_actual == ConversationState.ESPERANDO_CONFIRMACION:
-                return await self._handle_confirmation_state(payload, conv, twilio_client)
+                return await self._handle_confirmation_state(payload, conv, meta_client)
             elif conv.estado_actual == ConversationState.ESPERANDO_EDICION:
-                return await self._handle_edition_state(payload, conv, twilio_client)
+                return await self._handle_edition_state(payload, conv, meta_client)
             else:
-                await twilio_client.send_text(payload.telefono, "⚠️ Estado desconocido")
+                await meta_client.send_text(payload.telefono, "⚠️ Estado desconocido")
                 return "unknown_state"
         except Exception as e:
             logger.error(f"Error handling message from {payload.telefono}: {e}", exc_info=True)
-            await twilio_client.send_text(
+            await meta_client.send_text(
                 payload.telefono,
                 "❌ Error procesando tu mensaje. Intenta de nuevo.",
             )
@@ -97,20 +97,20 @@ class ConversationRouter:
         payload: WAHAPayload,
         auditor: Auditor,
         conv: Conversacion,
-        twilio_client: MetaClient,
+        meta_client: MetaClient,
     ) -> str:
         """Handle message in idle state."""
         # Check for special commands
         if payload.contenido and payload.contenido.startswith("/"):
-            return await self._handle_command(payload, auditor, twilio_client)
+            return await self._handle_command(payload, auditor, meta_client)
 
         # Check for guided audit trigger ("hola", "inicio", "empezar", "comenzar", "start")
         if payload.tipo == "text" and payload.contenido:
             trigger = payload.contenido.lower().strip()
             if trigger in {"hola", "inicio", "empezar", "comenzar", "start"}:
-                return await self._iniciar_seleccion_sucursal(payload, twilio_client)
+                return await self._iniciar_seleccion_sucursal(payload, meta_client)
 
-            await twilio_client.send_text(
+            await meta_client.send_text(
                 payload.telefono,
                 "Escribí INICIO para comenzar la auditoría guiada.\n"
                 "Usá /ayuda para ver comandos.",
@@ -128,7 +128,7 @@ class ConversationRouter:
                 )
             except Exception as e:
                 logger.error(f"Failed to transcribe audio: {e}")
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     "❌ Error transcribiendo audio. Intenta de nuevo.",
                 )
@@ -136,7 +136,7 @@ class ConversationRouter:
 
         # If image without text, ask for context
         if payload.tipo == "image" and not payload.contenido:
-            await twilio_client.send_text(
+            await meta_client.send_text(
                 payload.telefono,
                 "📸 Recibí la foto. ¿Qué hallazgo describe? Enviame texto con el contexto.",
             )
@@ -159,7 +159,7 @@ class ConversationRouter:
         # Parse message
         parse_result = await self.parser.parse_message(message_to_parse)
         if not parse_result or not parse_result.hallazgos:
-            await twilio_client.send_text(
+            await meta_client.send_text(
                 payload.telefono,
                 "⚠️ No entendí el hallazgo. Por favor, sé más específico:\n"
                 "• Sucursal\n• Área (Perfumería, Farmacia, etc)\n• Sub-item\n• Descripción",
@@ -209,14 +209,14 @@ class ConversationRouter:
         logger.info(f"Updated state to ESPERANDO_CONFIRMACION for {payload.telefono}, pendiente={id_pendiente}")
 
         # Show draft for confirmation
-        await self._show_draft(parse_result, photo_url, payload.telefono, twilio_client)
+        await self._show_draft(parse_result, photo_url, payload.telefono, meta_client)
         return "parse_success"
 
     async def _handle_confirmation_state(
         self,
         payload: WAHAPayload,
         conv: Conversacion,
-        twilio_client: MetaClient,
+        meta_client: MetaClient,
     ) -> str:
         """Handle response in confirmation state."""
         if not payload.contenido:
@@ -228,11 +228,11 @@ class ConversationRouter:
         # Check for yes responses (with or without accent)
         if answer in {"SI", "SÍ", "YES", "Y"}:
             logger.info(f"Confirmed finding for {payload.telefono}")
-            return await self._confirm_and_create(conv, twilio_client)
+            return await self._confirm_and_create(conv, meta_client)
         elif answer in {"NO", "N"}:
             # Discard
             logger.info(f"Discarded finding for {payload.telefono}")
-            await twilio_client.send_text(
+            await meta_client.send_text(
                 payload.telefono,
                 "❌ Descartado. Envíame otro hallazgo cuando estés listo.",
             )
@@ -250,14 +250,14 @@ class ConversationRouter:
                 estado=ConversationState.ESPERANDO_EDICION,
                 id_pendiente=conv.id_pendiente,
             )
-            await twilio_client.send_text(
+            await meta_client.send_text(
                 payload.telefono,
                 "✏️ ¿Qué necesitas editar? Enviame la corrección.",
             )
             return "edit_requested"
         else:
             logger.warning(f"Invalid confirmation response from {payload.telefono}: '{answer}'")
-            await twilio_client.send_text(
+            await meta_client.send_text(
                 payload.telefono,
                 "⚠️ Por favor responde con:\nSI - para confirmar\nNO - para descartar\nEDITAR - para hacer cambios",
             )
@@ -267,7 +267,7 @@ class ConversationRouter:
         self,
         payload: WAHAPayload,
         conv: Conversacion,
-        twilio_client: MetaClient,
+        meta_client: MetaClient,
     ) -> str:
         """Handle correction in edition state."""
         if not payload.contenido:
@@ -276,7 +276,7 @@ class ConversationRouter:
         # Get pending data
         pendiente = self.sheets.get_pendiente(conv.id_pendiente)
         if not pendiente:
-            await twilio_client.send_text(
+            await meta_client.send_text(
                 payload.telefono,
                 "❌ Error: No encontré el pendiente. Intenta de nuevo.",
             )
@@ -302,7 +302,7 @@ class ConversationRouter:
             )
 
             if not corrected or not corrected.hallazgos:
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     "⚠️ No pude aplicar la corrección. Intenta de nuevo.",
                 )
@@ -350,11 +350,11 @@ class ConversationRouter:
             )
 
             # Show corrected draft
-            await self._show_draft(corrected, photo_url, payload.telefono, twilio_client)
+            await self._show_draft(corrected, photo_url, payload.telefono, meta_client)
             return "correction_applied"
         except Exception as e:
             logger.error(f"Error applying correction: {e}")
-            await twilio_client.send_text(
+            await meta_client.send_text(
                 payload.telefono,
                 "❌ Error procesando la corrección.",
             )
@@ -364,13 +364,13 @@ class ConversationRouter:
         self,
         payload: WAHAPayload,
         auditor: Auditor,
-        twilio_client: MetaClient,
+        meta_client: MetaClient,
     ) -> str:
         """Handle special commands."""
         cmd = payload.contenido.lower().strip()
 
         if cmd == "/ayuda":
-            await twilio_client.send_text(
+            await meta_client.send_text(
                 payload.telefono,
                 """📋 **AYUDA AuditBot**
 
@@ -392,14 +392,14 @@ EDITAR → Hacer cambios""",
             return "help_sent"
         elif cmd == "/resumen":
             # TODO: Implement daily summary
-            await twilio_client.send_text(
+            await meta_client.send_text(
                 payload.telefono,
                 "📊 Resumen del día:\n(Pronto disponible)",
             )
             return "summary_requested"
         elif cmd == "/mis":
             # TODO: Implement user's reports today
-            await twilio_client.send_text(
+            await meta_client.send_text(
                 payload.telefono,
                 "📄 Tus reportes de hoy:\n(Pronto disponible)",
             )
@@ -412,7 +412,7 @@ EDITAR → Hacer cambios""",
         parse_result: ParserResponse,
         photo_url: Optional[str],
         phone: str,
-        twilio_client: MetaClient,
+        meta_client: MetaClient,
     ) -> None:
         """Show draft for confirmation."""
         draft = "📋 **Borrador de Hallazgos**:\n\n"
@@ -426,14 +426,14 @@ EDITAR → Hacer cambios""",
         draft += "¿Confirmo? (SI/NO/EDITAR)"
 
         if photo_url:
-            await twilio_client.send_file(phone, photo_url, draft)
+            await meta_client.send_file(phone, photo_url, draft)
         else:
-            await twilio_client.send_text(phone, draft)
+            await meta_client.send_text(phone, draft)
 
     async def _confirm_and_create(
         self,
         conv: Conversacion,
-        twilio_client: MetaClient,
+        meta_client: MetaClient,
     ) -> str:
         """Create reports and gestiones after confirmation."""
         try:
@@ -507,7 +507,7 @@ EDITAR → Hacer cambios""",
                     f"Plazo: {plazo_fecha.strftime('%Y-%m-%d %H:%M')}\n\n"
                     f"ID Gestión: {gestion_id}"
                 )
-                await twilio_client.send_text(sucursal.tel_responsable, msg)
+                await meta_client.send_text(sucursal.tel_responsable, msg)
 
             # Clean up
             self.sheets.delete_pendiente(conv.id_pendiente)
@@ -516,14 +516,14 @@ EDITAR → Hacer cambios""",
                 estado=ConversationState.IDLE,
             )
 
-            await twilio_client.send_text(
+            await meta_client.send_text(
                 conv.telefono,
                 "✅ Hallazgos guardados. Notificaciones enviadas a responsables.",
             )
             return "confirmed"
         except Exception as e:
             logger.error(f"Error confirming and creating: {e}")
-            await twilio_client.send_text(
+            await meta_client.send_text(
                 conv.telefono,
                 "❌ Error guardando hallazgos.",
             )
@@ -532,13 +532,13 @@ EDITAR → Hacer cambios""",
     async def _iniciar_seleccion_sucursal(
         self,
         payload: WAHAPayload,
-        twilio_client: MetaClient,
+        meta_client: MetaClient,
     ) -> str:
         """Start guided audit flow: send sucursal list."""
         try:
             sucursales = self.sheets.get_all_sucursales()
             if not sucursales:
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     "❌ No hay sucursales disponibles.",
                 )
@@ -551,7 +551,7 @@ EDITAR → Hacer cambios""",
 
             menu += "\nResponde con el número de la sucursal."
 
-            await twilio_client.send_text(payload.telefono, menu)
+            await meta_client.send_text(payload.telefono, menu)
 
             # Update conversation state
             self.sheets.update_conversacion(
@@ -562,7 +562,7 @@ EDITAR → Hacer cambios""",
             return "sucursal_menu_sent"
         except Exception as e:
             logger.error(f"Error initiating sucursal selection: {e}")
-            await twilio_client.send_text(
+            await meta_client.send_text(
                 payload.telefono,
                 "❌ Error iniciando auditoría.",
             )
@@ -572,12 +572,12 @@ EDITAR → Hacer cambios""",
         self,
         payload: WAHAPayload,
         conv: Conversacion,
-        twilio_client: MetaClient,
+        meta_client: MetaClient,
     ) -> str:
         """Handle sucursal selection."""
         try:
             if not payload.contenido:
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     "⚠️ Por favor responde con un número.",
                 )
@@ -587,7 +587,7 @@ EDITAR → Hacer cambios""",
             try:
                 choice = int(payload.contenido.strip())
             except ValueError:
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     "⚠️ Responde con un número válido.",
                 )
@@ -595,7 +595,7 @@ EDITAR → Hacer cambios""",
 
             sucursales = self.sheets.get_all_sucursales()
             if choice < 1 or choice > len(sucursales):
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     f"⚠️ Número fuera de rango. Elige entre 1 y {len(sucursales)}.",
                 )
@@ -606,7 +606,7 @@ EDITAR → Hacer cambios""",
             # Get checklist
             checklist = self.sheets.get_checklist()
             if not checklist:
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     "❌ No hay checklist disponible.",
                 )
@@ -637,16 +637,16 @@ EDITAR → Hacer cambios""",
             )
 
             # Send first point
-            await twilio_client.send_text(
+            await meta_client.send_text(
                 payload.telefono,
                 f"✅ Iniciando auditoría en {sucursal.nombre}",
             )
-            await self._enviar_siguiente_punto(sesion, checklist, twilio_client, payload.telefono)
+            await self._enviar_siguiente_punto(sesion, checklist, meta_client, payload.telefono)
 
             return "auditoria_started"
         except Exception as e:
             logger.error(f"Error handling sucursal selection: {e}")
-            await twilio_client.send_text(
+            await meta_client.send_text(
                 payload.telefono,
                 "❌ Error seleccionando sucursal.",
             )
@@ -656,14 +656,14 @@ EDITAR → Hacer cambios""",
         self,
         payload: WAHAPayload,
         conv: Conversacion,
-        twilio_client: MetaClient,
+        meta_client: MetaClient,
     ) -> str:
         """Handle response during audit."""
         try:
             # Get active session
             sesion = self.sheets.get_sesion(conv.id_pendiente)
             if not sesion:
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     "❌ Sesión no encontrada.",
                 )
@@ -690,11 +690,11 @@ EDITAR → Hacer cambios""",
 
                     # Check if finished
                     if sesion.punto_actual >= sesion.total_puntos:
-                        return await self._cerrar_auditoria(sesion, twilio_client, payload.telefono)
+                        return await self._cerrar_auditoria(sesion, meta_client, payload.telefono)
 
                     # Send next point
                     checklist = self.sheets.get_checklist()
-                    await self._enviar_siguiente_punto(sesion, checklist, twilio_client, payload.telefono)
+                    await self._enviar_siguiente_punto(sesion, checklist, meta_client, payload.telefono)
                     return "punto_omitido"
 
                 if cmd == "pausar":
@@ -712,7 +712,7 @@ EDITAR → Hacer cambios""",
                         estado=ConversationState.AUDITORIA_PAUSADA,
                         id_pendiente=conv.id_pendiente,
                     )
-                    await twilio_client.send_text(
+                    await meta_client.send_text(
                         payload.telefono,
                         "⏸️ Auditoría pausada. Escribe 'continuar' cuando quieras retomar.",
                     )
@@ -725,14 +725,14 @@ EDITAR → Hacer cambios""",
                     respuesta = await self.transcriber.transcribe_from_url(payload.media_url)
                 except Exception as e:
                     logger.error(f"Failed to transcribe audio: {e}")
-                    await twilio_client.send_text(
+                    await meta_client.send_text(
                         payload.telefono,
                         "❌ Error transcribiendo audio. Intenta de nuevo.",
                     )
                     return "transcription_error"
 
             if not respuesta:
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     "⚠️ Por favor envía audio, foto o texto con tu observación.",
                 )
@@ -759,7 +759,7 @@ EDITAR → Hacer cambios""",
             eval_result = await self.parser.evaluate_punto_respuesta(punto, respuesta)
 
             if not eval_result:
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     "❌ Error evaluando respuesta. Intenta de nuevo.",
                 )
@@ -827,7 +827,7 @@ EDITAR → Hacer cambios""",
                         f"Plazo: {plazo_fecha.strftime('%Y-%m-%d %H:%M')}\n\n"
                         f"ID Gestión: {gestion_id}"
                     )
-                    await twilio_client.send_text(sucursal.tel_responsable, msg)
+                    await meta_client.send_text(sucursal.tel_responsable, msg)
 
                 # Store in session
                 hallazgos = json.loads(sesion.hallazgos_json)
@@ -840,7 +840,7 @@ EDITAR → Hacer cambios""",
                 sesion.hallazgos_json = json.dumps(hallazgos)
 
             # Confirm to auditor
-            await twilio_client.send_text(payload.telefono, eval_result.ok_message)
+            await meta_client.send_text(payload.telefono, eval_result.ok_message)
 
             # Advance to next point
             sesion.punto_actual += 1
@@ -856,15 +856,15 @@ EDITAR → Hacer cambios""",
 
             # Check if finished
             if sesion.punto_actual >= sesion.total_puntos:
-                return await self._cerrar_auditoria(sesion, twilio_client, payload.telefono)
+                return await self._cerrar_auditoria(sesion, meta_client, payload.telefono)
 
             # Send next point
             checklist = self.sheets.get_checklist()
-            await self._enviar_siguiente_punto(sesion, checklist, twilio_client, payload.telefono)
+            await self._enviar_siguiente_punto(sesion, checklist, meta_client, payload.telefono)
             return "punto_evaluado"
         except Exception as e:
             logger.error(f"Error handling en_auditoria: {e}")
-            await twilio_client.send_text(
+            await meta_client.send_text(
                 payload.telefono,
                 "❌ Error procesando respuesta.",
             )
@@ -874,7 +874,7 @@ EDITAR → Hacer cambios""",
         self,
         payload: WAHAPayload,
         conv: Conversacion,
-        twilio_client: MetaClient,
+        meta_client: MetaClient,
     ) -> str:
         """Handle response in paused audit state."""
         try:
@@ -886,7 +886,7 @@ EDITAR → Hacer cambios""",
                 # Resume audit
                 sesion = self.sheets.get_sesion(conv.id_pendiente)
                 if not sesion:
-                    await twilio_client.send_text(
+                    await meta_client.send_text(
                         payload.telefono,
                         "❌ Sesión no encontrada.",
                     )
@@ -910,10 +910,10 @@ EDITAR → Hacer cambios""",
                 )
 
                 checklist = self.sheets.get_checklist()
-                await self._enviar_siguiente_punto(sesion, checklist, twilio_client, payload.telefono)
+                await self._enviar_siguiente_punto(sesion, checklist, meta_client, payload.telefono)
                 return "auditoria_resumed"
             else:
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     "⚠️ Escribe 'continuar' para retomar la auditoría.",
                 )
@@ -926,13 +926,13 @@ EDITAR → Hacer cambios""",
         self,
         sesion: SesionAuditoria,
         checklist: list,
-        twilio_client: MetaClient,
+        meta_client: MetaClient,
         phone: str,
     ) -> None:
         """Send next checklist point."""
         if sesion.punto_actual < len(checklist):
             punto = checklist[sesion.punto_actual]
-            await twilio_client.send_punto(
+            await meta_client.send_punto(
                 phone,
                 punto.punto_orden,
                 sesion.total_puntos,
@@ -943,7 +943,7 @@ EDITAR → Hacer cambios""",
     async def _cerrar_auditoria(
         self,
         sesion: SesionAuditoria,
-        twilio_client: MetaClient,
+        meta_client: MetaClient,
         phone: str,
     ) -> str:
         """Close audit session and send summary."""
@@ -975,7 +975,7 @@ EDITAR → Hacer cambios""",
             # Send summary to auditor
             sucursal = self.sheets.get_sucursal(sesion.sucursal_id)
             sucursal_nombre = sucursal.nombre if sucursal else "Sucursal"
-            await twilio_client.send_resumen_auditoria(
+            await meta_client.send_resumen_auditoria(
                 phone,
                 sucursal_nombre,
                 sesion.total_puntos,
@@ -999,7 +999,7 @@ EDITAR → Hacer cambios""",
                     f"Omitidos: {omitidos_count}\n"
                     f"ID Sesión: {sesion.id_sesion}"
                 )
-                await twilio_client.send_text(settings.coordinador_tel, coord_msg)
+                await meta_client.send_text(settings.coordinador_tel, coord_msg)
 
             # Reset conversation
             self.sheets.update_conversacion(
@@ -1018,7 +1018,7 @@ EDITAR → Hacer cambios""",
         self,
         payload: WAHAPayload,
         conv: Conversacion,
-        twilio_client: MetaClient,
+        meta_client: MetaClient,
     ) -> str:
         """Handle auditor response in block evaluation state."""
         try:
@@ -1030,7 +1030,7 @@ EDITAR → Hacer cambios""",
                         telefono=payload.telefono,
                         estado=ConversationState.AUDITORIA_PAUSADA,
                     )
-                    await twilio_client.send_text(
+                    await meta_client.send_text(
                         payload.telefono,
                         "⏸️ Auditoría pausada. Mandá 'continuar' cuando estés listo.",
                     )
@@ -1039,14 +1039,14 @@ EDITAR → Hacer cambios""",
             # Get session
             sesion = self.sheets.get_sesion(conv.id_pendiente or "")
             if not sesion:
-                await twilio_client.send_text(payload.telefono, "❌ Sesión no encontrada")
+                await meta_client.send_text(payload.telefono, "❌ Sesión no encontrada")
                 return "error"
 
             # Get block items
             bloques = self.sheets.get_checklist_bloques()
             bloque_id = sesion.bloque_actual
             if bloque_id not in bloques:
-                await twilio_client.send_text(payload.telefono, "❌ Bloque no encontrado")
+                await meta_client.send_text(payload.telefono, "❌ Bloque no encontrado")
                 return "error"
 
             items = bloques[bloque_id]
@@ -1065,7 +1065,7 @@ EDITAR → Hacer cambios""",
                 bloque_id, f"Bloque {bloque_id}", items, respuesta_auditor
             )
             if not resultados:
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     "❌ No pude evaluar la respuesta. Intenta de nuevo.",
                 )
@@ -1085,7 +1085,7 @@ EDITAR → Hacer cambios""",
 
             # Send confirmation
             bloque_nombre = items[0].descripcion.split(":")[0] if items else bloque_id
-            await twilio_client.send_bloque_confirmacion(
+            await meta_client.send_bloque_confirmacion(
                 payload.telefono, bloque_id, f"Bloque {bloque_id}", items, resultados
             )
 
@@ -1098,12 +1098,12 @@ EDITAR → Hacer cambios""",
         self,
         payload: WAHAPayload,
         conv: Conversacion,
-        twilio_client: MetaClient,
+        meta_client: MetaClient,
     ) -> str:
         """Handle block confirmation (SI/EDITAR/SALTAR)."""
         try:
             if payload.tipo != "text" or not payload.contenido:
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     "⚠️ Respondé SI, EDITAR o SALTAR BLOQUE",
                 )
@@ -1147,7 +1147,7 @@ EDITAR → Hacer cambios""",
                             from config import get_settings
                             settings = get_settings()
                             if settings.coordinador_tel:
-                                await twilio_client.send_alerta_coordinador(
+                                await meta_client.send_alerta_coordinador(
                                     settings.coordinador_tel,
                                     sucursal_nombre,
                                     f"Bloque {bloque_id}",
@@ -1165,7 +1165,7 @@ EDITAR → Hacer cambios""",
                         estado=ConversationState.STOCK_LOOP,
                         id_pendiente=sesion.id_sesion,
                     )
-                    await twilio_client.send_text(
+                    await meta_client.send_text(
                         payload.telefono,
                         "🔍 Verificación de Stock\n\n¿Cuántos productos querés verificar? (0 para saltar)",
                     )
@@ -1182,7 +1182,7 @@ EDITAR → Hacer cambios""",
                     # Send next bloque
                     bloques = self.sheets.get_checklist_bloques()
                     if next_state in bloques:
-                        await twilio_client.send_bloque_prompt(
+                        await meta_client.send_bloque_prompt(
                             payload.telefono, next_state, f"Bloque {next_state}",
                             bloques[next_state]
                         )
@@ -1199,7 +1199,7 @@ EDITAR → Hacer cambios""",
                 bloques = self.sheets.get_checklist_bloques()
                 bloque_id = sesion.bloque_actual
                 if bloque_id in bloques:
-                    await twilio_client.send_bloque_prompt(
+                    await meta_client.send_bloque_prompt(
                         payload.telefono, bloque_id, f"Bloque {bloque_id}", bloques[bloque_id]
                     )
                 return "bloque_reditado"
@@ -1215,7 +1215,7 @@ EDITAR → Hacer cambios""",
                         estado=ConversationState.STOCK_LOOP,
                         id_pendiente=sesion.id_sesion,
                     )
-                    await twilio_client.send_text(
+                    await meta_client.send_text(
                         payload.telefono,
                         "🔍 Verificación de Stock\n\n¿Cuántos productos querés verificar? (0 para saltar)",
                     )
@@ -1235,7 +1235,7 @@ EDITAR → Hacer cambios""",
 
                     bloques = self.sheets.get_checklist_bloques()
                     if next_state in bloques:
-                        await twilio_client.send_bloque_prompt(
+                        await meta_client.send_bloque_prompt(
                             payload.telefono, next_state, f"Bloque {next_state}",
                             bloques[next_state]
                         )
@@ -1243,7 +1243,7 @@ EDITAR → Hacer cambios""",
                 return "bloque_saltado"
 
             else:
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     "⚠️ Respondé SI, EDITAR o SALTAR BLOQUE",
                 )
@@ -1257,12 +1257,12 @@ EDITAR → Hacer cambios""",
         self,
         payload: WAHAPayload,
         conv: Conversacion,
-        twilio_client: MetaClient,
+        meta_client: MetaClient,
     ) -> str:
         """Handle stock verification count input."""
         try:
             if payload.tipo != "text" or not payload.contenido:
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     "⚠️ Mandá un número o 0 para saltar",
                 )
@@ -1271,7 +1271,7 @@ EDITAR → Hacer cambios""",
             try:
                 cantidad = int(payload.contenido.strip())
             except ValueError:
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     "⚠️ Mandá un número válido",
                 )
@@ -1288,7 +1288,7 @@ EDITAR → Hacer cambios""",
                     estado=ConversationState.DESVIO_LIBRE,
                     id_pendiente=sesion.id_sesion,
                 )
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     "📋 Desvíos Libres\n\nTiene algún desvío o hallazgo libre para reportar?\n\nMandá 'NO' si no hay más desvíos, o describí el problema.",
                 )
@@ -1305,7 +1305,7 @@ EDITAR → Hacer cambios""",
                     estado=ConversationState.EN_STOCK_ITEM,
                     id_pendiente=sesion.id_sesion,
                 )
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     f"📦 Producto 1/{cantidad}\n\nMandá: Nombre / Stock Físico / Stock Sistema\n\nEj: Ibuprofeno 400 / 23 / 18",
                 )
@@ -1319,12 +1319,12 @@ EDITAR → Hacer cambios""",
         self,
         payload: WAHAPayload,
         conv: Conversacion,
-        twilio_client: MetaClient,
+        meta_client: MetaClient,
     ) -> str:
         """Handle stock item entry."""
         try:
             if payload.tipo != "text" or not payload.contenido:
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     "⚠️ Mandá el formato: Nombre / Stock Físico / Stock Sistema",
                 )
@@ -1333,7 +1333,7 @@ EDITAR → Hacer cambios""",
             # Parse stock item
             stock_item = await self.parser.parse_stock_item(payload.contenido)
             if not stock_item:
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     "❌ No pude entender el formato. Intenta: Nombre / Físico / Sistema",
                 )
@@ -1367,7 +1367,7 @@ EDITAR → Hacer cambios""",
 
             # TODO: Track count and move to next or finish
             # For now, continue with stock loop
-            await twilio_client.send_text(
+            await meta_client.send_text(
                 payload.telefono,
                 f"✓ Registrado: {stock_item.nombre}\n\nMandá el próximo producto o 'listo'",
             )
@@ -1382,12 +1382,12 @@ EDITAR → Hacer cambios""",
         self,
         payload: WAHAPayload,
         conv: Conversacion,
-        twilio_client: MetaClient,
+        meta_client: MetaClient,
     ) -> str:
         """Handle free-form deviations."""
         try:
             if payload.tipo != "text" or not payload.contenido:
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     "⚠️ Mandá 'NO' o describí el desvío",
                 )
@@ -1406,7 +1406,7 @@ EDITAR → Hacer cambios""",
                     estado=ConversationState.COMPROMISOS,
                     id_pendiente=sesion.id_sesion,
                 )
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     "📝 Compromisos\n\n¿Firmaron compromisos de corrección?\n\nSI / NO / PENDIENTE",
                 )
@@ -1415,7 +1415,7 @@ EDITAR → Hacer cambios""",
             # Parse free deviation
             desvio = await self.parser.parse_desvio_libre(payload.contenido)
             if not desvio:
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     "❌ No pude procesar el desvío. Intenta de nuevo.",
                 )
@@ -1454,7 +1454,7 @@ EDITAR → Hacer cambios""",
                 if settings.coordinador_tel:
                     sucursal = self.sheets.get_sucursal(sesion.sucursal_id)
                     sucursal_nombre = sucursal.nombre if sucursal else sesion.sucursal_id
-                    await twilio_client.send_alerta_coordinador(
+                    await meta_client.send_alerta_coordinador(
                         settings.coordinador_tel,
                         sucursal_nombre,
                         desvio.area_estimada,
@@ -1462,7 +1462,7 @@ EDITAR → Hacer cambios""",
                         "Alta",
                     )
 
-            await twilio_client.send_text(
+            await meta_client.send_text(
                 payload.telefono,
                 f"✓ Registrado desvío en {desvio.area_estimada}\n\n¿Hay más desvíos? Describí o mandá 'NO'",
             )
@@ -1477,12 +1477,12 @@ EDITAR → Hacer cambios""",
         self,
         payload: WAHAPayload,
         conv: Conversacion,
-        twilio_client: MetaClient,
+        meta_client: MetaClient,
     ) -> str:
         """Handle compromise commitments (SI/NO/PENDIENTE)."""
         try:
             if payload.tipo != "text" or not payload.contenido:
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     "⚠️ Respondé SI, NO o PENDIENTE",
                 )
@@ -1490,7 +1490,7 @@ EDITAR → Hacer cambios""",
 
             respuesta = payload.contenido.upper().strip()
             if respuesta not in {"SI", "SÍ", "NO", "PENDIENTE"}:
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     payload.telefono,
                     "⚠️ Respondé SI, NO o PENDIENTE",
                 )
@@ -1510,7 +1510,7 @@ EDITAR → Hacer cambios""",
             )
 
             # Calculate final score and send summary
-            await self._cerrar_auditoria_bloques(sesion, twilio_client, payload.telefono)
+            await self._cerrar_auditoria_bloques(sesion, meta_client, payload.telefono)
 
             return "compromisos_registrados"
 
@@ -1521,7 +1521,7 @@ EDITAR → Hacer cambios""",
     async def _cerrar_auditoria_bloques(
         self,
         sesion: SesionAuditoria,
-        twilio_client: MetaClient,
+        meta_client: MetaClient,
         phone: str,
     ) -> None:
         """Close block-based audit and send summary."""
@@ -1561,7 +1561,7 @@ EDITAR → Hacer cambios""",
             sucursal = self.sheets.get_sucursal(sesion.sucursal_id)
             sucursal_nombre = sucursal.nombre if sucursal else sesion.sucursal_id
 
-            await twilio_client.send_resumen_final(
+            await meta_client.send_resumen_final(
                 phone,
                 sucursal_nombre,
                 date.today().isoformat(),
@@ -1595,7 +1595,7 @@ EDITAR → Hacer cambios""",
                     f"Compromisos: {sesion.compromisos_firmados}\n"
                     f"ID Sesión: {sesion.id_sesion}"
                 )
-                await twilio_client.send_text(settings.coordinador_tel, coord_msg)
+                await meta_client.send_text(settings.coordinador_tel, coord_msg)
 
             # Reset conversation
             self.sheets.update_conversacion(
@@ -1605,3 +1605,4 @@ EDITAR → Hacer cambios""",
 
         except Exception as e:
             logger.error(f"Error closing block audit: {e}", exc_info=True)
+

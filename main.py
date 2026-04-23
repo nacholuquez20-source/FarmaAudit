@@ -94,7 +94,7 @@ async def health_check():
 
 @app.get("/qr")
 async def qr_info():
-    """Legacy endpoint kept for compatibility in Twilio mode."""
+    """Legacy endpoint kept for compatibility in Meta mode."""
     return HTMLResponse(
         content="""
         <!DOCTYPE html>
@@ -102,7 +102,7 @@ async def qr_info():
         <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>AuditBot Twilio</title>
+            <title>AuditBot Meta</title>
             <style>
                 body { font-family: Arial, sans-serif; background: #f6f7fb; color: #1f2937; margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; }
                 .card { max-width: 720px; width: 100%; background: white; border-radius: 16px; padding: 32px; box-shadow: 0 14px 40px rgba(15, 23, 42, 0.12); }
@@ -113,10 +113,10 @@ async def qr_info():
         </head>
         <body>
             <div class="card">
-                <h1>AuditBot en modo Twilio</h1>
-                <p>Este proyecto ya no usa QR de WAHA/Evolution para conectarse a WhatsApp.</p>
-                <p>La integraciÃ³n activa es Twilio WhatsApp Business API, y el webhook debe apuntar a <code>/webhook</code>.</p>
-                <p>Si querÃ©s verificar conectividad, revisÃ¡ los logs de Railway y confirmÃ¡ que Twilio estÃ© enviando eventos al webhook.</p>
+                <h1>AuditBot en modo Meta</h1>
+                <p>Este proyecto usa Meta WhatsApp Cloud API para conectarse a WhatsApp.</p>
+                <p>La integración activa es Meta, y el webhook debe apuntar a <code>/webhook</code>.</p>
+                <p>Si querés verificar conectividad, revisá los logs de Railway y confirmá que Meta esté enviando eventos al webhook.</p>
             </div>
         </body>
         </html>
@@ -255,13 +255,13 @@ async def check_expired_confirmations():
     try:
         sheets = get_sheets()
         expired = sheets.get_expired_pendientes()
-        twilio_client = MetaClient()
+        meta_client = MetaClient()
 
         for pendiente in expired:
             logger.info(f"Timeout expired for {pendiente.telefono_auditor}")
 
             # Notify auditor
-            await twilio_client.send_text(
+            await meta_client.send_text(
                 pendiente.telefono_auditor,
                 "â° Tu confirmaciÃ³n expirÃ³. EnvÃ­ame un nuevo hallazgo cuando estÃ©s listo.",
             )
@@ -286,7 +286,7 @@ async def check_expired_audit_sessions():
     try:
         sheets = get_sheets()
         expired_sesiones = sheets.get_sesiones_activas_expiradas(timeout_min=15)
-        twilio_client = MetaClient()
+        meta_client = MetaClient()
 
         for sesion in expired_sesiones:
             logger.info(f"Audit session timeout for {sesion.telefono_auditor}: {sesion.id_sesion}")
@@ -295,7 +295,7 @@ async def check_expired_audit_sessions():
             checklist = sheets.get_checklist()
             if sesion.punto_actual < len(checklist):
                 punto = checklist[sesion.punto_actual]
-                await twilio_client.send_text(
+                await meta_client.send_text(
                     sesion.telefono_auditor,
                     f"â° Recordatorio: estÃ¡s en el punto {punto.punto_orden}/{sesion.total_puntos} de tu auditorÃ­a.\n"
                     f"MandÃ¡ tu observaciÃ³n o escribe 'saltar' para omitir este punto.",
@@ -328,8 +328,8 @@ Fecha: {datetime.now().strftime('%Y-%m-%d')}
 
 Para mÃ¡s detalles, consulta la hoja de Reportes."""
 
-        twilio_client = MetaClient()
-        await twilio_client.send_text(settings.coordinador_tel, summary)
+        meta_client = MetaClient()
+        await meta_client.send_text(settings.coordinador_tel, summary)
 
         logger.info("Daily summary sent to coordinator")
     except Exception as e:
@@ -345,4 +345,3 @@ if __name__ == "__main__":
         port=settings.port,
         log_level="info",
     )
-

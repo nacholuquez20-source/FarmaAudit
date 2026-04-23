@@ -225,7 +225,7 @@ auditbot/
 ├── router.py            # State machine logic
 ├── parser.py            # Claude API integration
 ├── sheets.py            # Google Sheets CRUD
-├── waha.py              # Meta WhatsApp client
+├── meta_client.py       # Meta WhatsApp client
 ├── audio.py             # Whisper transcription
 ├── drive.py             # Google Drive upload
 ├── models.py            # Pydantic/dataclass models
