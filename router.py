@@ -15,7 +15,7 @@ from sheets import SheetsManager
 from parser import AuditParser
 from audio import AudioTranscriber
 from drive import DriveManager
-from waha import TwilioClient
+from meta_client import MetaClient
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class ConversationRouter:
     async def handle_message(
         self,
         payload: WAHAPayload,
-        twilio_client: TwilioClient,
+        twilio_client: MetaClient,
     ) -> str:
         """Route message based on conversation state."""
         try:
@@ -97,7 +97,7 @@ class ConversationRouter:
         payload: WAHAPayload,
         auditor: Auditor,
         conv: Conversacion,
-        twilio_client: TwilioClient,
+        twilio_client: MetaClient,
     ) -> str:
         """Handle message in idle state."""
         # Check for special commands
@@ -216,7 +216,7 @@ class ConversationRouter:
         self,
         payload: WAHAPayload,
         conv: Conversacion,
-        twilio_client: TwilioClient,
+        twilio_client: MetaClient,
     ) -> str:
         """Handle response in confirmation state."""
         if not payload.contenido:
@@ -267,7 +267,7 @@ class ConversationRouter:
         self,
         payload: WAHAPayload,
         conv: Conversacion,
-        twilio_client: TwilioClient,
+        twilio_client: MetaClient,
     ) -> str:
         """Handle correction in edition state."""
         if not payload.contenido:
@@ -364,7 +364,7 @@ class ConversationRouter:
         self,
         payload: WAHAPayload,
         auditor: Auditor,
-        twilio_client: TwilioClient,
+        twilio_client: MetaClient,
     ) -> str:
         """Handle special commands."""
         cmd = payload.contenido.lower().strip()
@@ -412,7 +412,7 @@ EDITAR → Hacer cambios""",
         parse_result: ParserResponse,
         photo_url: Optional[str],
         phone: str,
-        twilio_client: TwilioClient,
+        twilio_client: MetaClient,
     ) -> None:
         """Show draft for confirmation."""
         draft = "📋 **Borrador de Hallazgos**:\n\n"
@@ -433,7 +433,7 @@ EDITAR → Hacer cambios""",
     async def _confirm_and_create(
         self,
         conv: Conversacion,
-        twilio_client: TwilioClient,
+        twilio_client: MetaClient,
     ) -> str:
         """Create reports and gestiones after confirmation."""
         try:
@@ -532,7 +532,7 @@ EDITAR → Hacer cambios""",
     async def _iniciar_seleccion_sucursal(
         self,
         payload: WAHAPayload,
-        twilio_client: TwilioClient,
+        twilio_client: MetaClient,
     ) -> str:
         """Start guided audit flow: send sucursal list."""
         try:
@@ -572,7 +572,7 @@ EDITAR → Hacer cambios""",
         self,
         payload: WAHAPayload,
         conv: Conversacion,
-        twilio_client: TwilioClient,
+        twilio_client: MetaClient,
     ) -> str:
         """Handle sucursal selection."""
         try:
@@ -656,7 +656,7 @@ EDITAR → Hacer cambios""",
         self,
         payload: WAHAPayload,
         conv: Conversacion,
-        twilio_client: TwilioClient,
+        twilio_client: MetaClient,
     ) -> str:
         """Handle response during audit."""
         try:
@@ -874,7 +874,7 @@ EDITAR → Hacer cambios""",
         self,
         payload: WAHAPayload,
         conv: Conversacion,
-        twilio_client: TwilioClient,
+        twilio_client: MetaClient,
     ) -> str:
         """Handle response in paused audit state."""
         try:
@@ -926,7 +926,7 @@ EDITAR → Hacer cambios""",
         self,
         sesion: SesionAuditoria,
         checklist: list,
-        twilio_client: TwilioClient,
+        twilio_client: MetaClient,
         phone: str,
     ) -> None:
         """Send next checklist point."""
@@ -943,7 +943,7 @@ EDITAR → Hacer cambios""",
     async def _cerrar_auditoria(
         self,
         sesion: SesionAuditoria,
-        twilio_client: TwilioClient,
+        twilio_client: MetaClient,
         phone: str,
     ) -> str:
         """Close audit session and send summary."""
@@ -1018,7 +1018,7 @@ EDITAR → Hacer cambios""",
         self,
         payload: WAHAPayload,
         conv: Conversacion,
-        twilio_client: TwilioClient,
+        twilio_client: MetaClient,
     ) -> str:
         """Handle auditor response in block evaluation state."""
         try:
@@ -1098,7 +1098,7 @@ EDITAR → Hacer cambios""",
         self,
         payload: WAHAPayload,
         conv: Conversacion,
-        twilio_client: TwilioClient,
+        twilio_client: MetaClient,
     ) -> str:
         """Handle block confirmation (SI/EDITAR/SALTAR)."""
         try:
@@ -1257,7 +1257,7 @@ EDITAR → Hacer cambios""",
         self,
         payload: WAHAPayload,
         conv: Conversacion,
-        twilio_client: TwilioClient,
+        twilio_client: MetaClient,
     ) -> str:
         """Handle stock verification count input."""
         try:
@@ -1319,7 +1319,7 @@ EDITAR → Hacer cambios""",
         self,
         payload: WAHAPayload,
         conv: Conversacion,
-        twilio_client: TwilioClient,
+        twilio_client: MetaClient,
     ) -> str:
         """Handle stock item entry."""
         try:
@@ -1382,7 +1382,7 @@ EDITAR → Hacer cambios""",
         self,
         payload: WAHAPayload,
         conv: Conversacion,
-        twilio_client: TwilioClient,
+        twilio_client: MetaClient,
     ) -> str:
         """Handle free-form deviations."""
         try:
@@ -1477,7 +1477,7 @@ EDITAR → Hacer cambios""",
         self,
         payload: WAHAPayload,
         conv: Conversacion,
-        twilio_client: TwilioClient,
+        twilio_client: MetaClient,
     ) -> str:
         """Handle compromise commitments (SI/NO/PENDIENTE)."""
         try:
@@ -1521,7 +1521,7 @@ EDITAR → Hacer cambios""",
     async def _cerrar_auditoria_bloques(
         self,
         sesion: SesionAuditoria,
-        twilio_client: TwilioClient,
+        twilio_client: MetaClient,
         phone: str,
     ) -> None:
         """Close block-based audit and send summary."""

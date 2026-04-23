@@ -12,7 +12,7 @@ import pytz
 from config import get_settings
 from models import WAHAPayload, ConversationState
 from router import ConversationRouter
-from waha import TwilioClient
+from meta_client import MetaClient
 from sheets import SheetsManager
 
 # Configure logging
@@ -147,7 +147,7 @@ async def get_qr_legacy():
         <body>
             <div class="card">
                 <h1>Ruta legacy</h1>
-                <p>La integración activa es Twilio WhatsApp Business API.</p>
+                <p>La integración activa es Meta WhatsApp Cloud API.</p>
                 <p>Usá <code>/webhook</code> para recibir mensajes.</p>
             </div>
         </body>
@@ -155,59 +155,91 @@ async def get_qr_legacy():
         """,
         media_type="text/html",
     )
+
+@app.get("/webhook")
+async def webhook_verify(request: Request):
+    """Meta WhatsApp webhook verification (GET)."""
+    mode = request.query_params.get("hub.mode")
+    token = request.query_params.get("hub.verify_token")
+    challenge = request.query_params.get("hub.challenge")
+
+    if mode == "subscribe" and token == settings.meta_verify_token:
+        logger.info("Webhook verified with Meta")
+        return challenge
+    else:
+        logger.warning(f"Webhook verification failed: mode={mode}, token_match={token == settings.meta_verify_token}")
+        return {"error": "Forbidden"}, 403
+
+
 @app.post("/webhook")
 async def webhook(request: Request):
-    """Twilio WhatsApp webhook entry point."""
+    """Meta WhatsApp Cloud API webhook entry point."""
     try:
-        # Twilio sends form-data, not JSON
-        form_data = await request.form()
+        data = await request.json()
 
-        # Extract sender phone as digits only for consistent matching
-        from_number = "".join(ch for ch in form_data.get("From", "") if ch.isdigit())
-        if not from_number:
-            logger.warning("Received payload without From number")
+        # Extract messages from Meta's nested structure
+        entry = data.get("entry", [])
+        if not entry:
+            logger.debug("Webhook received but no entry data")
+            return {"status": "ok"}
+
+        changes = entry[0].get("changes", [])
+        if not changes:
+            logger.debug("Webhook received but no changes")
+            return {"status": "ok"}
+
+        value = changes[0].get("value", {})
+        messages = value.get("messages", [])
+
+        if not messages:
+            logger.debug("Webhook received but no messages (might be status update)")
+            return {"status": "ok"}
+
+        msg = messages[0]
+        telefono = msg.get("from", "")
+        if not telefono:
+            logger.warning("Received payload without from number")
             return {"status": "invalid_payload"}
 
-        # Extract message content
-        body = form_data.get("Body", "").strip()
-        message_sid = form_data.get("MessageSid", "")
+        # Normalize phone to digits only
+        telefono = "".join(ch for ch in telefono if ch.isdigit())
 
-        # Initialize payload
+        # Extract message content based on type
+        tipo = msg.get("type", "text")
         contenido = None
-        tipo = "text"
         media_url = None
+        message_id = msg.get("id", "")
 
-        # Check for media
-        media_url_0 = form_data.get("MediaUrl0")
-        if media_url_0:
-            # Determine media type from URL
-            if "image" in media_url_0.lower() or media_url_0.endswith((".jpg", ".jpeg", ".png")):
-                tipo = "image"
-            elif "audio" in media_url_0.lower() or media_url_0.endswith((".mp3", ".wav", ".ogg")):
-                tipo = "audio"
-            media_url = media_url_0
-            contenido = body  # Caption or message body
-
-        # If no media, treat as text
-        if tipo == "text" and body:
-            contenido = body
+        if tipo == "text":
+            contenido = msg.get("text", {}).get("body", "")
+        elif tipo == "audio":
+            audio = msg.get("audio", {})
+            media_id = audio.get("id")
+            if media_id:
+                # TODO: Download audio from Meta API using media_id
+                # media_url = await _get_meta_media_url(media_id)
+                contenido = f"[Audio message {media_id}]"
+        elif tipo == "image":
+            image = msg.get("image", {})
+            media_id = image.get("id")
+            contenido = image.get("caption", "")
+            if media_id:
+                # TODO: Download image from Meta API using media_id
+                # media_url = await _get_meta_media_url(media_id)
+                pass
 
         payload = WAHAPayload(
-            telefono=from_number,
+            telefono=telefono,
             tipo=tipo,
             contenido=contenido,
             media_url=media_url,
         )
 
-        if not payload.telefono:
-            logger.warning("Received payload without phone")
-            return {"status": "invalid_payload"}
+        logger.info(f"Received message from {payload.telefono} (type: {payload.tipo}, msg_id: {message_id})")
 
-        logger.info(f"Received message from {payload.telefono} (type: {payload.tipo}, sid: {message_sid})")
-
-        twilio_client = TwilioClient()
+        meta_client = MetaClient()
         route = get_router()
-        result = await route.handle_message(payload, twilio_client)
+        result = await route.handle_message(payload, meta_client)
 
         logger.info(f"Processed message result: {result}")
         return {"status": "ok", "result": result}
@@ -223,7 +255,7 @@ async def check_expired_confirmations():
     try:
         sheets = get_sheets()
         expired = sheets.get_expired_pendientes()
-        twilio_client = TwilioClient()
+        twilio_client = MetaClient()
 
         for pendiente in expired:
             logger.info(f"Timeout expired for {pendiente.telefono_auditor}")
@@ -254,7 +286,7 @@ async def check_expired_audit_sessions():
     try:
         sheets = get_sheets()
         expired_sesiones = sheets.get_sesiones_activas_expiradas(timeout_min=15)
-        twilio_client = TwilioClient()
+        twilio_client = MetaClient()
 
         for sesion in expired_sesiones:
             logger.info(f"Audit session timeout for {sesion.telefono_auditor}: {sesion.id_sesion}")
@@ -296,7 +328,7 @@ Fecha: {datetime.now().strftime('%Y-%m-%d')}
 
 Para mÃ¡s detalles, consulta la hoja de Reportes."""
 
-        twilio_client = TwilioClient()
+        twilio_client = MetaClient()
         await twilio_client.send_text(settings.coordinador_tel, summary)
 
         logger.info("Daily summary sent to coordinator")

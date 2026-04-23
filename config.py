@@ -18,10 +18,10 @@ class Settings:
     # OpenAI API (Whisper)
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
 
-    # Twilio (WhatsApp)
-    twilio_account_sid: str = os.getenv("TWILIO_ACCOUNT_SID", "")
-    twilio_auth_token: str = os.getenv("TWILIO_AUTH_TOKEN", "")
-    twilio_phone_number: str = os.getenv("TWILIO_PHONE_NUMBER", "")
+    # Meta WhatsApp Cloud API
+    meta_phone_number_id: str = os.getenv("META_PHONE_NUMBER_ID", "")
+    meta_access_token: str = os.getenv("META_ACCESS_TOKEN", "")
+    meta_verify_token: str = os.getenv("META_VERIFY_TOKEN", "")
 
     # Google Sheets
     google_sheets_id: str = os.getenv("GOOGLE_SHEETS_ID", "")
@@ -63,9 +63,9 @@ class Settings:
             "google_sheets_id",
             "google_service_account_json",
             "google_drive_folder_id",
-            "twilio_account_sid",
-            "twilio_auth_token",
-            "twilio_phone_number",
+            "meta_phone_number_id",
+            "meta_access_token",
+            "meta_verify_token",
         ]
         missing = [key for key in required if not getattr(self, key)]
         if missing:
