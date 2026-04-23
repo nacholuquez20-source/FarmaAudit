@@ -759,17 +759,24 @@ EDITAR â†’ Hacer cambios""",
                 try:
                     fecha = datetime.now().strftime("%Y%m%d")
                     checklist = self.sheets.get_checklist()
-                    punto = checklist[sesion.punto_actual]
-                    filename = f"{fecha}_{sesion.sucursal_id}_{punto.area.replace(' ','_')}_{punto.punto_orden}.jpg"
-                    photo_url = await self.drive.upload_photo_from_url(
-                        payload.media_url,
-                        filename,
-                    )
+                    if sesion.punto_actual < len(checklist):
+                        punto = checklist[sesion.punto_actual]
+                        filename = f"{fecha}_{sesion.sucursal_id}_{punto.area.replace(' ','_')}_{punto.punto_orden}.jpg"
+                        photo_url = await self.drive.upload_photo_from_url(
+                            payload.media_url,
+                            filename,
+                        )
                 except Exception as e:
                     logger.warning(f"Failed to upload photo: {e}")
 
             # Evaluate response
             checklist = self.sheets.get_checklist()
+
+            # Check if punto_actual is valid
+            if sesion.punto_actual >= len(checklist):
+                logger.warning(f"punto_actual {sesion.punto_actual} exceeds checklist length {len(checklist)}")
+                return await self._cerrar_auditoria(sesion, meta_client, payload.telefono)
+
             punto = checklist[sesion.punto_actual]
             eval_result = await self.parser.evaluate_punto_respuesta(punto, respuesta)
 
