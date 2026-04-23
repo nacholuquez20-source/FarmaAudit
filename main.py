@@ -10,7 +10,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import pytz
 
 from config import get_settings
-from models import WAHAPayload, ConversationState
+from models import WhatsAppPayload, ConversationState
 from router import ConversationRouter
 from meta_client import MetaClient
 from sheets import SheetsManager
@@ -228,7 +228,7 @@ async def webhook(request: Request):
                 # media_url = await _get_meta_media_url(media_id)
                 pass
 
-        payload = WAHAPayload(
+        payload = WhatsAppPayload(
             telefono=telefono,
             tipo=tipo,
             contenido=contenido,

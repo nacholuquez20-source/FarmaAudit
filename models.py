@@ -236,7 +236,7 @@ class Gestion:
 
 
 @dataclass
-class WAHAPayload:
+class WhatsAppPayload:
     """Incoming payload from the WhatsApp webhook."""
 
     telefono: str
@@ -247,7 +247,7 @@ class WAHAPayload:
 
 
 @dataclass
-class WAHAMessage:
+class WhatsAppMessage:
     """Message to send via WhatsApp."""
 
     phone: str

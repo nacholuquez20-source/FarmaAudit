@@ -5,7 +5,7 @@ from typing import Optional, List, Dict
 import httpx
 
 from config import get_settings
-from models import WAHAMessage, ItemBloque, ResultadoItem
+from models import WhatsAppMessage, ItemBloque, ResultadoItem
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,7 @@ class MetaClient:
             logger.error(f"Failed to send file to {phone}: {e}")
             return False
 
-    async def send_message(self, message: WAHAMessage) -> bool:
+    async def send_message(self, message: WhatsAppMessage) -> bool:
         """Send message (text or file)."""
         if message.file_url:
             return await self.send_file(message.phone, message.file_url, message.caption)

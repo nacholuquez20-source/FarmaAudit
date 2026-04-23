@@ -58,4 +58,4 @@ META_VERIFY_TOKEN=your_verify_token_here
 - **URL en Meta Developers**: `https://farmaaudit-production-3f78.up.railway.app/webhook`
 - **Method**: POST
 - **Content-Type**: application/json
-- **Endpoint en código**: `/webhook` en `main.py`, maneja WAHAPayload, parsea JSON
+- **Endpoint en código**: `/webhook` en `main.py`, maneja `WhatsAppPayload`, parsea JSON

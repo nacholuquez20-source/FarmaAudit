@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Tuple
 
 from models import (
-    ConversationState, WAHAPayload, Auditor, Conversacion,
+    ConversationState, WhatsAppPayload, Auditor, Conversacion,
     ParserResponse, Reporte, Gestion, Severidad, ChecklistPunto, SesionAuditoria, PuntoEvalResult,
     ItemBloque, ResultadoItem, StockItem, DesvioLibre
 )
@@ -32,7 +32,7 @@ class ConversationRouter:
 
     async def handle_message(
         self,
-        payload: WAHAPayload,
+        payload: WhatsAppPayload,
         meta_client: MetaClient,
     ) -> str:
         """Route message based on conversation state."""
@@ -94,7 +94,7 @@ class ConversationRouter:
 
     async def _handle_idle_state(
         self,
-        payload: WAHAPayload,
+        payload: WhatsAppPayload,
         auditor: Auditor,
         conv: Conversacion,
         meta_client: MetaClient,
@@ -214,7 +214,7 @@ class ConversationRouter:
 
     async def _handle_confirmation_state(
         self,
-        payload: WAHAPayload,
+        payload: WhatsAppPayload,
         conv: Conversacion,
         meta_client: MetaClient,
     ) -> str:
@@ -265,7 +265,7 @@ class ConversationRouter:
 
     async def _handle_edition_state(
         self,
-        payload: WAHAPayload,
+        payload: WhatsAppPayload,
         conv: Conversacion,
         meta_client: MetaClient,
     ) -> str:
@@ -362,7 +362,7 @@ class ConversationRouter:
 
     async def _handle_command(
         self,
-        payload: WAHAPayload,
+        payload: WhatsAppPayload,
         auditor: Auditor,
         meta_client: MetaClient,
     ) -> str:
@@ -531,7 +531,7 @@ EDITAR → Hacer cambios""",
 
     async def _iniciar_seleccion_sucursal(
         self,
-        payload: WAHAPayload,
+        payload: WhatsAppPayload,
         meta_client: MetaClient,
     ) -> str:
         """Start guided audit flow: send sucursal list."""
@@ -570,7 +570,7 @@ EDITAR → Hacer cambios""",
 
     async def _handle_seleccionando_sucursal(
         self,
-        payload: WAHAPayload,
+        payload: WhatsAppPayload,
         conv: Conversacion,
         meta_client: MetaClient,
     ) -> str:
@@ -654,7 +654,7 @@ EDITAR → Hacer cambios""",
 
     async def _handle_en_auditoria(
         self,
-        payload: WAHAPayload,
+        payload: WhatsAppPayload,
         conv: Conversacion,
         meta_client: MetaClient,
     ) -> str:
@@ -872,7 +872,7 @@ EDITAR → Hacer cambios""",
 
     async def _handle_auditoria_pausada(
         self,
-        payload: WAHAPayload,
+        payload: WhatsAppPayload,
         conv: Conversacion,
         meta_client: MetaClient,
     ) -> str:
@@ -1016,7 +1016,7 @@ EDITAR → Hacer cambios""",
 
     async def _handle_en_bloque(
         self,
-        payload: WAHAPayload,
+        payload: WhatsAppPayload,
         conv: Conversacion,
         meta_client: MetaClient,
     ) -> str:
@@ -1096,7 +1096,7 @@ EDITAR → Hacer cambios""",
 
     async def _handle_confirmando_bloque(
         self,
-        payload: WAHAPayload,
+        payload: WhatsAppPayload,
         conv: Conversacion,
         meta_client: MetaClient,
     ) -> str:
@@ -1255,7 +1255,7 @@ EDITAR → Hacer cambios""",
 
     async def _handle_stock_loop(
         self,
-        payload: WAHAPayload,
+        payload: WhatsAppPayload,
         conv: Conversacion,
         meta_client: MetaClient,
     ) -> str:
@@ -1317,7 +1317,7 @@ EDITAR → Hacer cambios""",
 
     async def _handle_en_stock_item(
         self,
-        payload: WAHAPayload,
+        payload: WhatsAppPayload,
         conv: Conversacion,
         meta_client: MetaClient,
     ) -> str:
@@ -1380,7 +1380,7 @@ EDITAR → Hacer cambios""",
 
     async def _handle_desvio_libre(
         self,
-        payload: WAHAPayload,
+        payload: WhatsAppPayload,
         conv: Conversacion,
         meta_client: MetaClient,
     ) -> str:
@@ -1475,7 +1475,7 @@ EDITAR → Hacer cambios""",
 
     async def _handle_compromisos(
         self,
-        payload: WAHAPayload,
+        payload: WhatsAppPayload,
         conv: Conversacion,
         meta_client: MetaClient,
     ) -> str:
