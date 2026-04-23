@@ -65,12 +65,15 @@ Completá todos los valores en `.env`:
 ```env
 ANTHROPIC_API_KEY=sk-ant-xxx
 OPENAI_API_KEY=sk-xxx
-TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-TWILIO_AUTH_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-TWILIO_PHONE_NUMBER=+14155238886
+META_PHONE_NUMBER_ID=123456789012345
+META_ACCESS_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+META_VERIFY_TOKEN=your_verify_token_here
 GOOGLE_SHEETS_ID=xxxxxxxxxxxxxxxxxxxxx
 GOOGLE_SERVICE_ACCOUNT_JSON=xxxxxxxxxxxxxxxxxxxxx  # Base64-encoded
 GOOGLE_DRIVE_FOLDER_ID=xxxxxxxxxxxxxxxxxxxxx
+HOST=0.0.0.0
+PORT=8000
+DEBUG=false
 COORDINADOR_TEL=549xxxxxxxxxx
 ```
 
@@ -125,7 +128,7 @@ git push -u origin main
 5. Agregá variables de entorno en Project Settings:
    - ANTHROPIC_API_KEY
    - OPENAI_API_KEY
-   - TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER
+   - META_PHONE_NUMBER_ID, META_ACCESS_TOKEN, META_VERIFY_TOKEN
    - GOOGLE_SHEETS_ID
    - GOOGLE_SERVICE_ACCOUNT_JSON
    - GOOGLE_DRIVE_FOLDER_ID
@@ -278,7 +281,7 @@ Asegurate que el archivo `.env` existe y tiene todas las variables.
 
 ### Meta no recibe/envía mensajes
 
-- Verificá que TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN y TWILIO_PHONE_NUMBER sean correctos
+- Verificá que META_PHONE_NUMBER_ID, META_ACCESS_TOKEN y META_VERIFY_TOKEN sean correctos
 - Confirmá que el webhook en Meta apunta a `{app_url}/webhook`
 - Revísá los logs de Railway y Meta para errores
 
