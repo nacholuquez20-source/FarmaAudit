@@ -4,7 +4,7 @@ Sistema de auditoría de calidad para 23 sucursales de farmacias vía WhatsApp. 
 
 ## Features
 
-✅ **WhatsApp Integration** — Twilio WhatsApp Business API
+✅ **WhatsApp Integration** — Meta WhatsApp Cloud API
 ✅ **IA Parser** — Claude Sonnet para extracción de hallazgos
 ✅ **Audio Transcription** — OpenAI Whisper para mensajes de voz
 ✅ **Photo Storage** — Google Drive para fotos de auditoría
@@ -20,7 +20,7 @@ Sistema de auditoría de calidad para 23 sucursales de farmacias vía WhatsApp. 
 - **Audio**: OpenAI Whisper API
 - **Database**: Google Sheets (gspread)
 - **Storage**: Google Drive API
-- **Messaging**: Twilio WhatsApp Business API
+- **Messaging**: Meta WhatsApp Cloud API
 - **Scheduling**: APScheduler
 - **Deployment**: Railway (Docker)
 
@@ -31,7 +31,7 @@ Sistema de auditoría de calidad para 23 sucursales de farmacias vía WhatsApp. 
   - Google Sheets API
   - Google Drive API
 - Service Account credentials (JSON)
-- Cuenta Twilio con WhatsApp habilitado
+- Cuenta de Meta Business con WhatsApp Cloud API habilitado
 - Anthropic API key
 - OpenAI API key
 
@@ -131,9 +131,9 @@ git push -u origin main
    - GOOGLE_DRIVE_FOLDER_ID
    - COORDINADOR_TEL
 
-### 3. Configurá Twilio webhook
+### 3. Configurá el webhook de Meta
 
-En Twilio Console, configurá el webhook de WhatsApp a:
+En Meta Developers / WhatsApp, configurá el webhook de WhatsApp a:
 
 ```
 https://tu-railway-app.up.railway.app/webhook
@@ -153,7 +153,7 @@ curl http://localhost:8000/health
 
 ### `POST /webhook`
 
-Twilio WhatsApp webhook entry point. Recibe mensajes de WhatsApp.
+Meta WhatsApp Cloud API webhook entry point. Recibe mensajes de WhatsApp.
 
 **Payload:**
 ```json
@@ -225,7 +225,7 @@ auditbot/
 ├── router.py            # State machine logic
 ├── parser.py            # Claude API integration
 ├── sheets.py            # Google Sheets CRUD
-├── waha.py              # Twilio client
+├── waha.py              # Meta WhatsApp client
 ├── audio.py             # Whisper transcription
 ├── drive.py             # Google Drive upload
 ├── models.py            # Pydantic/dataclass models
@@ -276,11 +276,11 @@ Asegurate que el archivo `.env` existe y tiene todas las variables.
 - Compartí el spreadsheet con el email del Service Account
 - Creá todas las hojas descritas en SETUP_SHEETS.md
 
-### Twilio no recibe/envía mensajes
+### Meta no recibe/envía mensajes
 
 - Verificá que TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN y TWILIO_PHONE_NUMBER sean correctos
-- Confirmá que el webhook en Twilio apunta a `{app_url}/webhook`
-- Revísá los logs de Railway y Twilio para errores
+- Confirmá que el webhook en Meta apunta a `{app_url}/webhook`
+- Revísá los logs de Railway y Meta para errores
 
 ### Claude parser devuelve JSON inválido
 
