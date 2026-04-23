@@ -13,7 +13,7 @@ class ConversationState(str, Enum):
     ESPERANDO_CONFIRMACION = "esperando_confirmacion"
     ESPERANDO_EDICION = "esperando_edicion"
     SELECCIONANDO_SUCURSAL = "seleccionando_sucursal"
-    EN_AUDITORIA = "en_auditoria"  # Legacy: punto-por-punto
+    EN_AUDITORIA = "en_auditoria"  # Guided point-by-point audit flow
     EN_BLOQUE = "en_bloque"
     CONFIRMANDO_BLOQUE = "confirmando_bloque"
     STOCK_LOOP = "stock_loop"
