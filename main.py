@@ -4,8 +4,7 @@ import logging
 from datetime import datetime
 import json
 
-from fastapi import FastAPI, Request, Depends
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Request
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import pytz
 
@@ -91,70 +90,6 @@ async def health_check():
         "timestamp": datetime.utcnow().isoformat(),
     }
 
-
-@app.get("/qr")
-async def qr_info():
-    """Legacy endpoint kept for compatibility in Meta mode."""
-    return HTMLResponse(
-        content="""
-        <!DOCTYPE html>
-        <html lang="es">
-        <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>AuditBot Meta</title>
-            <style>
-                body { font-family: Arial, sans-serif; background: #f6f7fb; color: #1f2937; margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; }
-                .card { max-width: 720px; width: 100%; background: white; border-radius: 16px; padding: 32px; box-shadow: 0 14px 40px rgba(15, 23, 42, 0.12); }
-                h1 { margin: 0 0 12px; font-size: 28px; }
-                p { line-height: 1.6; margin: 12px 0; }
-                code { background: #eef2ff; padding: 2px 6px; border-radius: 6px; }
-            </style>
-        </head>
-        <body>
-            <div class="card">
-                <h1>AuditBot en modo Meta</h1>
-                <p>Este proyecto usa Meta WhatsApp Cloud API para conectarse a WhatsApp.</p>
-                <p>La integración activa es Meta, y el webhook debe apuntar a <code>/webhook</code>.</p>
-                <p>Si querés verificar conectividad, revisá los logs de Railway y confirmá que Meta esté enviando eventos al webhook.</p>
-            </div>
-        </body>
-        </html>
-        """,
-        media_type="text/html",
-    )
-
-
-@app.get("/qr-legacy")
-async def get_qr_legacy():
-    """Legacy endpoint kept only for compatibility."""
-    return HTMLResponse(
-        content="""
-        <!DOCTYPE html>
-        <html lang="es">
-        <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>AuditBot Legacy</title>
-            <style>
-                body { font-family: Arial, sans-serif; background: #f6f7fb; color: #1f2937; margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; }
-                .card { max-width: 720px; width: 100%; background: white; border-radius: 16px; padding: 32px; box-shadow: 0 14px 40px rgba(15, 23, 42, 0.12); }
-                h1 { margin: 0 0 12px; font-size: 28px; }
-                p { line-height: 1.6; margin: 12px 0; }
-                code { background: #eef2ff; padding: 2px 6px; border-radius: 6px; }
-            </style>
-        </head>
-        <body>
-            <div class="card">
-                <h1>Ruta legacy</h1>
-                <p>La integración activa es Meta WhatsApp Cloud API.</p>
-                <p>Usá <code>/webhook</code> para recibir mensajes.</p>
-            </div>
-        </body>
-        </html>
-        """,
-        media_type="text/html",
-    )
 
 @app.get("/webhook")
 async def webhook_verify(request: Request):
