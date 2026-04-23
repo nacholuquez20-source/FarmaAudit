@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 import json
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import pytz
 
@@ -103,7 +103,7 @@ async def webhook_verify(request: Request):
         return challenge
     else:
         logger.warning(f"Webhook verification failed: mode={mode}, token_match={token == settings.meta_verify_token}")
-        return {"error": "Forbidden"}, 403
+        raise HTTPException(status_code=403, detail="Forbidden")
 
 
 @app.post("/webhook")

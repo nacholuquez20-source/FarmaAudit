@@ -560,6 +560,8 @@ class SheetsManager:
                 sesion.omitidos_json,
                 sesion.bloque_actual,
                 sesion.resultados_json,
+                sesion.stock_total,
+                sesion.stock_actual,
                 sesion.stock_items_json,
                 sesion.desvios_libres_json,
                 sesion.compromisos_firmados,
@@ -590,6 +592,8 @@ class SheetsManager:
                         omitidos_json=row.get("omitidos_json", "[]"),
                         bloque_actual=row.get("bloque_actual", "A"),
                         resultados_json=row.get("resultados_json", "{}"),
+                        stock_total=int(row.get("stock_total", 0)),
+                        stock_actual=int(row.get("stock_actual", 0)),
                         stock_items_json=row.get("stock_items_json", "[]"),
                         desvios_libres_json=row.get("desvios_libres_json", "[]"),
                         compromisos_firmados=row.get("compromisos_firmados", ""),
@@ -608,6 +612,8 @@ class SheetsManager:
         resultados_json: str = "{}",
         stock_items_json: str = "[]",
         desvios_libres_json: str = "[]",
+        stock_total: int = 0,
+        stock_actual: int = 0,
         punto_actual: int = 0,
         hallazgos_json: str = "[]",
         omitidos_json: str = "[]",
@@ -631,8 +637,10 @@ class SheetsManager:
                 sheet.update_cell(row_idx, 10, omitidos_json)
                 sheet.update_cell(row_idx, 11, bloque_actual)
                 sheet.update_cell(row_idx, 12, resultados_json)
-                sheet.update_cell(row_idx, 13, stock_items_json)
-                sheet.update_cell(row_idx, 14, desvios_libres_json)
+                sheet.update_cell(row_idx, 13, stock_total)
+                sheet.update_cell(row_idx, 14, stock_actual)
+                sheet.update_cell(row_idx, 15, stock_items_json)
+                sheet.update_cell(row_idx, 16, desvios_libres_json)
                 logger.info(f"Updated sesion {id_sesion}")
             else:
                 logger.warning(f"Sesion {id_sesion} not found for update")
@@ -648,8 +656,20 @@ class SheetsManager:
             expiradas = []
             now = datetime.utcnow()
 
+            active_states = {
+                "en_curso",
+                "en_bloque",
+                "confirmando_bloque",
+                "stock_loop",
+                "en_stock_item",
+                "desvio_libre",
+                "compromisos",
+                "esperando_confirmacion",
+                "esperando_edicion",
+            }
+
             for row in rows:
-                if row.get("estado") == "en_curso":
+                if row.get("estado") in active_states:
                     timestamp_str = row.get("timestamp_ultimo_punto", "")
                     ts = self._parse_datetime(timestamp_str)
                     if ts and (now - ts).total_seconds() > timeout_min * 60:
@@ -666,6 +686,8 @@ class SheetsManager:
                             omitidos_json=row.get("omitidos_json", "[]"),
                             bloque_actual=row.get("bloque_actual", "A"),
                             resultados_json=row.get("resultados_json", "{}"),
+                            stock_total=int(row.get("stock_total", 0)),
+                            stock_actual=int(row.get("stock_actual", 0)),
                             stock_items_json=row.get("stock_items_json", "[]"),
                             desvios_libres_json=row.get("desvios_libres_json", "[]"),
                             compromisos_firmados=row.get("compromisos_firmados", ""),

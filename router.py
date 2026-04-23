@@ -42,7 +42,7 @@ class ConversationRouter:
             if not auditor or not auditor.activo:
                 await meta_client.send_text(
                     payload.telefono,
-                    "❌ No estás registrado como auditor. Contacta al coordinador.",
+                    "âŒ No estÃ¡s registrado como auditor. Contacta al coordinador.",
                 )
                 return "auditor_not_found"
 
@@ -82,13 +82,13 @@ class ConversationRouter:
             elif conv.estado_actual == ConversationState.ESPERANDO_EDICION:
                 return await self._handle_edition_state(payload, conv, meta_client)
             else:
-                await meta_client.send_text(payload.telefono, "⚠️ Estado desconocido")
+                await meta_client.send_text(payload.telefono, "âš ï¸ Estado desconocido")
                 return "unknown_state"
         except Exception as e:
             logger.error(f"Error handling message from {payload.telefono}: {e}", exc_info=True)
             await meta_client.send_text(
                 payload.telefono,
-                "❌ Error procesando tu mensaje. Intenta de nuevo.",
+                "âŒ Error procesando tu mensaje. Intenta de nuevo.",
             )
             return "error"
 
@@ -112,8 +112,8 @@ class ConversationRouter:
 
             await meta_client.send_text(
                 payload.telefono,
-                "Escribí INICIO para comenzar la auditoría guiada.\n"
-                "Usá /ayuda para ver comandos.",
+                "EscribÃ­ INICIO para comenzar la auditorÃ­a guiada.\n"
+                "UsÃ¡ /ayuda para ver comandos.",
             )
             return "idle_waiting_start"
 
@@ -130,7 +130,7 @@ class ConversationRouter:
                 logger.error(f"Failed to transcribe audio: {e}")
                 await meta_client.send_text(
                     payload.telefono,
-                    "❌ Error transcribiendo audio. Intenta de nuevo.",
+                    "âŒ Error transcribiendo audio. Intenta de nuevo.",
                 )
                 return "transcription_error"
 
@@ -138,7 +138,7 @@ class ConversationRouter:
         if payload.tipo == "image" and not payload.contenido:
             await meta_client.send_text(
                 payload.telefono,
-                "📸 Recibí la foto. ¿Qué hallazgo describe? Enviame texto con el contexto.",
+                "ðŸ“¸ RecibÃ­ la foto. Â¿QuÃ© hallazgo describe? Enviame texto con el contexto.",
             )
             return "image_without_context"
 
@@ -161,8 +161,8 @@ class ConversationRouter:
         if not parse_result or not parse_result.hallazgos:
             await meta_client.send_text(
                 payload.telefono,
-                "⚠️ No entendí el hallazgo. Por favor, sé más específico:\n"
-                "• Sucursal\n• Área (Perfumería, Farmacia, etc)\n• Sub-item\n• Descripción",
+                "âš ï¸ No entendÃ­ el hallazgo. Por favor, sÃ© mÃ¡s especÃ­fico:\n"
+                "â€¢ Sucursal\nâ€¢ Ãrea (PerfumerÃ­a, Farmacia, etc)\nâ€¢ Sub-item\nâ€¢ DescripciÃ³n",
             )
             return "parse_error"
 
@@ -226,7 +226,7 @@ class ConversationRouter:
         logger.info(f"Confirmation response from {payload.telefono}: '{answer}'")
 
         # Check for yes responses (with or without accent)
-        if answer in {"SI", "SÍ", "YES", "Y"}:
+        if answer in {"SI", "SÃ", "YES", "Y"}:
             logger.info(f"Confirmed finding for {payload.telefono}")
             return await self._confirm_and_create(conv, meta_client)
         elif answer in {"NO", "N"}:
@@ -234,7 +234,7 @@ class ConversationRouter:
             logger.info(f"Discarded finding for {payload.telefono}")
             await meta_client.send_text(
                 payload.telefono,
-                "❌ Descartado. Envíame otro hallazgo cuando estés listo.",
+                "âŒ Descartado. EnvÃ­ame otro hallazgo cuando estÃ©s listo.",
             )
             self.sheets.delete_pendiente(conv.id_pendiente)
             self.sheets.update_conversacion(
@@ -252,14 +252,14 @@ class ConversationRouter:
             )
             await meta_client.send_text(
                 payload.telefono,
-                "✏️ ¿Qué necesitas editar? Enviame la corrección.",
+                "âœï¸ Â¿QuÃ© necesitas editar? Enviame la correcciÃ³n.",
             )
             return "edit_requested"
         else:
             logger.warning(f"Invalid confirmation response from {payload.telefono}: '{answer}'")
             await meta_client.send_text(
                 payload.telefono,
-                "⚠️ Por favor responde con:\nSI - para confirmar\nNO - para descartar\nEDITAR - para hacer cambios",
+                "âš ï¸ Por favor responde con:\nSI - para confirmar\nNO - para descartar\nEDITAR - para hacer cambios",
             )
             return "invalid_response"
 
@@ -278,7 +278,7 @@ class ConversationRouter:
         if not pendiente:
             await meta_client.send_text(
                 payload.telefono,
-                "❌ Error: No encontré el pendiente. Intenta de nuevo.",
+                "âŒ Error: No encontrÃ© el pendiente. Intenta de nuevo.",
             )
             return "pendiente_not_found"
 
@@ -304,7 +304,7 @@ class ConversationRouter:
             if not corrected or not corrected.hallazgos:
                 await meta_client.send_text(
                     payload.telefono,
-                    "⚠️ No pude aplicar la corrección. Intenta de nuevo.",
+                    "âš ï¸ No pude aplicar la correcciÃ³n. Intenta de nuevo.",
                 )
                 return "correction_error"
 
@@ -356,7 +356,7 @@ class ConversationRouter:
             logger.error(f"Error applying correction: {e}")
             await meta_client.send_text(
                 payload.telefono,
-                "❌ Error procesando la corrección.",
+                "âŒ Error procesando la correcciÃ³n.",
             )
             return "error"
 
@@ -372,36 +372,36 @@ class ConversationRouter:
         if cmd == "/ayuda":
             await meta_client.send_text(
                 payload.telefono,
-                """📋 **AYUDA AuditBot**
+                """ðŸ“‹ **AYUDA AuditBot**
 
-Envíame hallazgos de auditoría:
-📝 **Texto**: Descripción del hallazgo
-🎤 **Audio**: Grabación con el hallazgo
-📸 **Foto**: Imagen + descripción
+EnvÃ­ame hallazgos de auditorÃ­a:
+ðŸ“ **Texto**: DescripciÃ³n del hallazgo
+ðŸŽ¤ **Audio**: GrabaciÃ³n con el hallazgo
+ðŸ“¸ **Foto**: Imagen + descripciÃ³n
 
 Comandos:
-/ayuda → Esta ayuda
-/resumen → Resumen del día
-/mis → Mis reportes hoy
+/ayuda â†’ Esta ayuda
+/resumen â†’ Resumen del dÃ­a
+/mis â†’ Mis reportes hoy
 
-Responde a la confirmación con:
-SI → Confirmar hallazgo
-NO → Descartar
-EDITAR → Hacer cambios""",
+Responde a la confirmaciÃ³n con:
+SI â†’ Confirmar hallazgo
+NO â†’ Descartar
+EDITAR â†’ Hacer cambios""",
             )
             return "help_sent"
         elif cmd == "/resumen":
             # TODO: Implement daily summary
             await meta_client.send_text(
                 payload.telefono,
-                "📊 Resumen del día:\n(Pronto disponible)",
+                "ðŸ“Š Resumen del dÃ­a:\n(Pronto disponible)",
             )
             return "summary_requested"
         elif cmd == "/mis":
             # TODO: Implement user's reports today
             await meta_client.send_text(
                 payload.telefono,
-                "📄 Tus reportes de hoy:\n(Pronto disponible)",
+                "ðŸ“„ Tus reportes de hoy:\n(Pronto disponible)",
             )
             return "my_reports_requested"
         else:
@@ -415,15 +415,15 @@ EDITAR → Hacer cambios""",
         meta_client: MetaClient,
     ) -> None:
         """Show draft for confirmation."""
-        draft = "📋 **Borrador de Hallazgos**:\n\n"
+        draft = "ðŸ“‹ **Borrador de Hallazgos**:\n\n"
         for i, h in enumerate(parse_result.hallazgos, 1):
             draft += f"{i}. **{h.sucursal_nombre}** - {h.area}\n"
             draft += f"   Sub-item: {h.subitem}\n"
-            draft += f"   Descripción: {h.descripcion}\n"
+            draft += f"   DescripciÃ³n: {h.descripcion}\n"
             draft += f"   Severidad: {h.severidad.value}\n"
             draft += f"   Confianza: {int(h.confianza*100)}%\n\n"
 
-        draft += "¿Confirmo? (SI/NO/EDITAR)"
+        draft += "Â¿Confirmo? (SI/NO/EDITAR)"
 
         if photo_url:
             await meta_client.send_file(phone, photo_url, draft)
@@ -481,7 +481,7 @@ EDITAR → Hacer cambios""",
                 )
                 plazo_fecha = datetime.now() + timedelta(hours=hours)
 
-                # Create gestión
+                # Create gestiÃ³n
                 gestion = Gestion(
                     id_gestion="",  # Will be generated
                     id_reporte=reporte_id,
@@ -499,13 +499,13 @@ EDITAR → Hacer cambios""",
 
                 # Notify responsible
                 msg = (
-                    f"🚨 **Nuevo Hallazgo de Auditoría**\n\n"
+                    f"ðŸš¨ **Nuevo Hallazgo de AuditorÃ­a**\n\n"
                     f"Sucursal: {sucursal.nombre}\n"
-                    f"Área: {hallazgo_data['area']}\n"
-                    f"Desvío: {hallazgo_data['descripcion']}\n"
+                    f"Ãrea: {hallazgo_data['area']}\n"
+                    f"DesvÃ­o: {hallazgo_data['descripcion']}\n"
                     f"Severidad: {hallazgo_data['severidad']}\n"
                     f"Plazo: {plazo_fecha.strftime('%Y-%m-%d %H:%M')}\n\n"
-                    f"ID Gestión: {gestion_id}"
+                    f"ID GestiÃ³n: {gestion_id}"
                 )
                 await meta_client.send_text(sucursal.tel_responsable, msg)
 
@@ -518,14 +518,14 @@ EDITAR → Hacer cambios""",
 
             await meta_client.send_text(
                 conv.telefono,
-                "✅ Hallazgos guardados. Notificaciones enviadas a responsables.",
+                "âœ… Hallazgos guardados. Notificaciones enviadas a responsables.",
             )
             return "confirmed"
         except Exception as e:
             logger.error(f"Error confirming and creating: {e}")
             await meta_client.send_text(
                 conv.telefono,
-                "❌ Error guardando hallazgos.",
+                "âŒ Error guardando hallazgos.",
             )
             return "error"
 
@@ -540,16 +540,16 @@ EDITAR → Hacer cambios""",
             if not sucursales:
                 await meta_client.send_text(
                     payload.telefono,
-                    "❌ No hay sucursales disponibles.",
+                    "âŒ No hay sucursales disponibles.",
                 )
                 return "no_sucursales"
 
             # Build menu
-            menu = "🏪 Selecciona tu sucursal:\n\n"
+            menu = "ðŸª Selecciona tu sucursal:\n\n"
             for i, s in enumerate(sucursales, 1):
                 menu += f"{i}. {s.nombre} ({s.zona})\n"
 
-            menu += "\nResponde con el número de la sucursal."
+            menu += "\nResponde con el nÃºmero de la sucursal."
 
             await meta_client.send_text(payload.telefono, menu)
 
@@ -564,7 +564,7 @@ EDITAR → Hacer cambios""",
             logger.error(f"Error initiating sucursal selection: {e}")
             await meta_client.send_text(
                 payload.telefono,
-                "❌ Error iniciando auditoría.",
+                "âŒ Error iniciando auditorÃ­a.",
             )
             return "error"
 
@@ -579,7 +579,7 @@ EDITAR → Hacer cambios""",
             if not payload.contenido:
                 await meta_client.send_text(
                     payload.telefono,
-                    "⚠️ Por favor responde con un número.",
+                    "âš ï¸ Por favor responde con un nÃºmero.",
                 )
                 return "invalid_input"
 
@@ -589,7 +589,7 @@ EDITAR → Hacer cambios""",
             except ValueError:
                 await meta_client.send_text(
                     payload.telefono,
-                    "⚠️ Responde con un número válido.",
+                    "âš ï¸ Responde con un nÃºmero vÃ¡lido.",
                 )
                 return "invalid_number"
 
@@ -597,7 +597,7 @@ EDITAR → Hacer cambios""",
             if choice < 1 or choice > len(sucursales):
                 await meta_client.send_text(
                     payload.telefono,
-                    f"⚠️ Número fuera de rango. Elige entre 1 y {len(sucursales)}.",
+                    f"âš ï¸ NÃºmero fuera de rango. Elige entre 1 y {len(sucursales)}.",
                 )
                 return "out_of_range"
 
@@ -608,23 +608,33 @@ EDITAR → Hacer cambios""",
             if not checklist:
                 await meta_client.send_text(
                     payload.telefono,
-                    "❌ No hay checklist disponible.",
+                    "âŒ No hay checklist disponible.",
                 )
                 return "no_checklist"
 
             # Create session
+            bloques = self.sheets.get_checklist_bloques()
+            if not bloques:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "âŒ No hay bloques de checklist disponibles.",
+                )
+                return "no_checklist_blocks"
+
+            bloque_inicial = sorted(bloques.keys())[0]
             id_sesion = f"ses_{uuid.uuid4().hex[:8]}"
             sesion = SesionAuditoria(
                 id_sesion=id_sesion,
                 telefono_auditor=payload.telefono,
                 sucursal_id=sucursal.id,
                 punto_actual=0,
-                total_puntos=len(checklist),
+                total_puntos=sum(len(items) for items in bloques.values()),
                 hallazgos_json="[]",
                 omitidos_json="[]",
                 estado="en_curso",
                 timestamp_inicio=datetime.now().isoformat(),
                 timestamp_ultimo_punto=datetime.now().isoformat(),
+                bloque_actual=bloque_inicial,
             )
 
             self.sheets.create_sesion(sesion)
@@ -632,23 +642,28 @@ EDITAR → Hacer cambios""",
             # Update conversation
             self.sheets.update_conversacion(
                 telefono=payload.telefono,
-                estado=ConversationState.EN_AUDITORIA,
+                estado=ConversationState.EN_BLOQUE,
                 id_pendiente=id_sesion,
             )
 
-            # Send first point
+            # Send first block
             await meta_client.send_text(
                 payload.telefono,
-                f"✅ Iniciando auditoría en {sucursal.nombre}",
+                f"âœ… Iniciando auditorÃ­a en {sucursal.nombre}",
             )
-            await self._enviar_siguiente_punto(sesion, checklist, meta_client, payload.telefono)
+            await meta_client.send_bloque_prompt(
+                payload.telefono,
+                bloque_inicial,
+                f"Bloque {bloque_inicial}",
+                bloques[bloque_inicial],
+            )
 
             return "auditoria_started"
         except Exception as e:
             logger.error(f"Error handling sucursal selection: {e}")
             await meta_client.send_text(
                 payload.telefono,
-                "❌ Error seleccionando sucursal.",
+                "âŒ Error seleccionando sucursal.",
             )
             return "error"
 
@@ -665,7 +680,7 @@ EDITAR → Hacer cambios""",
             if not sesion:
                 await meta_client.send_text(
                     payload.telefono,
-                    "❌ Sesión no encontrada.",
+                    "âŒ SesiÃ³n no encontrada.",
                 )
                 return "sesion_not_found"
 
@@ -714,7 +729,7 @@ EDITAR → Hacer cambios""",
                     )
                     await meta_client.send_text(
                         payload.telefono,
-                        "⏸️ Auditoría pausada. Escribe 'continuar' cuando quieras retomar.",
+                        "â¸ï¸ AuditorÃ­a pausada. Escribe 'continuar' cuando quieras retomar.",
                     )
                     return "auditoria_pausada"
 
@@ -727,14 +742,14 @@ EDITAR → Hacer cambios""",
                     logger.error(f"Failed to transcribe audio: {e}")
                     await meta_client.send_text(
                         payload.telefono,
-                        "❌ Error transcribiendo audio. Intenta de nuevo.",
+                        "âŒ Error transcribiendo audio. Intenta de nuevo.",
                     )
                     return "transcription_error"
 
             if not respuesta:
                 await meta_client.send_text(
                     payload.telefono,
-                    "⚠️ Por favor envía audio, foto o texto con tu observación.",
+                    "âš ï¸ Por favor envÃ­a audio, foto o texto con tu observaciÃ³n.",
                 )
                 return "empty_response"
 
@@ -761,11 +776,11 @@ EDITAR → Hacer cambios""",
             if not eval_result:
                 await meta_client.send_text(
                     payload.telefono,
-                    "❌ Error evaluando respuesta. Intenta de nuevo.",
+                    "âŒ Error evaluando respuesta. Intenta de nuevo.",
                 )
                 return "eval_error"
 
-            # If desvío, create reporte and gestión automatically
+            # If desvÃ­o, create reporte and gestiÃ³n automatically
             if eval_result.tiene_desvio:
                 # Create reporte
                 reporte = Reporte(
@@ -795,7 +810,7 @@ EDITAR → Hacer cambios""",
 
                 reporte_id = self.sheets.create_reporte(reporte)
 
-                # Create gestión
+                # Create gestiÃ³n
                 if sucursal:
                     from config import get_settings
                     settings = get_settings()
@@ -819,13 +834,13 @@ EDITAR → Hacer cambios""",
 
                     # Notify responsible
                     msg = (
-                        f"🚨 **Hallazgo de Auditoría Guiada**\n\n"
+                        f"ðŸš¨ **Hallazgo de AuditorÃ­a Guiada**\n\n"
                         f"Sucursal: {sucursal.nombre}\n"
-                        f"Área: {punto.area}\n"
-                        f"Desvío: {eval_result.descripcion_desvio}\n"
+                        f"Ãrea: {punto.area}\n"
+                        f"DesvÃ­o: {eval_result.descripcion_desvio}\n"
                         f"Severidad: {eval_result.severidad}\n"
                         f"Plazo: {plazo_fecha.strftime('%Y-%m-%d %H:%M')}\n\n"
-                        f"ID Gestión: {gestion_id}"
+                        f"ID GestiÃ³n: {gestion_id}"
                     )
                     await meta_client.send_text(sucursal.tel_responsable, msg)
 
@@ -866,7 +881,7 @@ EDITAR → Hacer cambios""",
             logger.error(f"Error handling en_auditoria: {e}")
             await meta_client.send_text(
                 payload.telefono,
-                "❌ Error procesando respuesta.",
+                "âŒ Error procesando respuesta.",
             )
             return "error"
 
@@ -888,7 +903,7 @@ EDITAR → Hacer cambios""",
                 if not sesion:
                     await meta_client.send_text(
                         payload.telefono,
-                        "❌ Sesión no encontrada.",
+                        "âŒ SesiÃ³n no encontrada.",
                     )
                     return "sesion_not_found"
 
@@ -915,7 +930,7 @@ EDITAR → Hacer cambios""",
             else:
                 await meta_client.send_text(
                     payload.telefono,
-                    "⚠️ Escribe 'continuar' para retomar la auditoría.",
+                    "âš ï¸ Escribe 'continuar' para retomar la auditorÃ­a.",
                 )
                 return "invalid_command"
         except Exception as e:
@@ -965,12 +980,12 @@ EDITAR → Hacer cambios""",
             omitidos_count = len(omitidos)
 
             # Build detail
-            detalle = "Desvíos encontrados:\n"
+            detalle = "DesvÃ­os encontrados:\n"
             for h in hallazgos:
-                detalle += f"• {h['area']}: {h['descripcion']} ({h['severidad']})\n"
+                detalle += f"â€¢ {h['area']}: {h['descripcion']} ({h['severidad']})\n"
 
             if not hallazgos:
-                detalle = "No se encontraron desvíos. ¡Excelente auditoría!"
+                detalle = "No se encontraron desvÃ­os. Â¡Excelente auditorÃ­a!"
 
             # Send summary to auditor
             sucursal = self.sheets.get_sucursal(sesion.sucursal_id)
@@ -991,13 +1006,13 @@ EDITAR → Hacer cambios""",
                 auditor = self.sheets.get_auditor(phone)
                 auditor_nombre = auditor.nombre if auditor else "Auditor"
                 coord_msg = (
-                    f"📊 **Auditoría Completada**\n\n"
+                    f"ðŸ“Š **AuditorÃ­a Completada**\n\n"
                     f"Auditor: {auditor_nombre}\n"
                     f"Sucursal: {sucursal_nombre}\n"
                     f"Total de puntos: {sesion.total_puntos}\n"
-                    f"Desvíos: {desvios}\n"
+                    f"DesvÃ­os: {desvios}\n"
                     f"Omitidos: {omitidos_count}\n"
-                    f"ID Sesión: {sesion.id_sesion}"
+                    f"ID SesiÃ³n: {sesion.id_sesion}"
                 )
                 await meta_client.send_text(settings.coordinador_tel, coord_msg)
 
@@ -1032,21 +1047,21 @@ EDITAR → Hacer cambios""",
                     )
                     await meta_client.send_text(
                         payload.telefono,
-                        "⏸️ Auditoría pausada. Mandá 'continuar' cuando estés listo.",
+                        "â¸ï¸ AuditorÃ­a pausada. MandÃ¡ 'continuar' cuando estÃ©s listo.",
                     )
                     return "auditoria_pausada"
 
             # Get session
             sesion = self.sheets.get_sesion(conv.id_pendiente or "")
             if not sesion:
-                await meta_client.send_text(payload.telefono, "❌ Sesión no encontrada")
+                await meta_client.send_text(payload.telefono, "âŒ SesiÃ³n no encontrada")
                 return "error"
 
             # Get block items
             bloques = self.sheets.get_checklist_bloques()
             bloque_id = sesion.bloque_actual
             if bloque_id not in bloques:
-                await meta_client.send_text(payload.telefono, "❌ Bloque no encontrado")
+                await meta_client.send_text(payload.telefono, "âŒ Bloque no encontrado")
                 return "error"
 
             items = bloques[bloque_id]
@@ -1067,7 +1082,7 @@ EDITAR → Hacer cambios""",
             if not resultados:
                 await meta_client.send_text(
                     payload.telefono,
-                    "❌ No pude evaluar la respuesta. Intenta de nuevo.",
+                    "âŒ No pude evaluar la respuesta. Intenta de nuevo.",
                 )
                 return "parse_error"
 
@@ -1105,7 +1120,7 @@ EDITAR → Hacer cambios""",
             if payload.tipo != "text" or not payload.contenido:
                 await meta_client.send_text(
                     payload.telefono,
-                    "⚠️ Respondé SI, EDITAR o SALTAR BLOQUE",
+                    "âš ï¸ RespondÃ© SI, EDITAR o SALTAR BLOQUE",
                 )
                 return "invalid_response"
 
@@ -1167,7 +1182,7 @@ EDITAR → Hacer cambios""",
                     )
                     await meta_client.send_text(
                         payload.telefono,
-                        "🔍 Verificación de Stock\n\n¿Cuántos productos querés verificar? (0 para saltar)",
+                        "ðŸ” VerificaciÃ³n de Stock\n\nÂ¿CuÃ¡ntos productos querÃ©s verificar? (0 para saltar)",
                     )
                 else:
                     sesion.bloque_actual = next_state
@@ -1217,7 +1232,7 @@ EDITAR → Hacer cambios""",
                     )
                     await meta_client.send_text(
                         payload.telefono,
-                        "🔍 Verificación de Stock\n\n¿Cuántos productos querés verificar? (0 para saltar)",
+                        "ðŸ” VerificaciÃ³n de Stock\n\nÂ¿CuÃ¡ntos productos querÃ©s verificar? (0 para saltar)",
                     )
                 else:
                     self.sheets.update_conversacion(
@@ -1245,7 +1260,7 @@ EDITAR → Hacer cambios""",
             else:
                 await meta_client.send_text(
                     payload.telefono,
-                    "⚠️ Respondé SI, EDITAR o SALTAR BLOQUE",
+                    "âš ï¸ RespondÃ© SI, EDITAR o SALTAR BLOQUE",
                 )
                 return "invalid_response"
 
@@ -1262,19 +1277,13 @@ EDITAR → Hacer cambios""",
         """Handle stock verification count input."""
         try:
             if payload.tipo != "text" or not payload.contenido:
-                await meta_client.send_text(
-                    payload.telefono,
-                    "⚠️ Mandá un número o 0 para saltar",
-                )
+                await meta_client.send_text(payload.telefono, "⚠️ Mandá un número o 0 para saltar")
                 return "invalid_response"
 
             try:
                 cantidad = int(payload.contenido.strip())
             except ValueError:
-                await meta_client.send_text(
-                    payload.telefono,
-                    "⚠️ Mandá un número válido",
-                )
+                await meta_client.send_text(payload.telefono, "⚠️ Mandá un número válido")
                 return "invalid_response"
 
             sesion = self.sheets.get_sesion(conv.id_pendiente or "")
@@ -1282,35 +1291,59 @@ EDITAR → Hacer cambios""",
                 return "error"
 
             if cantidad == 0:
-                # Skip stock verification
                 self.sheets.update_conversacion(
                     telefono=payload.telefono,
                     estado=ConversationState.DESVIO_LIBRE,
                     id_pendiente=sesion.id_sesion,
+                )
+                sesion.stock_total = 0
+                sesion.stock_actual = 0
+                self.sheets.update_sesion(
+                    sesion.id_sesion,
+                    estado=ConversationState.DESVIO_LIBRE.value,
+                    timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+                    stock_total=0,
+                    stock_actual=0,
+                    stock_items_json=sesion.stock_items_json,
+                    desvios_libres_json=sesion.desvios_libres_json,
+                    bloque_actual=sesion.bloque_actual,
+                    resultados_json=sesion.resultados_json,
+                    punto_actual=sesion.punto_actual,
+                    hallazgos_json=sesion.hallazgos_json,
+                    omitidos_json=sesion.omitidos_json,
                 )
                 await meta_client.send_text(
                     payload.telefono,
                     "📋 Desvíos Libres\n\nTiene algún desvío o hallazgo libre para reportar?\n\nMandá 'NO' si no hay más desvíos, o describí el problema.",
                 )
                 return "stock_skipped"
-            else:
-                # Start stock loop
-                sesion_aux = {
-                    "stock_count": cantidad,
-                    "stock_items": [],
-                    "stock_current": 0,
-                }
-                self.sheets.update_conversacion(
-                    telefono=payload.telefono,
-                    estado=ConversationState.EN_STOCK_ITEM,
-                    id_pendiente=sesion.id_sesion,
-                )
-                await meta_client.send_text(
-                    payload.telefono,
-                    f"📦 Producto 1/{cantidad}\n\nMandá: Nombre / Stock Físico / Stock Sistema\n\nEj: Ibuprofeno 400 / 23 / 18",
-                )
-                return "stock_started"
 
+            sesion.stock_total = cantidad
+            sesion.stock_actual = 0
+            self.sheets.update_conversacion(
+                telefono=payload.telefono,
+                estado=ConversationState.EN_STOCK_ITEM,
+                id_pendiente=sesion.id_sesion,
+            )
+            self.sheets.update_sesion(
+                sesion.id_sesion,
+                estado=ConversationState.EN_STOCK_ITEM.value,
+                timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+                stock_total=cantidad,
+                stock_actual=0,
+                stock_items_json=sesion.stock_items_json,
+                desvios_libres_json=sesion.desvios_libres_json,
+                bloque_actual=sesion.bloque_actual,
+                resultados_json=sesion.resultados_json,
+                punto_actual=sesion.punto_actual,
+                hallazgos_json=sesion.hallazgos_json,
+                omitidos_json=sesion.omitidos_json,
+            )
+            await meta_client.send_text(
+                payload.telefono,
+                f"📦 Producto 1/{cantidad}\n\nMandá: Nombre / Stock Físico / Stock Sistema\n\nEj: Ibuprofeno 400 / 23 / 18",
+            )
+            return "stock_started"
         except Exception as e:
             logger.error(f"Error in _handle_stock_loop: {e}", exc_info=True)
             return "error"
@@ -1330,7 +1363,37 @@ EDITAR → Hacer cambios""",
                 )
                 return "invalid_response"
 
-            # Parse stock item
+            sesion = self.sheets.get_sesion(conv.id_pendiente or "")
+            if not sesion:
+                return "error"
+
+            comando = payload.contenido.strip().lower()
+            if comando in {"listo", "terminado", "terminé", "fin", "finalizar"}:
+                self.sheets.update_conversacion(
+                    telefono=payload.telefono,
+                    estado=ConversationState.DESVIO_LIBRE,
+                    id_pendiente=sesion.id_sesion,
+                )
+                self.sheets.update_sesion(
+                    sesion.id_sesion,
+                    estado=ConversationState.DESVIO_LIBRE.value,
+                    timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+                    stock_total=sesion.stock_total,
+                    stock_actual=sesion.stock_actual,
+                    stock_items_json=sesion.stock_items_json,
+                    desvios_libres_json=sesion.desvios_libres_json,
+                    bloque_actual=sesion.bloque_actual,
+                    resultados_json=sesion.resultados_json,
+                    punto_actual=sesion.punto_actual,
+                    hallazgos_json=sesion.hallazgos_json,
+                    omitidos_json=sesion.omitidos_json,
+                )
+                await meta_client.send_text(
+                    payload.telefono,
+                    f"✓ Stock registrado: {sesion.stock_actual}/{sesion.stock_total}\n\n¿Algo más para registrar que no hayamos cubierto?\nPodés mandar texto, audio o foto. O escribí NO para terminar.",
+                )
+                return "stock_closed"
+
             stock_item = await self.parser.parse_stock_item(payload.contenido)
             if not stock_item:
                 await meta_client.send_text(
@@ -1339,11 +1402,6 @@ EDITAR → Hacer cambios""",
                 )
                 return "parse_error"
 
-            sesion = self.sheets.get_sesion(conv.id_pendiente or "")
-            if not sesion:
-                return "error"
-
-            # Save stock item
             auditor = self.sheets.get_auditor(payload.telefono)
             auditor_nombre = auditor.nombre if auditor else "Auditor"
             self.sheets.save_stock_item(
@@ -1353,27 +1411,52 @@ EDITAR → Hacer cambios""",
                 stock_item,
             )
 
-            # Update stock_items_json
             stock_items = json.loads(sesion.stock_items_json) if sesion.stock_items_json else []
             stock_items.append(vars(stock_item))
             sesion.stock_items_json = json.dumps(stock_items, ensure_ascii=False)
+            sesion.stock_actual = min(sesion.stock_actual + 1, sesion.stock_total or (sesion.stock_actual + 1))
+
+            if sesion.stock_total and sesion.stock_actual >= sesion.stock_total:
+                self.sheets.update_conversacion(
+                    telefono=payload.telefono,
+                    estado=ConversationState.DESVIO_LIBRE,
+                    id_pendiente=sesion.id_sesion,
+                )
+                self.sheets.update_sesion(
+                    sesion.id_sesion,
+                    estado=ConversationState.DESVIO_LIBRE.value,
+                    timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+                    stock_total=sesion.stock_total,
+                    stock_actual=sesion.stock_actual,
+                    stock_items_json=sesion.stock_items_json,
+                    desvios_libres_json=sesion.desvios_libres_json,
+                    bloque_actual=sesion.bloque_actual,
+                    resultados_json=sesion.resultados_json,
+                    punto_actual=sesion.punto_actual,
+                    hallazgos_json=sesion.hallazgos_json,
+                    omitidos_json=sesion.omitidos_json,
+                )
+                await meta_client.send_text(
+                    payload.telefono,
+                    f"✓ Registrado: {stock_item.nombre}\n\nStock completo ({sesion.stock_actual}/{sesion.stock_total}).\n¿Algo más para registrar que no hayamos cubierto?\nPodés mandar texto, audio o foto. O escribí NO para terminar.",
+                )
+                return "stock_completed"
 
             self.sheets.update_sesion(
                 sesion.id_sesion,
                 estado=ConversationState.EN_STOCK_ITEM.value,
                 timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+                stock_total=sesion.stock_total,
+                stock_actual=sesion.stock_actual,
                 stock_items_json=sesion.stock_items_json,
+                desvios_libres_json=sesion.desvios_libres_json,
             )
 
-            # TODO: Track count and move to next or finish
-            # For now, continue with stock loop
             await meta_client.send_text(
                 payload.telefono,
-                f"✓ Registrado: {stock_item.nombre}\n\nMandá el próximo producto o 'listo'",
+                f"✓ Registrado: {stock_item.nombre} ({sesion.stock_actual}/{sesion.stock_total})\n\nMandá el próximo producto o 'listo'",
             )
-
             return "stock_item_guardado"
-
         except Exception as e:
             logger.error(f"Error in _handle_en_stock_item: {e}", exc_info=True)
             return "error"
@@ -1389,7 +1472,7 @@ EDITAR → Hacer cambios""",
             if payload.tipo != "text" or not payload.contenido:
                 await meta_client.send_text(
                     payload.telefono,
-                    "⚠️ Mandá 'NO' o describí el desvío",
+                    "âš ï¸ MandÃ¡ 'NO' o describÃ­ el desvÃ­o",
                 )
                 return "invalid_response"
 
@@ -1406,9 +1489,23 @@ EDITAR → Hacer cambios""",
                     estado=ConversationState.COMPROMISOS,
                     id_pendiente=sesion.id_sesion,
                 )
+                self.sheets.update_sesion(
+                    sesion.id_sesion,
+                    estado=ConversationState.COMPROMISOS.value,
+                    timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+                    stock_total=sesion.stock_total,
+                    stock_actual=sesion.stock_actual,
+                    stock_items_json=sesion.stock_items_json,
+                    desvios_libres_json=sesion.desvios_libres_json,
+                    bloque_actual=sesion.bloque_actual,
+                    resultados_json=sesion.resultados_json,
+                    punto_actual=sesion.punto_actual,
+                    hallazgos_json=sesion.hallazgos_json,
+                    omitidos_json=sesion.omitidos_json,
+                )
                 await meta_client.send_text(
                     payload.telefono,
-                    "📝 Compromisos\n\n¿Firmaron compromisos de corrección?\n\nSI / NO / PENDIENTE",
+                    "ðŸ“ Compromisos\n\nÂ¿Firmaron compromisos de correcciÃ³n?\n\nSI / NO / PENDIENTE",
                 )
                 return "sin_desvios"
 
@@ -1417,7 +1514,7 @@ EDITAR → Hacer cambios""",
             if not desvio:
                 await meta_client.send_text(
                     payload.telefono,
-                    "❌ No pude procesar el desvío. Intenta de nuevo.",
+                    "âŒ No pude procesar el desvÃ­o. Intenta de nuevo.",
                 )
                 return "parse_error"
 
@@ -1464,7 +1561,7 @@ EDITAR → Hacer cambios""",
 
             await meta_client.send_text(
                 payload.telefono,
-                f"✓ Registrado desvío en {desvio.area_estimada}\n\n¿Hay más desvíos? Describí o mandá 'NO'",
+                f"âœ“ Registrado desvÃ­o en {desvio.area_estimada}\n\nÂ¿Hay mÃ¡s desvÃ­os? DescribÃ­ o mandÃ¡ 'NO'",
             )
 
             return "desvio_registrado"
@@ -1484,15 +1581,15 @@ EDITAR → Hacer cambios""",
             if payload.tipo != "text" or not payload.contenido:
                 await meta_client.send_text(
                     payload.telefono,
-                    "⚠️ Respondé SI, NO o PENDIENTE",
+                    "âš ï¸ RespondÃ© SI, NO o PENDIENTE",
                 )
                 return "invalid_response"
 
             respuesta = payload.contenido.upper().strip()
-            if respuesta not in {"SI", "SÍ", "NO", "PENDIENTE"}:
+            if respuesta not in {"SI", "SÃ", "NO", "PENDIENTE"}:
                 await meta_client.send_text(
                     payload.telefono,
-                    "⚠️ Respondé SI, NO o PENDIENTE",
+                    "âš ï¸ RespondÃ© SI, NO o PENDIENTE",
                 )
                 return "invalid_response"
 
@@ -1583,17 +1680,17 @@ EDITAR → Hacer cambios""",
                 auditor = self.sheets.get_auditor(phone)
                 auditor_nombre = auditor.nombre if auditor else "Auditor"
                 coord_msg = (
-                    f"📊 **Auditoría Completada (Flujo Bloques)**\n\n"
+                    f"ðŸ“Š **AuditorÃ­a Completada (Flujo Bloques)**\n\n"
                     f"Auditor: {auditor_nombre}\n"
                     f"Sucursal: {sucursal_nombre}\n"
                     f"Puntaje: {puntaje_total:.1f}/{puntaje_maximo:.1f}\n"
-                    f"Desvíos: {desvios_count}\n"
-                    f"  🔴 Críticos: {alta_count}\n"
-                    f"  🟡 Importantes: {media_count}\n"
-                    f"  🟢 Leves: {baja_count}\n"
+                    f"DesvÃ­os: {desvios_count}\n"
+                    f"  ðŸ”´ CrÃ­ticos: {alta_count}\n"
+                    f"  ðŸŸ¡ Importantes: {media_count}\n"
+                    f"  ðŸŸ¢ Leves: {baja_count}\n"
                     f"Productos verificados: {stock_count}\n"
                     f"Compromisos: {sesion.compromisos_firmados}\n"
-                    f"ID Sesión: {sesion.id_sesion}"
+                    f"ID SesiÃ³n: {sesion.id_sesion}"
                 )
                 await meta_client.send_text(settings.coordinador_tel, coord_msg)
 

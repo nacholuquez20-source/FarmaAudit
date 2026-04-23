@@ -81,6 +81,8 @@ def setup_sesiones_auditoria_simple(sheet):
         "omitidos_json",
         "bloque_actual",
         "resultados_json",
+        "stock_total",
+        "stock_actual",
         "stock_items_json",
         "desvios_libres_json",
         "compromisos_firmados",

@@ -146,6 +146,8 @@ class SesionAuditoria:
     omitidos_json: str = "[]"
     bloque_actual: str = "A"
     resultados_json: str = "{}"
+    stock_total: int = 0
+    stock_actual: int = 0
     stock_items_json: str = "[]"
     desvios_libres_json: str = "[]"
     compromisos_firmados: str = ""
