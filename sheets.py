@@ -99,7 +99,7 @@ class SheetsManager:
             rows = sheet.get_all_records()
             auditores = [
                 Auditor(
-                    telefono=row.get("Telefono", ""),
+                    telefono=str(row.get("Telefono", "")),
                     nombre=row.get("Nombre", ""),
                     cuadrilla=row.get("Cuadrilla", ""),
                     activo=row.get("Activo", "").lower() == "true",
@@ -363,7 +363,7 @@ class SheetsManager:
                 if row.get("ID_temp") == id_temp:
                     return Pendiente(
                         id_temp=row.get("ID_temp", ""),
-                        telefono_auditor=row.get("Telefono_Auditor", ""),
+                        telefono_auditor=str(row.get("Telefono_Auditor", "")),
                         estado=row.get("Estado", ""),
                         datos_json=row.get("Datos_JSON", ""),
                         timestamp_creacion=self._parse_datetime(row.get("Timestamp_creacion")),
@@ -401,7 +401,7 @@ class SheetsManager:
                 if expira_en and expira_en < now:
                     expired.append(Pendiente(
                         id_temp=row.get("ID_temp", ""),
-                        telefono_auditor=row.get("Telefono_Auditor", ""),
+                        telefono_auditor=str(row.get("Telefono_Auditor", "")),
                         estado=row.get("Estado", ""),
                         datos_json=row.get("Datos_JSON", ""),
                         timestamp_creacion=self._parse_datetime(row.get("Timestamp_creacion")),
@@ -581,7 +581,7 @@ class SheetsManager:
                 if row.get("id_sesion") == id_sesion:
                     return SesionAuditoria(
                         id_sesion=row.get("id_sesion", ""),
-                        telefono_auditor=row.get("telefono_auditor", ""),
+                        telefono_auditor=str(row.get("telefono_auditor", "")),
                         sucursal_id=row.get("sucursal_id", ""),
                         estado=row.get("estado", "en_curso"),
                         timestamp_inicio=row.get("timestamp_inicio", ""),
@@ -675,7 +675,7 @@ class SheetsManager:
                     if ts and (now - ts).total_seconds() > timeout_min * 60:
                         expiradas.append(SesionAuditoria(
                             id_sesion=row.get("id_sesion", ""),
-                            telefono_auditor=row.get("telefono_auditor", ""),
+                            telefono_auditor=str(row.get("telefono_auditor", "")),
                             sucursal_id=row.get("sucursal_id", ""),
                             estado=row.get("estado", "en_curso"),
                             timestamp_inicio=row.get("timestamp_inicio", ""),
