@@ -48,7 +48,10 @@ class MetaClient:
                     logger.info(f"Sent text to {phone}")
                     return True
                 else:
-                    logger.error(f"Failed to send text to {phone}: {response.text}")
+                    logger.error(f"Failed to send text to {phone}: Status {response.status_code}")
+                    logger.error(f"Response body: {response.text}")
+                    logger.error(f"Payload sent: {payload}")
+                    logger.error(f"URL: {url}")
                     return False
         except Exception as e:
             logger.error(f"Failed to send text to {phone}: {e}")
@@ -80,7 +83,9 @@ class MetaClient:
                     logger.info(f"Sent file to {phone}")
                     return True
                 else:
-                    logger.error(f"Failed to send file to {phone}: {response.text}")
+                    logger.error(f"Failed to send file to {phone}: Status {response.status_code}")
+                    logger.error(f"Response body: {response.text}")
+                    logger.error(f"Payload sent: {payload}")
                     return False
         except Exception as e:
             logger.error(f"Failed to send file to {phone}: {e}")
