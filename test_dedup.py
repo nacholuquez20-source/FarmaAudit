@@ -2,12 +2,16 @@
 
 import pytest
 import asyncio
-from unittest.mock import Mock, patch, AsyncMock
-from datetime import datetime
 
-from main import _is_message_processed, _mark_message_processed, _processed_messages
+from main import (
+    _is_message_processed,
+    _mark_message_processed,
+    _claim_message_for_processing,
+    _release_message_claim,
+    _processed_messages,
+    _processing_messages,
+)
 from router import ConversationRouter
-from models import WhatsAppPayload, ConversationState
 
 
 @pytest.mark.asyncio
@@ -15,6 +19,7 @@ async def test_message_deduplication():
     """Test message deduplication by message_id."""
     # Clear cache
     _processed_messages.clear()
+    _processing_messages.clear()
 
     message_id = "test_msg_123"
     phone = "5491234567890"
@@ -89,6 +94,7 @@ async def test_message_dedup_ttl_expiry():
     from main import _MESSAGE_TTL_SECONDS
 
     _processed_messages.clear()
+    _processing_messages.clear()
 
     message_id = "test_expiry"
     phone = "5491234567890"
@@ -106,6 +112,42 @@ async def test_message_dedup_ttl_expiry():
 
     # Should be expired now
     assert not _is_message_processed(message_id)
+
+
+@pytest.mark.asyncio
+async def test_atomic_claim_prevents_concurrent_duplicate_processing():
+    """Only one concurrent request can claim same message_id."""
+    _processed_messages.clear()
+    _processing_messages.clear()
+
+    message_id = "msg_atomic_1"
+    phone = "5491234567890"
+
+    async def attempt_claim():
+        return await _claim_message_for_processing(message_id, phone)
+
+    claimed_a, claimed_b = await asyncio.gather(attempt_claim(), attempt_claim())
+    assert sum([claimed_a, claimed_b]) == 1
+
+    # Mark success and verify future attempts are rejected
+    await _mark_message_processed(message_id, phone)
+    assert not await _claim_message_for_processing(message_id, phone)
+
+
+@pytest.mark.asyncio
+async def test_claim_released_after_failure():
+    """Claim can be released so retries are possible after failures."""
+    _processed_messages.clear()
+    _processing_messages.clear()
+
+    message_id = "msg_atomic_2"
+    phone = "5491234567890"
+
+    assert await _claim_message_for_processing(message_id, phone)
+    assert not await _claim_message_for_processing(message_id, phone)
+
+    await _release_message_claim(message_id, distributed=False)
+    assert await _claim_message_for_processing(message_id, phone)
 
 
 if __name__ == "__main__":

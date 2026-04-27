@@ -81,6 +81,16 @@ class SheetsManager:
             return ""
         return "".join(ch for ch in str(phone) if ch.isdigit())
 
+    @staticmethod
+    def _column_to_a1(col_idx: int) -> str:
+        """Convert 1-based column index to A1 column label (A, Z, AA, AB...)."""
+        result = ""
+        current = col_idx
+        while current > 0:
+            current, rem = divmod(current - 1, 26)
+            result = chr(65 + rem) + result
+        return result
+
     # ========== Maestro_Auditores ==========
 
     def get_auditor(self, telefono: str) -> Optional[Auditor]:
@@ -293,35 +303,35 @@ class SheetsManager:
                 for header_name in ("Telefono", "Telefono_Auditor"):
                     col = header_to_col.get(header_name)
                     if col:
-                        cells_to_update.append(f"{chr(64+col)}{row_idx}")
+                        cells_to_update.append(f"{self._column_to_a1(col)}{row_idx}")
                         break
 
                 # Find state column
                 for header_name in ("Estado_actual", "estado_actual", "Estado", "estado"):
                     col = header_to_col.get(header_name)
                     if col:
-                        cells_to_update.append(f"{chr(64+col)}{row_idx}")
+                        cells_to_update.append(f"{self._column_to_a1(col)}{row_idx}")
                         break
 
                 # Find pending ID column
                 for header_name in ("ID_pendiente", "id_pendiente", "ID_Pendiente", "Hallazgo_Temp"):
                     col = header_to_col.get(header_name)
                     if col:
-                        cells_to_update.append(f"{chr(64+col)}{row_idx}")
+                        cells_to_update.append(f"{self._column_to_a1(col)}{row_idx}")
                         break
 
                 # Find last message column
                 for header_name in ("Ultimo_mensaje", "ultimo_mensaje"):
                     col = header_to_col.get(header_name)
                     if col:
-                        cells_to_update.append(f"{chr(64+col)}{row_idx}")
+                        cells_to_update.append(f"{self._column_to_a1(col)}{row_idx}")
                         break
 
                 # Find timestamp column
                 for header_name in ("Timestamp", "timestamp", "timestamp_ultimo", "Timestamp_creacion", "Timeout_At", "Expira_en"):
                     col = header_to_col.get(header_name)
                     if col:
-                        cells_to_update.append(f"{chr(64+col)}{row_idx}")
+                        cells_to_update.append(f"{self._column_to_a1(col)}{row_idx}")
                         break
 
                 # Batch update all cells at once

@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import pytz
+from supabase import create_client, Client
 
 from config import get_settings
 from models import WhatsAppPayload, ConversationState
@@ -37,8 +38,73 @@ sheets = None
 # Message deduplication cache: {message_id: (timestamp, phone)}
 # TTL: 5 minutes (prevents reprocessing of Meta retries)
 _processed_messages: OrderedDict = OrderedDict()
+_processing_messages: set[str] = set()
 _message_lock = asyncio.Lock()
 _MESSAGE_TTL_SECONDS = 300
+_supabase_client: Client | None = None
+_dedup_store_available: bool | None = None
+
+
+def _get_supabase_client() -> Client | None:
+    """Create Supabase client lazily for distributed deduplication."""
+    global _supabase_client, _dedup_store_available
+    if _supabase_client is not None:
+        return _supabase_client
+    if _dedup_store_available is False:
+        return None
+
+    supabase_url = settings.supabase_url
+    supabase_key = settings.supabase_service_key
+    if not supabase_url or not supabase_key:
+        _dedup_store_available = False
+        return None
+
+    try:
+        _supabase_client = create_client(supabase_url, supabase_key)
+        _dedup_store_available = True
+    except Exception as exc:
+        logger.warning(f"Supabase dedup disabled: client init failed: {exc}")
+        _dedup_store_available = False
+        return None
+
+    return _supabase_client
+
+
+def _claim_message_distributed(message_id: str, phone: str) -> bool:
+    """Claim a message ID in shared storage to prevent cross-instance duplicates."""
+    global _dedup_store_available
+    client = _get_supabase_client()
+    if client is None:
+        return True
+
+    try:
+        client.table("webhook_dedup").insert({
+            "message_id": message_id,
+            "phone": phone,
+            "claimed_at": datetime.utcnow().isoformat(),
+        }).execute()
+        return True
+    except Exception as exc:
+        error_text = str(exc).lower()
+        if "duplicate key" in error_text or "already exists" in error_text or "23505" in error_text:
+            return False
+        if "webhook_dedup" in error_text and "does not exist" in error_text:
+            logger.warning("Supabase dedup disabled: webhook_dedup table not found")
+            _dedup_store_available = False
+            return True
+        logger.warning(f"Supabase dedup claim failed, falling back to in-memory only: {exc}")
+        return True
+
+
+def _release_message_distributed(message_id: str) -> None:
+    """Release distributed claim on processing failure (allow safe retry)."""
+    client = _get_supabase_client()
+    if client is None:
+        return
+    try:
+        client.table("webhook_dedup").delete().eq("message_id", message_id).execute()
+    except Exception as exc:
+        logger.warning(f"Failed to release distributed dedup claim for {message_id}: {exc}")
 
 
 def _is_message_processed(message_id: str) -> bool:
@@ -56,8 +122,30 @@ async def _mark_message_processed(message_id: str, phone: str) -> None:
     """Mark message as processed."""
     async with _message_lock:
         _processed_messages[message_id] = (datetime.utcnow(), phone)
+        _processing_messages.discard(message_id)
         if len(_processed_messages) > 1000:
             _processed_messages.popitem(last=False)
+
+
+async def _claim_message_for_processing(message_id: str, phone: str) -> bool:
+    """Atomically claim a message ID to avoid duplicate concurrent processing."""
+    async with _message_lock:
+        if _is_message_processed(message_id):
+            return False
+        if message_id in _processing_messages:
+            return False
+        if not _claim_message_distributed(message_id, phone):
+            return False
+        _processing_messages.add(message_id)
+        return True
+
+
+async def _release_message_claim(message_id: str, distributed: bool = False) -> None:
+    """Release in-flight claim if processing failed."""
+    async with _message_lock:
+        _processing_messages.discard(message_id)
+    if distributed:
+        _release_message_distributed(message_id)
 
 def get_router():
     """Get or create conversation router."""
@@ -163,6 +251,9 @@ async def webhook_verify(request: Request):
 async def webhook(request: Request):
     """Meta WhatsApp Cloud API webhook entry point."""
     correlation_id = str(uuid.uuid4())[:8]  # Short correlation ID for logs
+    message_id = ""
+    message_claimed = False
+    processed_successfully = False
     try:
         data = await request.json()
 
@@ -195,9 +286,11 @@ async def webhook(request: Request):
 
         # Check for duplicate message (Meta redelivery protection)
         message_id = msg.get("id", "")
-        if message_id and _is_message_processed(message_id):
-            logger.info(f"[{correlation_id}] Duplicate message detected (msg_id: {message_id}, phone: {telefono}). Skipping.")
-            return {"status": "ok", "result": "duplicate_skipped"}
+        if message_id:
+            message_claimed = await _claim_message_for_processing(message_id, telefono)
+            if not message_claimed:
+                logger.info(f"[{correlation_id}] Duplicate/in-flight message detected (msg_id: {message_id}, phone: {telefono}). Skipping.")
+                return {"status": "ok", "result": "duplicate_skipped"}
 
         # Extract message content based on type
         tipo = msg.get("type", "text")
@@ -238,6 +331,7 @@ async def webhook(request: Request):
         # Mark message as processed (after successful processing)
         if message_id:
             await _mark_message_processed(message_id, telefono)
+            processed_successfully = True
 
         logger.info(f"[{correlation_id}] Processed message result: {result}")
         return {"status": "ok", "result": result}
@@ -246,6 +340,9 @@ async def webhook(request: Request):
         logger.error(f"[{correlation_id}] Webhook error: {e}")
         logger.error(f"[{correlation_id}] Traceback: {traceback.format_exc()}")
         return {"status": "error", "message": str(e)}
+    finally:
+        if message_id and message_claimed and not processed_successfully:
+            await _release_message_claim(message_id, distributed=True)
 
 
 async def check_expired_confirmations():
