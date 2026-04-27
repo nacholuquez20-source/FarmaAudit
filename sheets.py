@@ -285,38 +285,80 @@ class SheetsManager:
                         timestamp_now,
                     ])
             else:
-                # Update existing row honoring whichever schema is present.
+                # Update existing row with batch update for atomicity
                 header_to_col = {header.strip(): idx + 1 for idx, header in enumerate(headers) if header.strip()}
+                cells_to_update = []
 
+                # Find phone column
                 for header_name in ("Telefono", "Telefono_Auditor"):
                     col = header_to_col.get(header_name)
                     if col:
-                        sheet.update_cell(row_idx, col, telefono_norm)
+                        cells_to_update.append(f"{chr(64+col)}{row_idx}")
                         break
 
+                # Find state column
                 for header_name in ("Estado_actual", "estado_actual", "Estado", "estado"):
                     col = header_to_col.get(header_name)
                     if col:
-                        sheet.update_cell(row_idx, col, estado.value)
+                        cells_to_update.append(f"{chr(64+col)}{row_idx}")
                         break
 
+                # Find pending ID column
                 for header_name in ("ID_pendiente", "id_pendiente", "ID_Pendiente", "Hallazgo_Temp"):
                     col = header_to_col.get(header_name)
                     if col:
-                        sheet.update_cell(row_idx, col, id_pendiente or "")
+                        cells_to_update.append(f"{chr(64+col)}{row_idx}")
                         break
 
+                # Find last message column
                 for header_name in ("Ultimo_mensaje", "ultimo_mensaje"):
                     col = header_to_col.get(header_name)
                     if col:
-                        sheet.update_cell(row_idx, col, ultimo_mensaje)
+                        cells_to_update.append(f"{chr(64+col)}{row_idx}")
                         break
 
+                # Find timestamp column
                 for header_name in ("Timestamp", "timestamp", "timestamp_ultimo", "Timestamp_creacion", "Timeout_At", "Expira_en"):
                     col = header_to_col.get(header_name)
                     if col:
-                        sheet.update_cell(row_idx, col, timestamp_now)
+                        cells_to_update.append(f"{chr(64+col)}{row_idx}")
                         break
+
+                # Batch update all cells at once
+                if cells_to_update:
+                    values_to_update = [telefono_norm, estado.value, id_pendiente or "", ultimo_mensaje, timestamp_now]
+                    updates = [{"range": cell, "values": [[values_to_update[i]]]} for i, cell in enumerate(cells_to_update)]
+                    if updates:
+                        try:
+                            sheet.batch_update(updates)
+                        except Exception:
+                            # Fallback: update cells individually if batch fails
+                            header_to_col = {header.strip(): idx + 1 for idx, header in enumerate(headers) if header.strip()}
+                            for header_name in ("Telefono", "Telefono_Auditor"):
+                                col = header_to_col.get(header_name)
+                                if col:
+                                    sheet.update_cell(row_idx, col, telefono_norm)
+                                    break
+                            for header_name in ("Estado_actual", "estado_actual", "Estado", "estado"):
+                                col = header_to_col.get(header_name)
+                                if col:
+                                    sheet.update_cell(row_idx, col, estado.value)
+                                    break
+                            for header_name in ("ID_pendiente", "id_pendiente", "ID_Pendiente", "Hallazgo_Temp"):
+                                col = header_to_col.get(header_name)
+                                if col:
+                                    sheet.update_cell(row_idx, col, id_pendiente or "")
+                                    break
+                            for header_name in ("Ultimo_mensaje", "ultimo_mensaje"):
+                                col = header_to_col.get(header_name)
+                                if col:
+                                    sheet.update_cell(row_idx, col, ultimo_mensaje)
+                                    break
+                            for header_name in ("Timestamp", "timestamp", "timestamp_ultimo", "Timestamp_creacion", "Timeout_At", "Expira_en"):
+                                col = header_to_col.get(header_name)
+                                if col:
+                                    sheet.update_cell(row_idx, col, timestamp_now)
+                                    break
 
             logger.info(f"Updated conversation for {telefono}: {estado.value}")
         except Exception as e:

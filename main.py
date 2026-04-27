@@ -1,8 +1,11 @@
 """FastAPI application for AuditBot webhook and background jobs."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
+import asyncio
+import uuid
+from collections import OrderedDict
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse
@@ -14,6 +17,7 @@ from models import WhatsAppPayload, ConversationState
 from router import ConversationRouter
 from meta_client import MetaClient
 from sheets import SheetsManager
+from sync_sheets_to_supabase import sync_sheets_to_supabase
 
 # Configure logging
 logging.basicConfig(
@@ -29,6 +33,31 @@ scheduler = AsyncIOScheduler()
 # Lazy initialization - these will be created on demand
 router = None
 sheets = None
+
+# Message deduplication cache: {message_id: (timestamp, phone)}
+# TTL: 5 minutes (prevents reprocessing of Meta retries)
+_processed_messages: OrderedDict = OrderedDict()
+_message_lock = asyncio.Lock()
+_MESSAGE_TTL_SECONDS = 300
+
+
+def _is_message_processed(message_id: str) -> bool:
+    """Check if message was already processed (within TTL)."""
+    if message_id not in _processed_messages:
+        return False
+    timestamp, _ = _processed_messages[message_id]
+    if datetime.utcnow() - timestamp > timedelta(seconds=_MESSAGE_TTL_SECONDS):
+        del _processed_messages[message_id]
+        return False
+    return True
+
+
+async def _mark_message_processed(message_id: str, phone: str) -> None:
+    """Mark message as processed."""
+    async with _message_lock:
+        _processed_messages[message_id] = (datetime.utcnow(), phone)
+        if len(_processed_messages) > 1000:
+            _processed_messages.popitem(last=False)
 
 def get_router():
     """Get or create conversation router."""
@@ -56,12 +85,14 @@ async def startup_event():
         "interval",
         minutes=settings.timeout_check_interval,
         id="timeout_check",
+        max_instances=1,  # Prevent concurrent executions
     )
     scheduler.add_job(
         check_expired_audit_sessions,
         "interval",
         minutes=settings.timeout_check_interval,
         id="audit_timeout_check",
+        max_instances=1,  # Prevent concurrent executions
     )
     scheduler.add_job(
         daily_summary_job,
@@ -70,6 +101,14 @@ async def startup_event():
         minute=0,
         id="daily_summary",
         timezone=pytz.UTC,
+        max_instances=1,  # Prevent concurrent executions
+    )
+    scheduler.add_job(
+        sync_sheets_to_supabase,
+        "interval",
+        minutes=5,
+        id="sheets_supabase_sync",
+        max_instances=1,
     )
     scheduler.start()
 
@@ -92,6 +131,19 @@ async def health_check():
     }
 
 
+@app.get("/sync-now")
+async def sync_now():
+    """Manual sync endpoint for testing."""
+    try:
+        await sync_sheets_to_supabase()
+        return {"status": "success", "message": "Sync completed"}
+    except Exception as e:
+        import traceback
+        logger.error(f"Manual sync failed: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return {"status": "error", "message": str(e), "traceback": traceback.format_exc()}
+
+
 @app.get("/webhook")
 async def webhook_verify(request: Request):
     """Meta WhatsApp webhook verification (GET)."""
@@ -110,41 +162,47 @@ async def webhook_verify(request: Request):
 @app.post("/webhook")
 async def webhook(request: Request):
     """Meta WhatsApp Cloud API webhook entry point."""
+    correlation_id = str(uuid.uuid4())[:8]  # Short correlation ID for logs
     try:
         data = await request.json()
 
         # Extract messages from Meta's nested structure
         entry = data.get("entry", [])
         if not entry:
-            logger.debug("Webhook received but no entry data")
+            logger.debug(f"[{correlation_id}] Webhook received but no entry data")
             return {"status": "ok"}
 
         changes = entry[0].get("changes", [])
         if not changes:
-            logger.debug("Webhook received but no changes")
+            logger.debug(f"[{correlation_id}] Webhook received but no changes")
             return {"status": "ok"}
 
         value = changes[0].get("value", {})
         messages = value.get("messages", [])
 
         if not messages:
-            logger.debug("Webhook received but no messages (might be status update)")
+            logger.debug(f"[{correlation_id}] Webhook received but no messages (might be status update)")
             return {"status": "ok"}
 
         msg = messages[0]
         telefono = msg.get("from", "")
         if not telefono:
-            logger.warning("Received payload without from number")
+            logger.warning(f"[{correlation_id}] Received payload without from number")
             return {"status": "invalid_payload"}
 
         # Normalize phone to digits only
         telefono = "".join(ch for ch in telefono if ch.isdigit())
 
+        # Check for duplicate message (Meta redelivery protection)
+        message_id = msg.get("id", "")
+        if message_id and _is_message_processed(message_id):
+            logger.info(f"[{correlation_id}] Duplicate message detected (msg_id: {message_id}, phone: {telefono}). Skipping.")
+            return {"status": "ok", "result": "duplicate_skipped"}
+
         # Extract message content based on type
         tipo = msg.get("type", "text")
         contenido = None
         media_url = None
-        message_id = msg.get("id", "")
 
         if tipo == "text":
             contenido = msg.get("text", {}).get("body", "")
@@ -171,18 +229,22 @@ async def webhook(request: Request):
             media_url=media_url,
         )
 
-        logger.info(f"Received message from {payload.telefono} (type: {payload.tipo}, msg_id: {message_id})")
+        logger.info(f"[{correlation_id}] Received message from {payload.telefono} (type: {payload.tipo}, msg_id: {message_id})")
 
         meta_client = MetaClient()
         route = get_router()
         result = await route.handle_message(payload, meta_client)
 
-        logger.info(f"Processed message result: {result}")
+        # Mark message as processed (after successful processing)
+        if message_id:
+            await _mark_message_processed(message_id, telefono)
+
+        logger.info(f"[{correlation_id}] Processed message result: {result}")
         return {"status": "ok", "result": result}
     except Exception as e:
         import traceback
-        logger.error(f"Webhook error: {e}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
+        logger.error(f"[{correlation_id}] Webhook error: {e}")
+        logger.error(f"[{correlation_id}] Traceback: {traceback.format_exc()}")
         return {"status": "error", "message": str(e)}
 
 

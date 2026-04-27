@@ -3,8 +3,9 @@
 import json
 import logging
 import uuid
+import asyncio
 from datetime import datetime, timedelta
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 
 from models import (
     ConversationState, WhatsAppPayload, Auditor, Conversacion,
@@ -23,6 +24,10 @@ logger = logging.getLogger(__name__)
 class ConversationRouter:
     """Routes messages based on conversation state."""
 
+    # Class-level locks per phone number to prevent concurrent message processing
+    _conversation_locks: Dict[str, asyncio.Lock] = {}
+    _locks_lock = asyncio.Lock()
+
     def __init__(self):
         """Initialize router with dependencies."""
         self.sheets = SheetsManager()
@@ -30,12 +35,31 @@ class ConversationRouter:
         self.transcriber = AudioTranscriber()
         self.drive = DriveManager()
 
+    @classmethod
+    async def _get_conversation_lock(cls, phone: str) -> asyncio.Lock:
+        """Get or create lock for a specific conversation."""
+        async with cls._locks_lock:
+            if phone not in cls._conversation_locks:
+                cls._conversation_locks[phone] = asyncio.Lock()
+            return cls._conversation_locks[phone]
+
     async def handle_message(
         self,
         payload: WhatsAppPayload,
         meta_client: MetaClient,
     ) -> str:
         """Route message based on conversation state."""
+        # Acquire conversation lock to prevent concurrent processing for same auditor
+        lock = await self._get_conversation_lock(payload.telefono)
+        async with lock:
+            return await self._handle_message_locked(payload, meta_client)
+
+    async def _handle_message_locked(
+        self,
+        payload: WhatsAppPayload,
+        meta_client: MetaClient,
+    ) -> str:
+        """Internal handler with lock acquired."""
         try:
             # Validate auditor
             auditor = self.sheets.get_auditor(payload.telefono)

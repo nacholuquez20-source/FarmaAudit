@@ -1,0 +1,168 @@
+-- Supabase SQL Setup for FarmaAudit Dashboard
+-- Run this in Supabase SQL Editor
+
+-- 1. Sucursales table
+create table if not exists sucursales (
+  id text primary key,
+  nombre text not null,
+  direccion text,
+  responsable text,
+  tel_responsable text,
+  zona text,
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now()
+);
+
+-- 2. Reportes table
+create table if not exists reportes (
+  id text primary key,
+  fecha text not null,
+  hora text,
+  cuadrilla text,
+  auditor text not null,
+  id_sucursal text references sucursales(id),
+  sucursal text,
+  area text,
+  subitem text,
+  descripcion text,
+  severidad text check (severidad in ('Alta', 'Media', 'Baja')),
+  foto_url text,
+  creado_por_audio boolean default false,
+  timestamp text,
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now()
+);
+
+-- 3. Gestion table
+create table if not exists gestion (
+  id_gestion text primary key,
+  id_reporte text,
+  id_sucursal text references sucursales(id),
+  sucursal text,
+  desvio text,
+  severidad text check (severidad in ('Alta', 'Media', 'Baja')),
+  responsable text,
+  tel_responsable text,
+  plazo_fecha date,
+  plan_accion text,
+  estado text check (estado in ('Abierta', 'En_proceso', 'Cerrada', 'Vencida')),
+  fecha_cierre date,
+  cerrado_por text,
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now()
+);
+
+-- 4. Auditores table
+create table if not exists auditores (
+  telefono text primary key,
+  nombre text not null,
+  cuadrilla text,
+  activo boolean default true,
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now()
+);
+
+-- 5. Control_Stock table
+create table if not exists control_stock (
+  id text primary key,
+  auditoria_id text,
+  sucursal_id text references sucursales(id),
+  fecha date,
+  auditor text,
+  nombre_item text,
+  stock_fisico integer,
+  stock_sistema integer,
+  diferencia integer,
+  alerta text,
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now()
+);
+
+-- 6. Profiles table (for auth)
+create table if not exists profiles (
+  id uuid references auth.users(id) on delete cascade primary key,
+  role text not null check (role in ('admin', 'auditor')),
+  nombre text,
+  telefono text,
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now()
+);
+
+-- Create indexes for better query performance
+create index if not exists idx_reportes_sucursal on reportes(id_sucursal);
+create index if not exists idx_reportes_auditor on reportes(auditor);
+create index if not exists idx_gestion_sucursal on gestion(id_sucursal);
+create index if not exists idx_gestion_estado on gestion(estado);
+create index if not exists idx_auditores_telefono on auditores(telefono);
+create index if not exists idx_control_stock_sucursal on control_stock(sucursal_id);
+create index if not exists idx_profiles_telefono on profiles(telefono);
+
+-- ============ ROW LEVEL SECURITY (RLS) ============
+
+-- Enable RLS on all tables
+alter table sucursales enable row level security;
+alter table reportes enable row level security;
+alter table gestion enable row level security;
+alter table auditores enable row level security;
+alter table control_stock enable row level security;
+alter table profiles enable row level security;
+
+-- Sucursales: Admins can see all, auditors can see all (farms are public data)
+create policy "sucursales_read" on sucursales for select using (true);
+
+-- Reportes: Admins can see all, auditors can only see their own (by auditor name)
+create policy "reportes_admin_read" on reportes for select using (
+  exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+);
+create policy "reportes_auditor_read" on reportes for select using (
+  exists (select 1 from profiles where id = auth.uid() and role = 'auditor' and telefono = reportes.auditor)
+);
+
+-- Gestion: Admins can see/update all, auditors can see all (but only admins update)
+create policy "gestion_read" on gestion for select using (true);
+create policy "gestion_update_admin" on gestion for update using (
+  exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+);
+
+-- Auditores: Only admins can see and update
+create policy "auditores_admin_read" on auditores for select using (
+  exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+);
+create policy "auditores_admin_write" on auditores for all using (
+  exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+);
+
+-- Control_Stock: Admins can see all, auditors see only their own (by auditor name)
+create policy "control_stock_admin_read" on control_stock for select using (
+  exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+);
+create policy "control_stock_auditor_read" on control_stock for select using (
+  exists (select 1 from profiles where id = auth.uid() and role = 'auditor' and telefono = control_stock.auditor)
+);
+
+-- Profiles: Users can read own profile, admins can read all
+create policy "profiles_own_read" on profiles for select using (auth.uid() = id);
+create policy "profiles_admin_read" on profiles for select using (
+  exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+);
+
+-- ============ HELPER FUNCTIONS ============
+
+-- Function to handle new user profile creation
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+as $$
+begin
+  insert into public.profiles (id, role, nombre)
+  values (new.id, 'auditor', new.email);
+  return new;
+end;
+$$;
+
+-- Trigger to auto-create profile when user signs up
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row
+  execute procedure public.handle_new_user();

@@ -1,0 +1,241 @@
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { AppLayout } from '../components/AppLayout';
+import { FeedbackState } from '../components/FeedbackState';
+import { KPICard } from '../components/KPICard';
+import { useDashboardStats } from '../hooks/useDashboardStats';
+import type { SucursalSupervision } from '../types';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+
+const COLORS = ['#2563eb', '#059669', '#f59e0b', '#dc2626', '#7c3aed'];
+
+function getSemaforoStyles(semaforo: SucursalSupervision['semaforo']): string {
+  if (semaforo === 'rojo') return 'bg-red-100 text-red-800 border-red-200';
+  if (semaforo === 'amarillo') return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+  return 'bg-green-100 text-green-800 border-green-200';
+}
+
+function getSemaforoLabel(semaforo: SucursalSupervision['semaforo']): string {
+  if (semaforo === 'rojo') return 'Rojo';
+  if (semaforo === 'amarillo') return 'Amarillo';
+  return 'Verde';
+}
+
+function formatTime(date: Date | null): string {
+  if (!date) return 'Sin actualizar';
+  return date.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+export default function Dashboard() {
+  const [refreshSeconds, setRefreshSeconds] = useState(0);
+  const { stats, loading, refreshing, error, lastUpdated, refresh } = useDashboardStats(refreshSeconds * 1000);
+
+  const gestionStateData = stats
+    ? [
+        { name: 'Abierta', value: stats.gestiones_abiertas },
+        { name: 'Resuelta', value: stats.gestiones_resueltas },
+        { name: 'Cerrada', value: stats.gestiones_cerradas },
+        { name: 'Vencida', value: stats.gestiones_vencidas },
+      ].filter((item) => item.value > 0)
+    : [];
+
+  const severidadData = stats
+    ? [
+        { name: 'Alta', count: stats.severidad.alta },
+        { name: 'Media', count: stats.severidad.media },
+        { name: 'Baja', count: stats.severidad.baja },
+      ]
+    : [];
+
+  if (loading) {
+    return (
+      <AppLayout title="Dashboard">
+        <FeedbackState title="Cargando supervision..." />
+      </AppLayout>
+    );
+  }
+
+  return (
+    <AppLayout title="Dashboard">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm text-gray-600">Ultima actualizacion: {formatTime(lastUpdated)}</p>
+          {refreshing && <p className="text-sm text-blue-600">Actualizando datos...</p>}
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="text-sm font-medium text-gray-700">
+            Auto-refresh
+            <select
+              value={refreshSeconds}
+              onChange={(event) => setRefreshSeconds(Number(event.target.value))}
+              className="ml-2 rounded-lg border border-gray-300 px-3 py-2 font-normal focus:border-transparent focus:ring-2 focus:ring-blue-500"
+            >
+              <option value={0}>Off</option>
+              <option value={20}>20s</option>
+              <option value={30}>30s</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            onClick={refresh}
+            className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
+          >
+            Refrescar
+          </button>
+        </div>
+      </div>
+
+      {error && <div className="mb-6"><FeedbackState title={error} tone="error" /></div>}
+
+      {stats && (
+        <>
+          <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
+            <KPICard title="Total Desvios" value={stats.total_desvios} color="blue" />
+            <KPICard title="Abiertos" value={stats.gestiones_abiertas} color="yellow" />
+            <KPICard title="Vencidos" value={stats.gestiones_vencidas} color="red" />
+            <KPICard title="Resueltos" value={stats.gestiones_resueltas} color="green" />
+            <KPICard title="Cerrados" value={stats.gestiones_cerradas} color="green" />
+            <KPICard title="Tasa Cierre" value={`${stats.tasa_cierre.toFixed(1)}%`} color="blue" />
+          </div>
+
+          <div className="mb-8 grid grid-cols-1 gap-6 xl:grid-cols-3">
+            <section className="rounded-lg bg-white p-6 shadow xl:col-span-2">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-lg font-semibold">Semaforo por Sucursal</h2>
+                <Link to="/desvios" className="text-sm font-medium text-blue-600 hover:text-blue-800">
+                  Ver desvios
+                </Link>
+              </div>
+              {stats.sucursales_estado.length === 0 ? (
+                <FeedbackState title="No hay sucursales con desvios." />
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[760px]">
+                    <thead className="border-b bg-gray-100">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-sm font-semibold">Sucursal</th>
+                        <th className="px-4 py-3 text-left text-sm font-semibold">Estado</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold">Abiertos</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold">Vencidos</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold">Altas</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stats.sucursales_estado.slice(0, 10).map((sucursal) => (
+                        <tr key={sucursal.id_sucursal || sucursal.sucursal} className="border-b hover:bg-gray-50">
+                          <td className="px-4 py-4 text-sm font-medium text-gray-900">
+                            <Link to={`/sucursales/${sucursal.id_sucursal}`} className="hover:text-blue-700">
+                              {sucursal.sucursal}
+                            </Link>
+                          </td>
+                          <td className="px-4 py-4 text-sm">
+                            <span className={`rounded border px-3 py-1 text-xs font-semibold ${getSemaforoStyles(sucursal.semaforo)}`}>
+                              {getSemaforoLabel(sucursal.semaforo)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-4 text-right text-sm">{sucursal.abiertos}</td>
+                          <td className="px-4 py-4 text-right text-sm font-semibold text-red-700">{sucursal.vencidos}</td>
+                          <td className="px-4 py-4 text-right text-sm">{sucursal.altas}</td>
+                          <td className="px-4 py-4 text-right text-sm">{sucursal.total}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+
+            <section className="rounded-lg bg-white p-6 shadow">
+              <h2 className="mb-4 text-lg font-semibold">Ranking Critico</h2>
+              {stats.ranking_sucursales.length === 0 ? (
+                <FeedbackState title="Sin desvios abiertos." />
+              ) : (
+                <div className="space-y-3">
+                  {stats.ranking_sucursales.map((sucursal, index) => (
+                    <Link
+                      key={sucursal.id_sucursal || sucursal.sucursal}
+                      to={`/sucursales/${sucursal.id_sucursal}`}
+                      className="block rounded-lg border border-gray-200 p-4 hover:bg-gray-50"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-xs font-semibold text-gray-500">#{index + 1}</div>
+                          <div className="font-semibold text-gray-900">{sucursal.sucursal}</div>
+                        </div>
+                        <div className="text-right text-sm">
+                          <div className="font-semibold text-red-700">{sucursal.vencidos} vencidos</div>
+                          <div className="text-gray-600">{sucursal.abiertos} abiertos</div>
+                        </div>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
+
+          <div className="mb-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <section className="rounded-lg bg-white p-6 shadow">
+              <h2 className="mb-4 text-lg font-semibold">Gestiones por Estado</h2>
+              {gestionStateData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={300}>
+                  <PieChart>
+                    <Pie data={gestionStateData} cx="50%" cy="50%" labelLine={false} label={({ name, value }) => `${name}: ${value}`} outerRadius={88} dataKey="value">
+                      {gestionStateData.map((_, index) => (
+                        <Cell key={`estado-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : (
+                <FeedbackState title="No hay datos disponibles" />
+              )}
+            </section>
+
+            <section className="rounded-lg bg-white p-6 shadow">
+              <h2 className="mb-4 text-lg font-semibold">Hallazgos por Severidad</h2>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={severidadData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="name" />
+                  <YAxis allowDecimals={false} />
+                  <Tooltip />
+                  <Bar dataKey="count" fill="#2563eb" radius={[8, 8, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </section>
+          </div>
+
+          <section className="rounded-lg bg-white p-6 shadow">
+            <h2 className="mb-4 text-lg font-semibold">Tendencia Ultimos 30 Dias</h2>
+            <ResponsiveContainer width="100%" height={320}>
+              <LineChart data={stats.tendencia_ultimos_30_dias}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="fecha" tick={{ fontSize: 12 }} minTickGap={24} />
+                <YAxis allowDecimals={false} />
+                <Tooltip />
+                <Line type="monotone" dataKey="total" name="Desvios" stroke="#2563eb" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="cerrados" name="Cerrados" stroke="#059669" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </section>
+        </>
+      )}
+    </AppLayout>
+  );
+}

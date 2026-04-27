@@ -30,6 +30,10 @@ class Settings:
     # Google Drive
     google_drive_folder_id: str = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "")
 
+    # Supabase
+    supabase_url: Optional[str] = os.getenv("SUPABASE_URL")
+    supabase_service_key: Optional[str] = os.getenv("SUPABASE_SERVICE_KEY")
+
     # FastAPI
     host: str = os.getenv("HOST", "0.0.0.0")
     port: int = int(os.getenv("PORT", "8000"))
