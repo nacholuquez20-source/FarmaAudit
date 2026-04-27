@@ -140,12 +140,11 @@ async def _claim_message_for_processing(message_id: str, phone: str) -> bool:
         return True
 
 
-async def _release_message_claim(message_id: str, distributed: bool = False) -> None:
+async def _release_message_claim(message_id: str) -> None:
     """Release in-flight claim if processing failed."""
     async with _message_lock:
         _processing_messages.discard(message_id)
-    if distributed:
-        _release_message_distributed(message_id)
+    _release_message_distributed(message_id)
 
 def get_router():
     """Get or create conversation router."""
@@ -342,7 +341,7 @@ async def webhook(request: Request):
         return {"status": "error", "message": str(e)}
     finally:
         if message_id and message_claimed and not processed_successfully:
-            await _release_message_claim(message_id, distributed=True)
+            await _release_message_claim(message_id)
 
 
 async def check_expired_confirmations():

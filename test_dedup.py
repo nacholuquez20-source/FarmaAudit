@@ -10,8 +10,21 @@ from main import (
     _release_message_claim,
     _processed_messages,
     _processing_messages,
+    _get_supabase_client,
 )
 from router import ConversationRouter
+
+
+@pytest.fixture(autouse=True)
+def cleanup_supabase_dedup():
+    """Clean webhook_dedup table before each test."""
+    client = _get_supabase_client()
+    if client is not None:
+        try:
+            client.table("webhook_dedup").delete().neq("message_id", "").execute()
+        except Exception:
+            pass
+    yield
 
 
 @pytest.mark.asyncio
@@ -146,7 +159,7 @@ async def test_claim_released_after_failure():
     assert await _claim_message_for_processing(message_id, phone)
     assert not await _claim_message_for_processing(message_id, phone)
 
-    await _release_message_claim(message_id, distributed=False)
+    await _release_message_claim(message_id)
     assert await _claim_message_for_processing(message_id, phone)
 
 
