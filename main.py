@@ -416,10 +416,10 @@ async def check_expired_audit_sessions():
                     punto = checklist[sesion.punto_actual]
                     await meta_client.send_text(
                         sesion.telefono_auditor,
-                        f"Punto {punto.punto_orden}/{sesion.total_puntos}:
+                        f"""Punto {punto.punto_orden}/{sesion.total_puntos}:
 {punto.area} - {punto.descripcion}
 
-Tu evaluación:",
+Tu evaluación:""",
                     )
                 # Clear reminder tracking for this session
                 _last_reminder_sent.pop(sesion.id_sesion, None)
@@ -444,8 +444,8 @@ Tu evaluación:",
                     punto = checklist[sesion.punto_actual]
                     await meta_client.send_text(
                         sesion.telefono_auditor,
-                        f"Recordatorio: estás en el punto {punto.punto_orden}/{sesion.total_puntos}.
-Mandá tu observación o escribe 'saltar'.",
+                        f"""Recordatorio: estás en el punto {punto.punto_orden}/{sesion.total_puntos}.
+Mandá tu observación o escribe 'saltar'.""",
                     )
 
         if expired_sesiones:
