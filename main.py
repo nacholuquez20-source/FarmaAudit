@@ -43,6 +43,7 @@ _message_lock = asyncio.Lock()
 _MESSAGE_TTL_SECONDS = 300
 _supabase_client: Client | None = None
 _dedup_store_available: bool | None = None
+_last_reminder_sent: dict[str, datetime] = {}  # {id_sesion: last_reminder_timestamp}
 
 
 def _get_supabase_client() -> Client | None:
@@ -383,13 +384,11 @@ async def check_expired_audit_sessions():
         meta_client = MetaClient()
 
         for sesion in expired_sesiones:
-            # Calculate how many 15-minute periods have passed without response
             last_update = datetime.fromisoformat(sesion.timestamp_ultimo_punto)
             elapsed_minutes = (datetime.utcnow() - last_update).total_seconds() / 60
-            reminder_count = int(elapsed_minutes / 15)
 
-            # After 4 reminders (60 minutes), auto-omit the point and advance
-            if reminder_count >= 4:
+            # After 60 minutes, auto-omit the point and advance
+            if elapsed_minutes >= 60:
                 logger.info(f"Auto-omitting point due to inactivity: {sesion.id_sesion}")
                 omitidos = json.loads(sesion.omitidos_json) if sesion.omitidos_json else []
                 omitidos.append(sesion.punto_actual)
@@ -422,11 +421,24 @@ async def check_expired_audit_sessions():
 
 Tu evaluación:",
                     )
+                # Clear reminder tracking for this session
+                _last_reminder_sent.pop(sesion.id_sesion, None)
                 continue
 
-            # Send reminder (only for first 3 reminders)
-            if reminder_count < 3:
-                logger.info(f"Audit session timeout for {sesion.telefono_auditor}: {sesion.id_sesion} (reminder #{reminder_count + 1})")
+            # Send reminder only once every 15 minutes (up to 3 reminders)
+            now = datetime.utcnow()
+            if sesion.id_sesion not in _last_reminder_sent:
+                last_reminder = None
+            else:
+                last_reminder = _last_reminder_sent[sesion.id_sesion]
+
+            # Check if reminder is due and we haven't exceeded 3 reminders
+            reminder_due = last_reminder is None or (now - last_reminder).total_seconds() >= 900  # 900 = 15 min
+            reminders_sent = 0 if last_reminder is None else int((now - last_reminder).total_seconds() / 900) + 1
+
+            if reminder_due and reminders_sent <= 3:
+                _last_reminder_sent[sesion.id_sesion] = now
+                logger.info(f"Audit session timeout for {sesion.telefono_auditor}: {sesion.id_sesion} (reminder #{reminders_sent})")
                 checklist = sheets.get_checklist()
                 if sesion.punto_actual < len(checklist):
                     punto = checklist[sesion.punto_actual]
