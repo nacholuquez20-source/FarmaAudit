@@ -36,6 +36,7 @@ class GestionState(str, Enum):
 
     ABIERTA = "Abierta"
     EN_PROCESO = "En_proceso"
+    RESUELTA = "Resuelta"
     CERRADA = "Cerrada"
     VENCIDA = "Vencida"
 

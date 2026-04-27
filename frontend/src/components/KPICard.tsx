@@ -24,7 +24,7 @@ export function KPICard({ title, value, icon, color = 'blue', trend, trendPercen
             <p className="text-3xl font-bold">{value}</p>
             {trend && trendPercent !== undefined && (
               <span className={`text-sm font-medium ${trend === 'up' ? 'text-green-600' : trend === 'down' ? 'text-red-600' : 'text-gray-600'}`}>
-                {trend === 'up' ? '↑' : trend === 'down' ? '↓' : '→'} {trendPercent}%
+                {trend === 'up' ? 'up' : trend === 'down' ? 'down' : 'flat'} {trendPercent}%
               </span>
             )}
           </div>

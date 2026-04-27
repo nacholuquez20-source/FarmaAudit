@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useSucursales } from '../hooks/useSucursales';
 import { AppLayout } from '../components/AppLayout';
+import { FeedbackState } from '../components/FeedbackState';
+import { useSucursales } from '../hooks/useSucursales';
 
 export default function Sucursales() {
   const { sucursales, loading, error } = useSucursales();
@@ -9,17 +10,23 @@ export default function Sucursales() {
   const navigate = useNavigate();
 
   const filteredSucursales = sucursales.filter(
-    (s) =>
-      s.nombre.toLowerCase().includes(searchText.toLowerCase()) ||
-      s.responsable.toLowerCase().includes(searchText.toLowerCase()) ||
-      s.zona.toLowerCase().includes(searchText.toLowerCase())
+    (sucursal) =>
+      sucursal.nombre.toLowerCase().includes(searchText.toLowerCase()) ||
+      sucursal.responsable.toLowerCase().includes(searchText.toLowerCase()) ||
+      sucursal.zona.toLowerCase().includes(searchText.toLowerCase())
   );
 
-  if (loading) return <div className="flex items-center justify-center h-screen">Loading...</div>;
+  if (loading) {
+    return (
+      <AppLayout title="Sucursales">
+        <FeedbackState title="Cargando sucursales..." />
+      </AppLayout>
+    );
+  }
 
   return (
     <AppLayout title="Sucursales">
-      {error && <div className="bg-red-100 text-red-800 p-4 rounded-lg mb-4">{error}</div>}
+      {error && <div className="mb-4"><FeedbackState title={error} tone="error" /></div>}
 
       <div className="mb-6">
         <input
@@ -38,7 +45,7 @@ export default function Sucursales() {
               <th className="text-left px-6 py-3 font-semibold">Nombre</th>
               <th className="text-left px-6 py-3 font-semibold">Zona</th>
               <th className="text-left px-6 py-3 font-semibold">Responsable</th>
-              <th className="text-left px-6 py-3 font-semibold">Teléfono</th>
+              <th className="text-left px-6 py-3 font-semibold">Telefono</th>
             </tr>
           </thead>
           <tbody>
@@ -59,7 +66,9 @@ export default function Sucursales() {
       </div>
 
       {filteredSucursales.length === 0 && (
-        <div className="text-center py-8 text-gray-500">No se encontraron farmacias</div>
+        <div className="mt-4">
+          <FeedbackState title="No se encontraron farmacias" />
+        </div>
       )}
     </AppLayout>
   );

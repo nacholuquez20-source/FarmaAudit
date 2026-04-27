@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { getSucursal } from '../lib/api';
-import { useReportes } from '../hooks/useReportes';
-import { useGestion } from '../hooks/useGestion';
-import { useControlStock } from '../hooks/useControlStock';
-import type { Sucursal } from '../types';
-import { formatDate, severidadColor, gestionStateLabel } from '../lib/utils';
+import { useNavigate, useParams } from 'react-router-dom';
 import { AppLayout } from '../components/AppLayout';
+import { FeedbackState } from '../components/FeedbackState';
+import { useControlStock } from '../hooks/useControlStock';
+import { useGestion } from '../hooks/useGestion';
+import { useReportes } from '../hooks/useReportes';
+import { getSucursal } from '../lib/api';
+import { formatDate, gestionStateLabel, severidadColor } from '../lib/utils';
+import type { Sucursal } from '../types';
 
 export default function SucursalDetail() {
   const { id } = useParams<{ id: string }>();
@@ -38,8 +39,21 @@ export default function SucursalDetail() {
     loadSucursal();
   }, [id]);
 
-  if (loading) return <div className="flex items-center justify-center h-screen">Loading...</div>;
-  if (!sucursal) return <div className="flex items-center justify-center h-screen">Sucursal not found</div>;
+  if (loading) {
+    return (
+      <AppLayout title="Sucursal">
+        <FeedbackState title="Cargando sucursal..." />
+      </AppLayout>
+    );
+  }
+
+  if (!sucursal) {
+    return (
+      <AppLayout title="Sucursal">
+        <FeedbackState title="Sucursal no encontrada" />
+      </AppLayout>
+    );
+  }
 
   return (
     <AppLayout title={sucursal.nombre}>
@@ -48,15 +62,15 @@ export default function SucursalDetail() {
           onClick={() => navigate('/sucursales')}
           className="text-blue-600 hover:text-blue-800 font-medium"
         >
-          ← Back to Sucursales
+          Volver a Sucursales
         </button>
       </div>
 
-      {error && <div className="bg-red-100 text-red-800 p-4 rounded-lg mb-4">{error}</div>}
+      {error && <div className="mb-4"><FeedbackState title={error} tone="error" /></div>}
 
       <div className="grid grid-cols-2 gap-4 mb-8">
         <div className="bg-white rounded-lg p-6 shadow">
-          <div className="text-sm text-gray-600">Dirección</div>
+          <div className="text-sm text-gray-600">Direccion</div>
           <div className="font-medium">{sucursal.direccion}</div>
         </div>
         <div className="bg-white rounded-lg p-6 shadow">
@@ -68,7 +82,7 @@ export default function SucursalDetail() {
           <div className="font-medium">{sucursal.responsable}</div>
         </div>
         <div className="bg-white rounded-lg p-6 shadow">
-          <div className="text-sm text-gray-600">Teléfono</div>
+          <div className="text-sm text-gray-600">Telefono</div>
           <div className="font-medium">{sucursal.tel_responsable}</div>
         </div>
       </div>
@@ -101,8 +115,8 @@ export default function SucursalDetail() {
                 <tr>
                   <th className="text-left px-6 py-3 font-semibold text-sm">Fecha</th>
                   <th className="text-left px-6 py-3 font-semibold text-sm">Auditor</th>
-                  <th className="text-left px-6 py-3 font-semibold text-sm">Área</th>
-                  <th className="text-left px-6 py-3 font-semibold text-sm">Descripción</th>
+                  <th className="text-left px-6 py-3 font-semibold text-sm">Area</th>
+                  <th className="text-left px-6 py-3 font-semibold text-sm">Descripcion</th>
                   <th className="text-left px-6 py-3 font-semibold text-sm">Severidad</th>
                 </tr>
               </thead>
@@ -128,7 +142,7 @@ export default function SucursalDetail() {
             <table className="w-full">
               <thead className="bg-gray-100 border-b">
                 <tr>
-                  <th className="text-left px-6 py-3 font-semibold text-sm">Desvío</th>
+                  <th className="text-left px-6 py-3 font-semibold text-sm">Desvio</th>
                   <th className="text-left px-6 py-3 font-semibold text-sm">Severidad</th>
                   <th className="text-left px-6 py-3 font-semibold text-sm">Responsable</th>
                   <th className="text-left px-6 py-3 font-semibold text-sm">Plazo</th>
@@ -159,7 +173,7 @@ export default function SucursalDetail() {
                 <tr>
                   <th className="text-left px-6 py-3 font-semibold text-sm">Fecha</th>
                   <th className="text-left px-6 py-3 font-semibold text-sm">Item</th>
-                  <th className="text-left px-6 py-3 font-semibold text-sm">Stock Físico</th>
+                  <th className="text-left px-6 py-3 font-semibold text-sm">Stock Fisico</th>
                   <th className="text-left px-6 py-3 font-semibold text-sm">Stock Sistema</th>
                   <th className="text-left px-6 py-3 font-semibold text-sm">Diferencia</th>
                   <th className="text-left px-6 py-3 font-semibold text-sm">Alerta</th>
@@ -190,7 +204,9 @@ export default function SucursalDetail() {
         {((activeTab === 'reportes' && reportes.length === 0) ||
           (activeTab === 'gestiones' && gestiones.length === 0) ||
           (activeTab === 'stock' && stockItems.length === 0)) && (
-          <div className="text-center py-8 text-gray-500">No data found</div>
+          <div className="p-4">
+            <FeedbackState title="No se encontraron datos" />
+          </div>
         )}
       </div>
     </AppLayout>

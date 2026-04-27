@@ -11,6 +11,22 @@ Frontend operativo para supervisar sucursales, gestionar desvios, contactar resp
 - Supabase Auth + Supabase database
 - Recharts para visualizacion
 
+## Decision de Arquitectura
+
+Supabase es la fuente de verdad operativa del MVP.
+
+El frontend lee y escribe en Supabase para:
+
+- estados de desvios
+- timeline
+- contacto
+- resolucion
+- evidencia
+- cierre
+- dashboard
+
+Google Sheets queda como entrada/legado temporal para datos que todavia produce el bot de WhatsApp. El sync `Sheets -> Supabase` hidrata datos base, pero no debe pisar estados operativos gestionados en el frontend como `En_proceso`, `Resuelta` o `Cerrada`.
+
 ## Rutas Principales
 
 - `/login`: autenticacion Supabase.
@@ -103,8 +119,8 @@ El MVP usa lazy loading de rutas para separar pantallas pesadas como dashboard y
 - Hacer las transiciones de estado y timeline atomicas con una funcion RPC.
 - Endurecer RLS por auditor/sucursal si se requiere aislamiento estricto.
 - Implementar upload real de evidencia.
-- Corregir mojibake heredado en pantallas antiguas.
 - Revisar mobile con datos reales y tablas grandes.
+- Migrar el bot para escribir directamente en Supabase cuando se retire Google Sheets como entrada.
 
 ## Handoff
 

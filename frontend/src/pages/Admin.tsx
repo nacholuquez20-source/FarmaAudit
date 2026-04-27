@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
+import { AppLayout } from '../components/AppLayout';
+import { FeedbackState } from '../components/FeedbackState';
 import { getAuditores, createAuditor, updateAuditor } from '../lib/api';
 import type { Auditor } from '../types';
-import { AppLayout } from '../components/AppLayout';
 
 export default function Admin() {
   const [auditores, setAuditores] = useState<Auditor[]>([]);
@@ -53,20 +54,26 @@ export default function Admin() {
   const handleToggleActive = async (telefono: string, currentStatus: boolean) => {
     try {
       const updated = await updateAuditor(telefono, { activo: !currentStatus });
-      setAuditores(auditores.map((a) => (a.telefono === telefono ? updated : a)));
+      setAuditores(auditores.map((auditor) => (auditor.telefono === telefono ? updated : auditor)));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update auditor');
     }
   };
 
-  if (loading) return <div className="flex items-center justify-center h-screen">Loading...</div>;
+  if (loading) {
+    return (
+      <AppLayout title="Admin Panel">
+        <FeedbackState title="Cargando auditores..." />
+      </AppLayout>
+    );
+  }
 
   return (
     <AppLayout title="Admin Panel">
-      {error && <div className="bg-red-100 text-red-800 p-4 rounded-lg mb-4">{error}</div>}
+      {error && <div className="mb-4"><FeedbackState title={error} tone="error" /></div>}
 
       <div className="mb-6 flex justify-between items-center">
-        <h2 className="text-xl font-semibold">Gestión de Auditores</h2>
+        <h2 className="text-xl font-semibold">Gestion de Auditores</h2>
         <button
           onClick={() => setShowForm(!showForm)}
           className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 font-medium"
@@ -86,11 +93,11 @@ export default function Admin() {
                 onChange={(e) => setFormData({ ...formData, nombre: e.target.value })}
                 required
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="Ej: Juan Pérez"
+                placeholder="Ej: Juan Perez"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Telefono</label>
               <input
                 type="text"
                 value={formData.telefono}
@@ -127,7 +134,7 @@ export default function Admin() {
           <thead className="bg-gray-100 border-b">
             <tr>
               <th className="text-left px-6 py-3 font-semibold">Nombre</th>
-              <th className="text-left px-6 py-3 font-semibold">Teléfono</th>
+              <th className="text-left px-6 py-3 font-semibold">Telefono</th>
               <th className="text-left px-6 py-3 font-semibold">Cuadrilla</th>
               <th className="text-left px-6 py-3 font-semibold">Estado</th>
             </tr>

@@ -1,6 +1,8 @@
 """
-Sync data from Google Sheets to Supabase.
-Run as a background job in FastAPI or standalone.
+Hydrate Supabase from Google Sheets.
+
+Supabase is the operational source of truth for the frontend. Google Sheets is
+kept as an ingestion/legacy source for data produced by the WhatsApp bot.
 """
 
 import logging
@@ -15,9 +17,14 @@ from config import get_settings
 
 logger = logging.getLogger(__name__)
 
+# Once supervisors act in the frontend, Supabase owns the operational lifecycle.
+# The Sheets sync can create/update base records, but must not roll back progress.
+FRONTEND_MANAGED_STATES = {"En_proceso", "Resuelta", "Cerrada"}
+SHEET_PASSIVE_STATES = {"", "Abierta", "Vencida"}
+
 
 class SheetsToSupabaseSync:
-    """Synchronizes Google Sheets data to Supabase."""
+    """Hydrates Supabase from Google Sheets without overriding frontend workflow state."""
 
     def __init__(self):
         """Initialize Supabase client."""
@@ -110,8 +117,36 @@ class SheetsToSupabaseSync:
             logger.error(f"Failed to sync reportes: {e}")
             raise
 
+    def _preserve_operational_gestion_state(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Preserve Supabase-owned workflow fields when Sheets has stale/passive state."""
+        existing = (
+            self.supabase.table("gestion")
+            .select("estado,fecha_cierre,cerrado_por")
+            .eq("id_gestion", data["id_gestion"])
+            .execute()
+        )
+        existing_rows = existing.data or []
+        if not existing_rows:
+            return data
+
+        existing_row = existing_rows[0]
+        existing_estado = existing_row.get("estado")
+        incoming_estado = data.get("estado") or ""
+
+        if existing_estado in FRONTEND_MANAGED_STATES and incoming_estado in SHEET_PASSIVE_STATES:
+            logger.info(
+                "Preserving frontend-managed gestion state for %s: %s",
+                data["id_gestion"],
+                existing_estado,
+            )
+            data["estado"] = existing_estado
+            data["fecha_cierre"] = existing_row.get("fecha_cierre")
+            data["cerrado_por"] = existing_row.get("cerrado_por")
+
+        return data
+
     def sync_gestion(self) -> None:
-        """Sync Gestion from Sheets to Supabase."""
+        """Hydrate Gestion from Sheets while preserving Supabase-owned workflow fields."""
         try:
             logger.info("Starting gestion sync...")
             sheet = self.sheets._get_sheet("Gestion")
@@ -135,6 +170,7 @@ class SheetsToSupabaseSync:
                     "updated_at": datetime.utcnow().isoformat(),
                 }
                 if data["id_gestion"]:  # Only sync if has ID
+                    data = self._preserve_operational_gestion_state(data)
                     self.supabase.table("gestion").upsert(data).execute()
 
             logger.info(f"Synced {len(rows)} gestion records")

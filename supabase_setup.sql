@@ -45,7 +45,7 @@ create table if not exists gestion (
   tel_responsable text,
   plazo_fecha date,
   plan_accion text,
-  estado text check (estado in ('Abierta', 'En_proceso', 'Cerrada', 'Vencida')),
+  estado text check (estado in ('Abierta', 'En_proceso', 'Resuelta', 'Cerrada', 'Vencida')),
   fecha_cierre date,
   cerrado_por text,
   created_at timestamp with time zone default now(),
@@ -78,7 +78,14 @@ create table if not exists control_stock (
   updated_at timestamp with time zone default now()
 );
 
--- 6. Profiles table (for auth)
+-- 6. Webhook dedup table (cross-instance idempotency)
+create table if not exists webhook_dedup (
+  message_id text primary key,
+  phone text,
+  claimed_at timestamp with time zone default now()
+);
+
+-- 7. Profiles table (for auth)
 create table if not exists profiles (
   id uuid references auth.users(id) on delete cascade primary key,
   role text not null check (role in ('admin', 'auditor')),
@@ -95,6 +102,7 @@ create index if not exists idx_gestion_sucursal on gestion(id_sucursal);
 create index if not exists idx_gestion_estado on gestion(estado);
 create index if not exists idx_auditores_telefono on auditores(telefono);
 create index if not exists idx_control_stock_sucursal on control_stock(sucursal_id);
+create index if not exists idx_webhook_dedup_claimed_at on webhook_dedup(claimed_at);
 create index if not exists idx_profiles_telefono on profiles(telefono);
 
 -- ============ ROW LEVEL SECURITY (RLS) ============
@@ -105,6 +113,7 @@ alter table reportes enable row level security;
 alter table gestion enable row level security;
 alter table auditores enable row level security;
 alter table control_stock enable row level security;
+alter table webhook_dedup enable row level security;
 alter table profiles enable row level security;
 
 -- Sucursales: Admins can see all, auditors can see all (farms are public data)
@@ -145,6 +154,9 @@ create policy "profiles_own_read" on profiles for select using (auth.uid() = id)
 create policy "profiles_admin_read" on profiles for select using (
   exists (select 1 from profiles where id = auth.uid() and role = 'admin')
 );
+
+-- Webhook dedup: only service role should access; deny anon/authenticated
+create policy "webhook_dedup_deny_all" on webhook_dedup for all using (false);
 
 -- ============ HELPER FUNCTIONS ============
 
