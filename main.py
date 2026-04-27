@@ -383,25 +383,63 @@ async def check_expired_audit_sessions():
         meta_client = MetaClient()
 
         for sesion in expired_sesiones:
-            logger.info(f"Audit session timeout for {sesion.telefono_auditor}: {sesion.id_sesion}")
+            # Calculate how many 15-minute periods have passed without response
+            last_update = datetime.fromisoformat(sesion.timestamp_ultimo_punto)
+            elapsed_minutes = (datetime.utcnow() - last_update).total_seconds() / 60
+            reminder_count = int(elapsed_minutes / 15)
 
-            # Send reminder
-            checklist = sheets.get_checklist()
-            if sesion.punto_actual < len(checklist):
-                punto = checklist[sesion.punto_actual]
+            # After 4 reminders (60 minutes), auto-omit the point and advance
+            if reminder_count >= 4:
+                logger.info(f"Auto-omitting point due to inactivity: {sesion.id_sesion}")
+                omitidos = json.loads(sesion.omitidos_json) if sesion.omitidos_json else []
+                omitidos.append(sesion.punto_actual)
+                sesion.punto_actual += 1
+                sesion.timestamp_ultimo_punto = datetime.utcnow().isoformat()
+
+                # Update session
+                sheets.update_sesion(
+                    id_sesion=sesion.id_sesion,
+                    estado=sesion.estado,
+                    timestamp_ultimo_punto=sesion.timestamp_ultimo_punto,
+                    punto_actual=sesion.punto_actual,
+                    omitidos_json=json.dumps(omitidos),
+                )
+
+                # Notify auditor
                 await meta_client.send_text(
                     sesion.telefono_auditor,
-                    f"â° Recordatorio: estÃ¡s en el punto {punto.punto_orden}/{sesion.total_puntos} de tu auditorÃ­a.\n"
-                    f"MandÃ¡ tu observaciÃ³n o escribe 'saltar' para omitir este punto.",
+                    "Punto omitido automáticamente por inactividad (60+ min). Continuando...",
                 )
-            # Don't reset the session â€” just send reminder
+
+                # Move to next point if not finished
+                checklist = sheets.get_checklist()
+                if sesion.punto_actual < len(checklist):
+                    punto = checklist[sesion.punto_actual]
+                    await meta_client.send_text(
+                        sesion.telefono_auditor,
+                        f"Punto {punto.punto_orden}/{sesion.total_puntos}:
+{punto.area} - {punto.descripcion}
+
+Tu evaluación:",
+                    )
+                continue
+
+            # Send reminder (only for first 3 reminders)
+            if reminder_count < 3:
+                logger.info(f"Audit session timeout for {sesion.telefono_auditor}: {sesion.id_sesion} (reminder #{reminder_count + 1})")
+                checklist = sheets.get_checklist()
+                if sesion.punto_actual < len(checklist):
+                    punto = checklist[sesion.punto_actual]
+                    await meta_client.send_text(
+                        sesion.telefono_auditor,
+                        f"Recordatorio: estás en el punto {punto.punto_orden}/{sesion.total_puntos}.
+Mandá tu observación o escribe 'saltar'.",
+                    )
 
         if expired_sesiones:
-            logger.info(f"Sent reminders for {len(expired_sesiones)} expired audit sessions")
+            logger.info(f"Checked {len(expired_sesiones)} expired audit sessions")
     except Exception as e:
         logger.error(f"Error in audit timeout check job: {e}")
-
-
 async def daily_summary_job():
     """Background job: Generate and send daily summary."""
     try:

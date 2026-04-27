@@ -1151,11 +1151,22 @@ EDITAR â†’ Hacer cambios""",
             if payload.tipo != "text" or not payload.contenido:
                 await meta_client.send_text(
                     payload.telefono,
-                    "âš ï¸ RespondÃ© SI, EDITAR o SALTAR BLOQUE",
+                    "âš ï¸ Respondé una de estas:
+1 o SI - Confirmar
+2 o EDITAR - Cambios
+3 o SALTAR - Saltar",
                 )
                 return "invalid_response"
 
             respuesta = payload.contenido.upper().strip()
+
+            # Normalize response: accept shortcuts like "1", "S", "E", etc.
+            respuesta_map = {
+                "1": "SI", "S": "SI", "Y": "SI",
+                "2": "EDITAR", "E": "EDITAR",
+                "3": "SALTAR", "SALTAR": "SALTAR BLOQUE",
+            }
+            respuesta = respuesta_map.get(respuesta, respuesta)
 
             # Get session
             sesion = self.sheets.get_sesion(conv.id_pendiente or "")
@@ -1291,7 +1302,10 @@ EDITAR â†’ Hacer cambios""",
             else:
                 await meta_client.send_text(
                     payload.telefono,
-                    "âš ï¸ RespondÃ© SI, EDITAR o SALTAR BLOQUE",
+                    "âš ï¸ Respondé una de estas:
+1 o SI - Confirmar
+2 o EDITAR - Cambios
+3 o SALTAR - Saltar",
                 )
                 return "invalid_response"
 
