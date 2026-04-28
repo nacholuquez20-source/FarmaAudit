@@ -10,7 +10,7 @@ import uuid
 
 import asyncio
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from typing import Optional, Tuple, Dict
 
@@ -22,7 +22,7 @@ from models import (
 
     ParserResponse, Reporte, Gestion, Severidad, ChecklistPunto, SesionAuditoria, PuntoEvalResult,
 
-    ItemBloque, ResultadoItem, StockItem, DesvioLibre
+    ItemBloque, ResultadoItem, StockItem, DesvioLibre, ChecklistPerfumeriaPunto, TipoRespuesta
 
 )
 
@@ -55,6 +55,11 @@ class ConversationRouter:
     _conversation_locks: Dict[str, asyncio.Lock] = {}
 
     _locks_lock = asyncio.Lock()
+
+    @staticmethod
+    def _utc_now_iso() -> str:
+        """Return current UTC timestamp in ISO format."""
+        return datetime.now(timezone.utc).isoformat()
 
 
 
@@ -176,9 +181,17 @@ class ConversationRouter:
 
                 return await self._handle_seleccionando_sucursal(payload, conv, meta_client)
 
+            elif conv.estado_actual == ConversationState.SELECCIONANDO_TIPO_AUDITORIA:
+
+                return await self._handle_seleccionando_tipo_auditoria(payload, conv, meta_client)
+
             elif conv.estado_actual == ConversationState.EN_BLOQUE:
 
                 return await self._handle_en_bloque(payload, conv, meta_client)
+
+            elif conv.estado_actual == ConversationState.EN_BLOQUE_PERFUMERIA:
+
+                return await self._handle_en_bloque_perfumeria(payload, conv, meta_client)
 
             elif conv.estado_actual == ConversationState.CONFIRMANDO_BLOQUE:
 
@@ -1126,6 +1139,19 @@ EDITAR â†’ Hacer cambios""",
 
         try:
 
+            conv_actual = self.sheets.get_conversacion(payload.telefono)
+            if conv_actual and conv_actual.id_pendiente:
+                sesion_previa = self.sheets.get_sesion(conv_actual.id_pendiente)
+                if sesion_previa and sesion_previa.estado not in {"completa", "cancelada"}:
+                    self.sheets.update_sesion(
+                        id_sesion=sesion_previa.id_sesion,
+                        estado="cancelada",
+                        timestamp_ultimo_punto=self._utc_now_iso(),
+                        punto_actual=sesion_previa.punto_actual,
+                        hallazgos_json=sesion_previa.hallazgos_json,
+                        omitidos_json=sesion_previa.omitidos_json,
+                    )
+
             sucursales = self.sheets.get_all_sucursales()
 
             if not sucursales:
@@ -1144,15 +1170,10 @@ EDITAR â†’ Hacer cambios""",
 
             # Build menu
 
-            menu = "ðŸª Selecciona tu sucursal:\n\n"
-
-            for i, s in enumerate(sucursales, 1):
-
-                menu += f"{i}. {s.nombre} ({s.zona})\n"
-
-
-
-            menu += "\nResponde con el nÃºmero de la sucursal."
+            # Present audit type menu
+            menu = "Qué tipo de auditoría deseas realizar?\n\n"
+            menu += "1 Perfumería\n"
+            menu += "\nResponde con el número."
 
 
 
@@ -1166,7 +1187,7 @@ EDITAR â†’ Hacer cambios""",
 
                 telefono=payload.telefono,
 
-                estado=ConversationState.SELECCIONANDO_SUCURSAL,
+                estado=ConversationState.SELECCIONANDO_TIPO_AUDITORIA,
 
                 id_pendiente="",
 
@@ -1174,11 +1195,11 @@ EDITAR â†’ Hacer cambios""",
 
 
 
-            return "sucursal_menu_sent"
+            return "tipo_auditoria_menu_sent"
 
         except Exception as e:
 
-            logger.error(f"Error initiating sucursal selection: {e}")
+            logger.error(f"Error initiating audit type selection: {e}")
 
             await meta_client.send_text(
 
@@ -1320,9 +1341,9 @@ EDITAR â†’ Hacer cambios""",
 
                 estado="en_curso",
 
-                timestamp_inicio=datetime.now().isoformat(),
+                timestamp_inicio=self._utc_now_iso(),
 
-                timestamp_ultimo_punto=datetime.now().isoformat(),
+                timestamp_ultimo_punto=self._utc_now_iso(),
 
                 bloque_actual=bloque_inicial,
 
@@ -1389,6 +1410,592 @@ EDITAR â†’ Hacer cambios""",
             return "error"
 
 
+    async def _handle_seleccionando_tipo_auditoria(
+        self,
+        payload: WhatsAppPayload,
+        conv: Conversacion,
+        meta_client: MetaClient,
+    ) -> str:
+        """Handle audit type selection (general or perfumery)."""
+        try:
+            if not payload.contenido:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "⚠️ Por favor responde con un número.",
+                )
+                return "invalid_input"
+
+            try:
+                choice = int(payload.contenido.strip())
+            except ValueError:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "⚠️ Responde con un número válido.",
+                )
+                return "invalid_number"
+
+            # For now, only perfumery (option 1)
+            if choice == 1:
+                # Perfumery audit - continue with sucursal selection
+                return await self._iniciar_seleccion_sucursal_perfumeria(payload, meta_client)
+            else:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "⚠️ Opción no válida. Elige 1 para Perfumería.",
+                )
+                return "invalid_choice"
+
+        except Exception as e:
+            logger.error(f"Error handling audit type selection: {e}")
+            await meta_client.send_text(
+                payload.telefono,
+                "❌ Error procesando tu selección.",
+            )
+            return "error"
+
+
+    async def _iniciar_seleccion_sucursal_perfumeria(
+        self,
+        payload: WhatsAppPayload,
+        meta_client: MetaClient,
+    ) -> str:
+        """Start perfumery audit flow: send sucursal list."""
+        try:
+            sucursales = self.sheets.get_all_sucursales()
+
+            if not sucursales:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "❌ No hay sucursales disponibles.",
+                )
+                return "no_sucursales"
+
+            # Build menu
+            menu = "🏪 Auditoría Perfumería\n\nSelecciona tu sucursal:\n\n"
+            for i, s in enumerate(sucursales, 1):
+                menu += f"{i}. {s.nombre} ({s.zona})\n"
+
+            menu += "\nResponde con el número de la sucursal."
+
+            await meta_client.send_text(payload.telefono, menu)
+
+            # Update conversation state
+            self.sheets.update_conversacion(
+                telefono=payload.telefono,
+                estado=ConversationState.SELECCIONANDO_TIPO_AUDITORIA,
+                id_pendiente="",
+            )
+
+            return "sucursal_menu_sent"
+
+        except Exception as e:
+            logger.error(f"Error initiating sucursal selection for perfumery: {e}")
+            await meta_client.send_text(
+                payload.telefono,
+                "❌ Error iniciando auditoría.",
+            )
+            return "error"
+
+
+    async def _handle_en_bloque_perfumeria(
+        self,
+        payload: WhatsAppPayload,
+        conv: Conversacion,
+        meta_client: MetaClient,
+    ) -> str:
+        """Handle perfumery block-by-block audit flow."""
+        try:
+            # Get active session
+            sesion = self.sheets.get_sesion(conv.id_pendiente)
+
+            if not sesion:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "❌ Sesión no encontrada.",
+                )
+                return "sesion_not_found"
+
+            # Get perfumery checklist
+            bloques_perfumeria = self.sheets.get_checklist_perfumeria()
+
+            if not bloques_perfumeria:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "❌ No hay checklist de perfumería disponible.",
+                )
+                return "no_checklist"
+
+            # Get flat list of all points
+            todos_puntos = self.sheets.get_checklist_perfumeria_flat()
+
+            if sesion.punto_actual >= len(todos_puntos):
+                # Audit complete
+                await meta_client.send_text(
+                    payload.telefono,
+                    "✅ ¡Auditoría completada!",
+                )
+
+                self.sheets.update_sesion(
+                    id_sesion=sesion.id_sesion,
+                    estado="completa",
+                    timestamp_ultimo_punto=self._utc_now_iso(),
+                    punto_actual=sesion.punto_actual,
+                    hallazgos_json=sesion.hallazgos_json,
+                    omitidos_json=sesion.omitidos_json,
+                )
+
+                self.sheets.update_conversacion(
+                    telefono=payload.telefono,
+                    estado=ConversationState.IDLE,
+                    id_pendiente="",
+                )
+
+                return "auditoria_completa"
+
+            # Get current point
+            punto_actual = todos_puntos[sesion.punto_actual]
+
+            # Handle response based on expected type
+            tipo_respuesta = punto_actual.tipo_respuesta
+
+            if tipo_respuesta == "foto_si_no":
+                return await self._handle_perfumeria_foto_si_no(
+                    payload, punto_actual, sesion, todos_puntos, meta_client
+                )
+            elif tipo_respuesta == "numero_audio":
+                return await self._handle_perfumeria_numero_audio(
+                    payload, punto_actual, sesion, todos_puntos, meta_client
+                )
+            elif tipo_respuesta == "lista_texto":
+                return await self._handle_perfumeria_lista_texto(
+                    payload, punto_actual, sesion, todos_puntos, meta_client
+                )
+            elif tipo_respuesta == "si_no":
+                return await self._handle_perfumeria_si_no(
+                    payload, punto_actual, sesion, todos_puntos, meta_client
+                )
+            elif tipo_respuesta == "mixto":
+                return await self._handle_perfumeria_observaciones(
+                    payload, punto_actual, sesion, todos_puntos, meta_client
+                )
+            else:
+                logger.warning(f"Unknown response type: {tipo_respuesta}")
+                return "unknown_type"
+
+        except Exception as e:
+            logger.error(f"Error in _handle_en_bloque_perfumeria: {e}", exc_info=True)
+            await meta_client.send_text(
+                payload.telefono,
+                "❌ Error procesando tu respuesta.",
+            )
+            return "error"
+
+
+    async def _handle_perfumeria_foto_si_no(
+        self,
+        payload: WhatsAppPayload,
+        punto: ChecklistPerfumeriaPunto,
+        sesion: SesionAuditoria,
+        todos_puntos: list,
+        meta_client: MetaClient,
+    ) -> str:
+        """Handle photo + yes/no response for perfumery audit."""
+        try:
+            # If image received, ask for confirmation
+            if payload.tipo == "image" and payload.media_url:
+                try:
+                    photo_url = await self.drive.upload_photo_from_url(
+                        payload.media_url,
+                        f"perf_audit_{sesion.id_sesion}_{punto.bloque_id}_{uuid.uuid4().hex[:4]}.jpg"
+                    )
+
+                    # Store photo URL temporarily in session
+                    resultados = json.loads(sesion.resultados_json) if sesion.resultados_json else {}
+                    resultados[f"punto_{sesion.punto_actual}_foto"] = photo_url
+
+                    self.sheets.update_sesion(
+                        id_sesion=sesion.id_sesion,
+                        estado=sesion.estado,
+                        timestamp_ultimo_punto=self._utc_now_iso(),
+                        punto_actual=sesion.punto_actual,
+                        hallazgos_json=sesion.hallazgos_json,
+                        omitidos_json=sesion.omitidos_json,
+                        resultados_json=json.dumps(resultados, ensure_ascii=False),
+                    )
+
+                    await meta_client.send_text(
+                        payload.telefono,
+                        f"📸 Foto recibida.\n\n{punto.pregunta}\n\nResponde: sí / no / problemas"
+                    )
+
+                    return "waiting_confirmation"
+
+                except Exception as e:
+                    logger.error(f"Error uploading photo: {e}")
+                    await meta_client.send_text(
+                        payload.telefono,
+                        "❌ Error subiendo foto. Intenta de nuevo."
+                    )
+                    return "upload_error"
+
+            # If confirmation received
+            elif payload.contenido:
+                respuesta = payload.contenido.lower().strip()
+
+                if respuesta not in {"sí", "si", "no", "problemas"}:
+                    await meta_client.send_text(
+                        payload.telefono,
+                        "⚠️ Responde: sí / no / problemas"
+                    )
+                    return "invalid_response"
+
+                # Store result
+                resultados = json.loads(sesion.resultados_json) if sesion.resultados_json else {}
+                resultados[f"punto_{sesion.punto_actual}"] = {
+                    "pregunta": punto.pregunta,
+                    "respuesta": respuesta,
+                    "tipo": punto.tipo_respuesta,
+                    "bloque": punto.bloque_id,
+                    "timestamp": self._utc_now_iso()
+                }
+
+                # Move to next point
+                siguiente_punto = sesion.punto_actual + 1
+
+                self.sheets.update_sesion(
+                    id_sesion=sesion.id_sesion,
+                    estado=sesion.estado,
+                    timestamp_ultimo_punto=self._utc_now_iso(),
+                    punto_actual=siguiente_punto,
+                    hallazgos_json=sesion.hallazgos_json,
+                    omitidos_json=sesion.omitidos_json,
+                    resultados_json=json.dumps(resultados, ensure_ascii=False),
+                )
+
+                # Show next point or completion
+                if siguiente_punto < len(todos_puntos):
+                    siguiente = todos_puntos[siguiente_punto]
+                    await meta_client.send_text(
+                        payload.telefono,
+                        f"✅ Registrado.\n\n{siguiente.pregunta}"
+                    )
+                else:
+                    await meta_client.send_text(
+                        payload.telefono,
+                        "✅ ¡Auditoría completada!"
+                    )
+
+                return "response_stored"
+
+            else:
+                await meta_client.send_text(
+                    payload.telefono,
+                    f"📸 {punto.pregunta}\n\nEnvía una foto o responde: sí / no / problemas"
+                )
+                return "waiting_input"
+
+        except Exception as e:
+            logger.error(f"Error handling foto_si_no: {e}", exc_info=True)
+            return "error"
+
+
+    async def _handle_perfumeria_numero_audio(
+        self,
+        payload: WhatsAppPayload,
+        punto: ChecklistPerfumeriaPunto,
+        sesion: SesionAuditoria,
+        todos_puntos: list,
+        meta_client: MetaClient,
+    ) -> str:
+        """Handle stock quantities (number/audio) for perfumery audit."""
+        try:
+            contenido = ""
+
+            # If audio, transcribe
+            if payload.tipo == "audio" and payload.media_url:
+                try:
+                    contenido = await self.transcriber.transcribe_from_url(payload.media_url)
+                except Exception as e:
+                    logger.error(f"Error transcribing audio: {e}")
+                    await meta_client.send_text(
+                        payload.telefono,
+                        "❌ Error transcribiendo audio. Intenta de nuevo."
+                    )
+                    return "transcription_error"
+            elif payload.contenido:
+                contenido = payload.contenido
+            else:
+                await meta_client.send_text(
+                    payload.telefono,
+                    f"🎤 {punto.pregunta}\n\nEnvía números, texto o un audio con las cantidades."
+                )
+                return "waiting_input"
+
+            # Store result
+            resultados = json.loads(sesion.resultados_json) if sesion.resultados_json else {}
+            resultados[f"punto_{sesion.punto_actual}"] = {
+                "pregunta": punto.pregunta,
+                "respuesta": contenido,
+                "tipo": punto.tipo_respuesta,
+                "bloque": punto.bloque_id,
+                "timestamp": self._utc_now_iso()
+            }
+
+            # Move to next point
+            siguiente_punto = sesion.punto_actual + 1
+
+            self.sheets.update_sesion(
+                id_sesion=sesion.id_sesion,
+                estado=sesion.estado,
+                timestamp_ultimo_punto=self._utc_now_iso(),
+                punto_actual=siguiente_punto,
+                hallazgos_json=sesion.hallazgos_json,
+                omitidos_json=sesion.omitidos_json,
+                resultados_json=json.dumps(resultados, ensure_ascii=False),
+            )
+
+            # Show next point or completion
+            if siguiente_punto < len(todos_puntos):
+                siguiente = todos_puntos[siguiente_punto]
+                await meta_client.send_text(
+                    payload.telefono,
+                    f"✅ Registrado.\n\n{siguiente.pregunta}"
+                )
+            else:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "✅ ¡Auditoría completada!"
+                )
+
+            return "response_stored"
+
+        except Exception as e:
+            logger.error(f"Error handling numero_audio: {e}", exc_info=True)
+            return "error"
+
+
+    async def _handle_perfumeria_lista_texto(
+        self,
+        payload: WhatsAppPayload,
+        punto: ChecklistPerfumeriaPunto,
+        sesion: SesionAuditoria,
+        todos_puntos: list,
+        meta_client: MetaClient,
+    ) -> str:
+        """Handle product list for perfumery audit."""
+        try:
+            contenido = ""
+
+            # If image, try to extract text via OCR (simplified for now)
+            if payload.tipo == "image" and payload.media_url:
+                # TODO: Implement OCR for image-based lists
+                await meta_client.send_text(
+                    payload.telefono,
+                    "📋 Recibí la foto. Por favor, envía una lista de texto con los productos separados por comas."
+                )
+                return "image_received_need_text"
+
+            elif payload.contenido:
+                contenido = payload.contenido
+            else:
+                await meta_client.send_text(
+                    payload.telefono,
+                    f"📋 {punto.pregunta}\n\nEnvía la lista separada por comas o líneas."
+                )
+                return "waiting_input"
+
+            # Store result
+            resultados = json.loads(sesion.resultados_json) if sesion.resultados_json else {}
+            resultados[f"punto_{sesion.punto_actual}"] = {
+                "pregunta": punto.pregunta,
+                "respuesta": contenido,
+                "tipo": punto.tipo_respuesta,
+                "bloque": punto.bloque_id,
+                "timestamp": self._utc_now_iso()
+            }
+
+            # Move to next point
+            siguiente_punto = sesion.punto_actual + 1
+
+            self.sheets.update_sesion(
+                id_sesion=sesion.id_sesion,
+                estado=sesion.estado,
+                timestamp_ultimo_punto=self._utc_now_iso(),
+                punto_actual=siguiente_punto,
+                hallazgos_json=sesion.hallazgos_json,
+                omitidos_json=sesion.omitidos_json,
+                resultados_json=json.dumps(resultados, ensure_ascii=False),
+            )
+
+            # Show next point or completion
+            if siguiente_punto < len(todos_puntos):
+                siguiente = todos_puntos[siguiente_punto]
+                await meta_client.send_text(
+                    payload.telefono,
+                    f"✅ Registrado.\n\n{siguiente.pregunta}"
+                )
+            else:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "✅ ¡Auditoría completada!"
+                )
+
+            return "response_stored"
+
+        except Exception as e:
+            logger.error(f"Error handling lista_texto: {e}", exc_info=True)
+            return "error"
+
+
+    async def _handle_perfumeria_si_no(
+        self,
+        payload: WhatsAppPayload,
+        punto: ChecklistPerfumeriaPunto,
+        sesion: SesionAuditoria,
+        todos_puntos: list,
+        meta_client: MetaClient,
+    ) -> str:
+        """Handle yes/no response for perfumery audit."""
+        try:
+            if not payload.contenido:
+                await meta_client.send_text(
+                    payload.telefono,
+                    f"✅❌ {punto.pregunta}\n\nResponde: sí / no"
+                )
+                return "waiting_input"
+
+            respuesta = payload.contenido.lower().strip()
+
+            if respuesta not in {"sí", "si", "no"}:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "⚠️ Responde: sí / no"
+                )
+                return "invalid_response"
+
+            # Store result
+            resultados = json.loads(sesion.resultados_json) if sesion.resultados_json else {}
+            resultados[f"punto_{sesion.punto_actual}"] = {
+                "pregunta": punto.pregunta,
+                "respuesta": respuesta,
+                "tipo": punto.tipo_respuesta,
+                "bloque": punto.bloque_id,
+                "timestamp": self._utc_now_iso()
+            }
+
+            # Move to next point
+            siguiente_punto = sesion.punto_actual + 1
+
+            self.sheets.update_sesion(
+                id_sesion=sesion.id_sesion,
+                estado=sesion.estado,
+                timestamp_ultimo_punto=self._utc_now_iso(),
+                punto_actual=siguiente_punto,
+                hallazgos_json=sesion.hallazgos_json,
+                omitidos_json=sesion.omitidos_json,
+                resultados_json=json.dumps(resultados, ensure_ascii=False),
+            )
+
+            # Show next point or completion
+            if siguiente_punto < len(todos_puntos):
+                siguiente = todos_puntos[siguiente_punto]
+                await meta_client.send_text(
+                    payload.telefono,
+                    f"✅ Registrado.\n\n{siguiente.pregunta}"
+                )
+            else:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "✅ ¡Auditoría completada!"
+                )
+
+            return "response_stored"
+
+        except Exception as e:
+            logger.error(f"Error handling si_no: {e}", exc_info=True)
+            return "error"
+
+
+    async def _handle_perfumeria_observaciones(
+        self,
+        payload: WhatsAppPayload,
+        punto: ChecklistPerfumeriaPunto,
+        sesion: SesionAuditoria,
+        todos_puntos: list,
+        meta_client: MetaClient,
+    ) -> str:
+        """Handle free-form observations (text/audio/photo) for perfumery audit."""
+        try:
+            contenido = ""
+            foto_url = None
+
+            # Handle photo
+            if payload.tipo == "image" and payload.media_url:
+                try:
+                    foto_url = await self.drive.upload_photo_from_url(
+                        payload.media_url,
+                        f"perf_obs_{sesion.id_sesion}_{uuid.uuid4().hex[:4]}.jpg"
+                    )
+                except Exception as e:
+                    logger.error(f"Error uploading observation photo: {e}")
+
+            # Handle audio
+            elif payload.tipo == "audio" and payload.media_url:
+                try:
+                    contenido = await self.transcriber.transcribe_from_url(payload.media_url)
+                except Exception as e:
+                    logger.error(f"Error transcribing observation audio: {e}")
+                    contenido = "[Audio no transcrito]"
+
+            # Handle text
+            elif payload.contenido:
+                contenido = payload.contenido
+            else:
+                await meta_client.send_text(
+                    payload.telefono,
+                    f"📝 {punto.pregunta}\n\nPuedes enviar texto, audio o foto (opcional)."
+                )
+                return "waiting_input"
+
+            # Store result
+            resultados = json.loads(sesion.resultados_json) if sesion.resultados_json else {}
+            resultados[f"punto_{sesion.punto_actual}"] = {
+                "pregunta": punto.pregunta,
+                "respuesta": contenido,
+                "foto_url": foto_url,
+                "tipo": punto.tipo_respuesta,
+                "bloque": punto.bloque_id,
+                "timestamp": self._utc_now_iso()
+            }
+
+            # Mark audit as complete (observaciones is the last block)
+            self.sheets.update_sesion(
+                id_sesion=sesion.id_sesion,
+                estado="completa",
+                timestamp_ultimo_punto=self._utc_now_iso(),
+                punto_actual=sesion.punto_actual + 1,
+                hallazgos_json=sesion.hallazgos_json,
+                omitidos_json=sesion.omitidos_json,
+                resultados_json=json.dumps(resultados, ensure_ascii=False),
+            )
+
+            self.sheets.update_conversacion(
+                telefono=payload.telefono,
+                estado=ConversationState.IDLE,
+                id_pendiente="",
+            )
+
+            await meta_client.send_text(
+                payload.telefono,
+                "✅ ¡Auditoría completada!\n\nGracias por tu participación."
+            )
+
+            return "auditoria_completa"
+
+        except Exception as e:
+            logger.error(f"Error handling observaciones: {e}", exc_info=True)
+            return "error"
+
 
     async def _handle_en_auditoria(
 
@@ -1442,7 +2049,7 @@ EDITAR â†’ Hacer cambios""",
 
                     sesion.punto_actual += 1
 
-                    sesion.timestamp_ultimo_punto = datetime.now().isoformat()
+                    sesion.timestamp_ultimo_punto = self._utc_now_iso()
 
                     self.sheets.update_sesion(
 
@@ -1788,7 +2395,7 @@ EDITAR â†’ Hacer cambios""",
 
             sesion.punto_actual += 1
 
-            sesion.timestamp_ultimo_punto = datetime.now().isoformat()
+            sesion.timestamp_ultimo_punto = self._utc_now_iso()
 
             self.sheets.update_sesion(
 
@@ -1886,7 +2493,7 @@ EDITAR â†’ Hacer cambios""",
 
                 sesion.estado = "en_curso"
 
-                sesion.timestamp_ultimo_punto = datetime.now().isoformat()
+                sesion.timestamp_ultimo_punto = self._utc_now_iso()
 
                 self.sheets.update_sesion(
 
