@@ -1,7 +1,7 @@
 """FastAPI application for AuditBot webhook and background jobs."""
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 import asyncio
 import uuid
@@ -43,7 +43,7 @@ _message_lock = asyncio.Lock()
 _MESSAGE_TTL_SECONDS = 300
 _supabase_client: Client | None = None
 _dedup_store_available: bool | None = None
-_last_reminder_sent: dict[str, datetime] = {}  # {id_sesion: last_reminder_timestamp}
+_last_reminder_sent: dict[str, tuple[datetime, int]] = {}  # {id_sesion: (last_reminder_timestamp, reminders_sent)}
 
 
 def _get_supabase_client() -> Client | None:
@@ -384,8 +384,23 @@ async def check_expired_audit_sessions():
         meta_client = MetaClient()
 
         for sesion in expired_sesiones:
-            last_update = datetime.fromisoformat(sesion.timestamp_ultimo_punto)
-            elapsed_minutes = (datetime.utcnow() - last_update).total_seconds() / 60
+            timestamp_raw = (sesion.timestamp_ultimo_punto or "").strip()
+            if not timestamp_raw:
+                continue
+
+            try:
+                last_update = datetime.fromisoformat(timestamp_raw.replace("Z", "+00:00"))
+            except ValueError:
+                logger.warning(f"Invalid timestamp_ultimo_punto for session {sesion.id_sesion}: {timestamp_raw}")
+                continue
+
+            now_utc = datetime.now(timezone.utc)
+            now_local = datetime.now()
+            if last_update.tzinfo is not None:
+                elapsed_minutes = (now_utc - last_update.astimezone(timezone.utc)).total_seconds() / 60
+            else:
+                # Backward compatibility for existing naive timestamps stored as local time.
+                elapsed_minutes = (now_local - last_update).total_seconds() / 60
 
             # After 60 minutes, auto-omit the point and advance
             if elapsed_minutes >= 60:
@@ -393,7 +408,7 @@ async def check_expired_audit_sessions():
                 omitidos = json.loads(sesion.omitidos_json) if sesion.omitidos_json else []
                 omitidos.append(sesion.punto_actual)
                 sesion.punto_actual += 1
-                sesion.timestamp_ultimo_punto = datetime.utcnow().isoformat()
+                sesion.timestamp_ultimo_punto = now_utc.isoformat()
 
                 # Update session
                 sheets.update_sesion(
@@ -426,18 +441,16 @@ Tu evaluación:""",
                 continue
 
             # Send reminder only once every 15 minutes (up to 3 reminders)
-            now = datetime.utcnow()
-            if sesion.id_sesion not in _last_reminder_sent:
-                last_reminder = None
-            else:
-                last_reminder = _last_reminder_sent[sesion.id_sesion]
+            reminder_state = _last_reminder_sent.get(sesion.id_sesion)
+            last_reminder = reminder_state[0] if reminder_state else None
+            reminders_sent = reminder_state[1] if reminder_state else 0
 
-            # Check if reminder is due and we haven't exceeded 3 reminders
-            reminder_due = last_reminder is None or (now - last_reminder).total_seconds() >= 900  # 900 = 15 min
-            reminders_sent = 0 if last_reminder is None else int((now - last_reminder).total_seconds() / 900) + 1
+            # Check if reminder is due and we haven't exceeded 3 reminders.
+            reminder_due = last_reminder is None or (now_utc - last_reminder).total_seconds() >= 900  # 900 = 15 min
 
-            if reminder_due and reminders_sent <= 3:
-                _last_reminder_sent[sesion.id_sesion] = now
+            if reminder_due and reminders_sent < 3:
+                reminders_sent += 1
+                _last_reminder_sent[sesion.id_sesion] = (now_utc, reminders_sent)
                 logger.info(f"Audit session timeout for {sesion.telefono_auditor}: {sesion.id_sesion} (reminder #{reminders_sent})")
                 checklist = sheets.get_checklist()
                 if sesion.punto_actual < len(checklist):
