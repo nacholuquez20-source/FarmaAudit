@@ -160,7 +160,11 @@ class ConversationRouter:
 
             logger.debug(f"Message from {payload.telefono}: state={conv.estado_actual.value}, content={payload.contenido[:50] if payload.contenido else 'N/A'}")
 
-
+            # Check for audit trigger regardless of current state (allows restarting audit)
+            if payload.tipo == "text" and payload.contenido:
+                trigger = payload.contenido.lower().strip()
+                if trigger in {"hola", "inicio", "empezar", "comenzar", "start"}:
+                    return await self._iniciar_seleccion_sucursal(payload, meta_client)
 
             # Route based on state
 
