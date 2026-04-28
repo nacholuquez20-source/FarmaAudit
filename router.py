@@ -1,1750 +1,3500 @@
 """Conversation router - state machine logic for audit interactions."""
 
+
+
 import json
+
 import logging
+
 import uuid
+
 import asyncio
+
 from datetime import datetime, timedelta
+
 from typing import Optional, Tuple, Dict
 
+
+
 from models import (
+
     ConversationState, WhatsAppPayload, Auditor, Conversacion,
+
     ParserResponse, Reporte, Gestion, Severidad, ChecklistPunto, SesionAuditoria, PuntoEvalResult,
+
     ItemBloque, ResultadoItem, StockItem, DesvioLibre
+
 )
+
 from sheets import SheetsManager
+
 from parser import AuditParser
+
 from audio import AudioTranscriber
+
 from drive import DriveManager
+
 from meta_client import MetaClient
+
+
 
 logger = logging.getLogger(__name__)
 
 
+
+
+
 class ConversationRouter:
+
     """Routes messages based on conversation state."""
 
+
+
     # Class-level locks per phone number to prevent concurrent message processing
+
     _conversation_locks: Dict[str, asyncio.Lock] = {}
+
     _locks_lock = asyncio.Lock()
 
+
+
     def __init__(self):
+
         """Initialize router with dependencies."""
+
         self.sheets = SheetsManager()
+
         self.parser = AuditParser()
+
         self.transcriber = AudioTranscriber()
+
         self.drive = DriveManager()
 
+
+
     @classmethod
+
     async def _get_conversation_lock(cls, phone: str) -> asyncio.Lock:
+
         """Get or create lock for a specific conversation."""
+
         async with cls._locks_lock:
+
             if phone not in cls._conversation_locks:
+
                 cls._conversation_locks[phone] = asyncio.Lock()
+
             return cls._conversation_locks[phone]
 
+
+
     async def handle_message(
+
         self,
+
         payload: WhatsAppPayload,
+
         meta_client: MetaClient,
+
     ) -> str:
+
         """Route message based on conversation state."""
+
         # Acquire conversation lock to prevent concurrent processing for same auditor
+
         lock = await self._get_conversation_lock(payload.telefono)
+
         async with lock:
+
             return await self._handle_message_locked(payload, meta_client)
 
+
+
     async def _handle_message_locked(
+
         self,
+
         payload: WhatsAppPayload,
+
         meta_client: MetaClient,
+
     ) -> str:
+
         """Internal handler with lock acquired."""
+
         try:
+
             # Validate auditor
+
             auditor = self.sheets.get_auditor(payload.telefono)
+
             if not auditor or not auditor.activo:
+
                 await meta_client.send_text(
+
                     payload.telefono,
+
                     "âŒ No estÃ¡s registrado como auditor. Contacta al coordinador.",
+
                 )
+
                 return "auditor_not_found"
 
+
+
             # Get conversation state
+
             conv = self.sheets.get_conversacion(payload.telefono)
+
             if not conv:
+
                 conv = Conversacion(
+
                     telefono=payload.telefono,
+
                     estado_actual=ConversationState.IDLE,
+
                 )
+
+
 
             logger.debug(f"Message from {payload.telefono}: state={conv.estado_actual.value}, content={payload.contenido[:50] if payload.contenido else 'N/A'}")
 
+
+
             # Route based on state
+
             if conv.estado_actual == ConversationState.IDLE:
+
                 return await self._handle_idle_state(payload, auditor, conv, meta_client)
+
             elif conv.estado_actual == ConversationState.SELECCIONANDO_SUCURSAL:
+
                 return await self._handle_seleccionando_sucursal(payload, conv, meta_client)
+
             elif conv.estado_actual == ConversationState.EN_BLOQUE:
+
                 return await self._handle_en_bloque(payload, conv, meta_client)
+
             elif conv.estado_actual == ConversationState.CONFIRMANDO_BLOQUE:
+
                 return await self._handle_confirmando_bloque(payload, conv, meta_client)
+
             elif conv.estado_actual == ConversationState.STOCK_LOOP:
+
                 return await self._handle_stock_loop(payload, conv, meta_client)
+
             elif conv.estado_actual == ConversationState.EN_STOCK_ITEM:
+
                 return await self._handle_en_stock_item(payload, conv, meta_client)
+
             elif conv.estado_actual == ConversationState.DESVIO_LIBRE:
+
                 return await self._handle_desvio_libre(payload, conv, meta_client)
+
             elif conv.estado_actual == ConversationState.COMPROMISOS:
+
                 return await self._handle_compromisos(payload, conv, meta_client)
+
             elif conv.estado_actual == ConversationState.EN_AUDITORIA:
+
                 return await self._handle_en_auditoria(payload, conv, meta_client)
+
             elif conv.estado_actual == ConversationState.AUDITORIA_PAUSADA:
+
                 return await self._handle_auditoria_pausada(payload, conv, meta_client)
+
             elif conv.estado_actual == ConversationState.ESPERANDO_CONFIRMACION:
+
                 return await self._handle_confirmation_state(payload, conv, meta_client)
+
             elif conv.estado_actual == ConversationState.ESPERANDO_EDICION:
+
                 return await self._handle_edition_state(payload, conv, meta_client)
+
             else:
+
                 await meta_client.send_text(payload.telefono, "âš ï¸ Estado desconocido")
+
                 return "unknown_state"
+
         except Exception as e:
+
             logger.error(f"Error handling message from {payload.telefono}: {e}", exc_info=True)
+
             await meta_client.send_text(
+
                 payload.telefono,
+
                 "âŒ Error procesando tu mensaje. Intenta de nuevo.",
+
             )
+
             return "error"
 
+
+
     async def _handle_idle_state(
+
         self,
+
         payload: WhatsAppPayload,
+
         auditor: Auditor,
+
         conv: Conversacion,
+
         meta_client: MetaClient,
+
     ) -> str:
+
         """Handle message in idle state."""
+
         # Check for special commands
+
         if payload.contenido and payload.contenido.startswith("/"):
+
             return await self._handle_command(payload, auditor, meta_client)
 
+
+
         # Check for guided audit trigger ("hola", "inicio", "empezar", "comenzar", "start")
+
         if payload.tipo == "text" and payload.contenido:
+
             trigger = payload.contenido.lower().strip()
+
             if trigger in {"hola", "inicio", "empezar", "comenzar", "start"}:
+
                 return await self._iniciar_seleccion_sucursal(payload, meta_client)
 
+
+
             await meta_client.send_text(
+
                 payload.telefono,
+
                 "EscribÃ­ INICIO para comenzar la auditorÃ­a guiada.\n"
+
                 "UsÃ¡ /ayuda para ver comandos.",
+
             )
+
             return "idle_waiting_start"
 
+
+
         # Process audit finding
+
         message_to_parse = payload.contenido or ""
 
+
+
         # If audio, transcribe first
+
         if payload.tipo == "audio" and payload.media_url:
+
             try:
+
                 message_to_parse = await self.transcriber.transcribe_from_url(
+
                     payload.media_url
+
                 )
+
             except Exception as e:
+
                 logger.error(f"Failed to transcribe audio: {e}")
+
                 await meta_client.send_text(
+
                     payload.telefono,
+
                     "âŒ Error transcribiendo audio. Intenta de nuevo.",
+
                 )
+
                 return "transcription_error"
 
+
+
         # If image without text, ask for context
+
         if payload.tipo == "image" and not payload.contenido:
+
             await meta_client.send_text(
+
                 payload.telefono,
+
                 "ðŸ“¸ RecibÃ­ la foto. Â¿QuÃ© hallazgo describe? Enviame texto con el contexto.",
+
             )
+
             return "image_without_context"
 
+
+
         # If image with text, upload to Drive
+
         photo_url = None
+
         if payload.tipo == "image" and payload.media_url:
+
             try:
+
                 import uuid
+
                 filename = f"audit_{uuid.uuid4().hex[:8]}.jpg"
+
                 photo_url = await self.drive.upload_photo_from_url(
+
                     payload.media_url,
+
                     filename,
+
                 )
+
             except Exception as e:
+
                 logger.warning(f"Failed to upload photo: {e}")
+
                 # Continue without photo
 
+
+
         # Parse message
+
         parse_result = await self.parser.parse_message(message_to_parse)
+
         if not parse_result or not parse_result.hallazgos:
+
             await meta_client.send_text(
+
                 payload.telefono,
+
                 "âš ï¸ No entendÃ­ el hallazgo. Por favor, sÃ© mÃ¡s especÃ­fico:\n"
+
                 "â€¢ Sucursal\nâ€¢ Ãrea (PerfumerÃ­a, Farmacia, etc)\nâ€¢ Sub-item\nâ€¢ DescripciÃ³n",
+
             )
+
             return "parse_error"
 
+
+
         # Store pending confirmation
+
         pending_data = {
+
             "auditor": auditor.nombre,
+
             "cuadrilla": auditor.cuadrilla,
+
             "parse": json.loads(json.dumps(
+
                 {
+
                     "hallazgos": [
+
                         {
+
                             "sucursal_id": h.sucursal_id,
+
                             "sucursal_nombre": h.sucursal_nombre,
+
                             "area": h.area,
+
                             "subitem": h.subitem,
+
                             "descripcion": h.descripcion,
+
                             "severidad": h.severidad.value,
+
                             "confianza": h.confianza,
+
                         }
+
                         for h in parse_result.hallazgos
+
                     ],
+
                     "photo_url": photo_url,
+
                     "original_message": parse_result.mensaje_original_limpio,
+
                 },
+
                 ensure_ascii=False,
+
             ))
+
         }
 
+
+
         id_pendiente = self.sheets.create_pendiente(
+
             telefono_auditor=payload.telefono,
+
             estado="esperando_confirmacion",
+
             datos_json=json.dumps(pending_data, ensure_ascii=False),
+
         )
+
+
 
         logger.info(f"Created pendiente {id_pendiente} for {payload.telefono}")
 
+
+
         # Update conversation state
+
         self.sheets.update_conversacion(
+
             telefono=payload.telefono,
+
             estado=ConversationState.ESPERANDO_CONFIRMACION,
+
             id_pendiente=id_pendiente,
+
         )
+
+
 
         logger.info(f"Updated state to ESPERANDO_CONFIRMACION for {payload.telefono}, pendiente={id_pendiente}")
 
+
+
         # Show draft for confirmation
+
         await self._show_draft(parse_result, photo_url, payload.telefono, meta_client)
+
         return "parse_success"
 
+
+
     async def _handle_confirmation_state(
+
         self,
+
         payload: WhatsAppPayload,
+
         conv: Conversacion,
+
         meta_client: MetaClient,
+
     ) -> str:
+
         """Handle response in confirmation state."""
+
         if not payload.contenido:
+
             return "invalid_input"
+
+
 
         answer = payload.contenido.strip().upper()
+
         logger.info(f"Confirmation response from {payload.telefono}: '{answer}'")
 
+
+
         # Check for yes responses (with or without accent)
+
         if answer in {"SI", "SÃ", "YES", "Y"}:
+
             logger.info(f"Confirmed finding for {payload.telefono}")
+
             return await self._confirm_and_create(conv, meta_client)
+
         elif answer in {"NO", "N"}:
+
             # Discard
+
             logger.info(f"Discarded finding for {payload.telefono}")
+
             await meta_client.send_text(
+
                 payload.telefono,
+
                 "âŒ Descartado. EnvÃ­ame otro hallazgo cuando estÃ©s listo.",
+
             )
+
             self.sheets.delete_pendiente(conv.id_pendiente)
+
             self.sheets.update_conversacion(
+
                 telefono=payload.telefono,
+
                 estado=ConversationState.IDLE,
+
             )
+
             return "discarded"
+
         elif answer in {"EDITAR", "EDIT", "CORREGIR"}:
+
             # Move to edition state
+
             logger.info(f"Edit requested for {payload.telefono}")
+
             self.sheets.update_conversacion(
+
                 telefono=payload.telefono,
+
                 estado=ConversationState.ESPERANDO_EDICION,
+
                 id_pendiente=conv.id_pendiente,
+
             )
+
             await meta_client.send_text(
+
                 payload.telefono,
+
                 "âœï¸ Â¿QuÃ© necesitas editar? Enviame la correcciÃ³n.",
+
             )
+
             return "edit_requested"
+
         else:
+
             logger.warning(f"Invalid confirmation response from {payload.telefono}: '{answer}'")
+
             await meta_client.send_text(
+
                 payload.telefono,
+
                 "âš ï¸ Por favor responde con:\nSI - para confirmar\nNO - para descartar\nEDITAR - para hacer cambios",
+
             )
+
             return "invalid_response"
 
+
+
     async def _handle_edition_state(
+
         self,
+
         payload: WhatsAppPayload,
+
         conv: Conversacion,
+
         meta_client: MetaClient,
+
     ) -> str:
+
         """Handle correction in edition state."""
+
         if not payload.contenido:
+
             return "invalid_input"
 
+
+
         # Get pending data
+
         pendiente = self.sheets.get_pendiente(conv.id_pendiente)
+
         if not pendiente:
+
             await meta_client.send_text(
+
                 payload.telefono,
+
                 "âŒ Error: No encontrÃ© el pendiente. Intenta de nuevo.",
+
             )
+
             return "pendiente_not_found"
 
+
+
         try:
+
             pending_data = json.loads(pendiente.datos_json)
+
             original_message = pending_data["parse"]["original_message"]
+
             previous_response = pending_data["parse"]
 
+
+
             # Build previous response
+
             prev_response = ParserResponse(
+
                 hallazgos=[],  # Will be reparsed
+
                 datos_faltantes=previous_response.get("datos_faltantes", []),
+
                 mensaje_original_limpio=original_message,
+
             )
+
+
 
             # Apply correction
+
             corrected = await self.parser.apply_correction(
+
                 original_message=original_message,
+
                 correction=payload.contenido,
+
                 previous_response=prev_response,
+
             )
+
+
 
             if not corrected or not corrected.hallazgos:
+
                 await meta_client.send_text(
+
                     payload.telefono,
+
                     "âš ï¸ No pude aplicar la correcciÃ³n. Intenta de nuevo.",
+
                 )
+
                 return "correction_error"
 
+
+
             # Update pending data
+
             photo_url = pending_data["parse"].get("photo_url")
+
             new_pending_data = {
+
                 "auditor": pending_data["auditor"],
+
                 "cuadrilla": pending_data["cuadrilla"],
+
                 "parse": json.loads(json.dumps(
+
                     {
+
                         "hallazgos": [
+
                             {
+
                                 "sucursal_id": h.sucursal_id,
+
                                 "sucursal_nombre": h.sucursal_nombre,
+
                                 "area": h.area,
+
                                 "subitem": h.subitem,
+
                                 "descripcion": h.descripcion,
+
                                 "severidad": h.severidad.value,
+
                                 "confianza": h.confianza,
+
                             }
+
                             for h in corrected.hallazgos
+
                         ],
+
                         "photo_url": photo_url,
+
                         "original_message": corrected.mensaje_original_limpio,
+
                     },
+
                     ensure_ascii=False,
+
                 ))
+
             }
 
+
+
             # Store corrected pending
+
             self.sheets.delete_pendiente(conv.id_pendiente)
+
             new_id = self.sheets.create_pendiente(
+
                 telefono_auditor=payload.telefono,
+
                 estado="esperando_confirmacion",
+
                 datos_json=json.dumps(new_pending_data, ensure_ascii=False),
+
             )
+
+
 
             # Update conversation
+
             self.sheets.update_conversacion(
+
                 telefono=payload.telefono,
+
                 estado=ConversationState.ESPERANDO_CONFIRMACION,
+
                 id_pendiente=new_id,
+
             )
+
+
 
             # Show corrected draft
+
             await self._show_draft(corrected, photo_url, payload.telefono, meta_client)
+
             return "correction_applied"
+
         except Exception as e:
+
             logger.error(f"Error applying correction: {e}")
+
             await meta_client.send_text(
+
                 payload.telefono,
+
                 "âŒ Error procesando la correcciÃ³n.",
+
             )
+
             return "error"
 
+
+
     async def _handle_command(
+
         self,
+
         payload: WhatsAppPayload,
+
         auditor: Auditor,
+
         meta_client: MetaClient,
+
     ) -> str:
+
         """Handle special commands."""
+
         cmd = payload.contenido.lower().strip()
 
+
+
         if cmd == "/ayuda":
+
             await meta_client.send_text(
+
                 payload.telefono,
+
                 """ðŸ“‹ **AYUDA AuditBot**
 
+
+
 EnvÃ­ame hallazgos de auditorÃ­a:
+
 ðŸ“ **Texto**: DescripciÃ³n del hallazgo
+
 ðŸŽ¤ **Audio**: GrabaciÃ³n con el hallazgo
+
 ðŸ“¸ **Foto**: Imagen + descripciÃ³n
 
+
+
 Comandos:
+
 /ayuda â†’ Esta ayuda
+
 /resumen â†’ Resumen del dÃ­a
+
 /mis â†’ Mis reportes hoy
 
+
+
 Responde a la confirmaciÃ³n con:
+
 SI â†’ Confirmar hallazgo
+
 NO â†’ Descartar
+
 EDITAR â†’ Hacer cambios""",
+
             )
+
             return "help_sent"
+
         elif cmd == "/resumen":
+
             # TODO: Implement daily summary
+
             await meta_client.send_text(
+
                 payload.telefono,
+
                 "ðŸ“Š Resumen del dÃ­a:\n(Pronto disponible)",
+
             )
+
             return "summary_requested"
+
         elif cmd == "/mis":
+
             # TODO: Implement user's reports today
+
             await meta_client.send_text(
+
                 payload.telefono,
+
                 "ðŸ“„ Tus reportes de hoy:\n(Pronto disponible)",
+
             )
+
             return "my_reports_requested"
+
         else:
+
             return "unknown_command"
 
+
+
     async def _show_draft(
+
         self,
+
         parse_result: ParserResponse,
+
         photo_url: Optional[str],
+
         phone: str,
+
         meta_client: MetaClient,
+
     ) -> None:
+
         """Show draft for confirmation."""
+
         draft = "ðŸ“‹ **Borrador de Hallazgos**:\n\n"
+
         for i, h in enumerate(parse_result.hallazgos, 1):
+
             draft += f"{i}. **{h.sucursal_nombre}** - {h.area}\n"
+
             draft += f"   Sub-item: {h.subitem}\n"
+
             draft += f"   DescripciÃ³n: {h.descripcion}\n"
+
             draft += f"   Severidad: {h.severidad.value}\n"
+
             draft += f"   Confianza: {int(h.confianza*100)}%\n\n"
+
+
 
         draft += "Â¿Confirmo? (SI/NO/EDITAR)"
 
+
+
         if photo_url:
+
             await meta_client.send_file(phone, photo_url, draft)
+
         else:
+
             await meta_client.send_text(phone, draft)
 
+
+
     async def _confirm_and_create(
+
         self,
+
         conv: Conversacion,
+
         meta_client: MetaClient,
+
     ) -> str:
+
         """Create reports and gestiones after confirmation."""
+
         try:
+
             pendiente = self.sheets.get_pendiente(conv.id_pendiente)
+
             if not pendiente:
+
                 return "pendiente_not_found"
 
+
+
             pending_data = json.loads(pendiente.datos_json)
+
             parse_data = pending_data["parse"]
+
             auditor_name = pending_data["auditor"]
+
             cuadrilla = pending_data["cuadrilla"]
 
+
+
             # Create reports and gestiones
+
             for hallazgo_data in parse_data["hallazgos"]:
+
                 # Create report
+
                 reporte = Reporte(
+
                     id="",  # Will be generated
+
                     fecha=datetime.now().strftime("%Y-%m-%d"),
+
                     hora=datetime.now().strftime("%H:%M:%S"),
+
                     cuadrilla=cuadrilla,
+
                     auditor=auditor_name,
+
                     id_sucursal=hallazgo_data["sucursal_id"],
+
                     sucursal=hallazgo_data["sucursal_nombre"],
+
                     area=hallazgo_data["area"],
+
                     subitem=hallazgo_data["subitem"],
+
                     descripcion=hallazgo_data["descripcion"],
+
                     severidad=Severidad(hallazgo_data["severidad"]),
+
                     foto_url=parse_data.get("photo_url"),
+
                     creado_por_audio=False,
+
                 )
+
+
 
                 reporte_id = self.sheets.create_reporte(reporte)
 
+
+
                 # Get facility for responsable
+
                 sucursal = self.sheets.get_sucursal(hallazgo_data["sucursal_id"])
+
                 if not sucursal:
+
                     logger.warning(f"Sucursal {hallazgo_data['sucursal_id']} not found")
+
                     continue
 
+
+
                 # Calculate deadline
+
                 from config import get_settings
+
                 settings = get_settings()
+
                 hours = settings.severity_deadlines.get(
+
                     hallazgo_data["severidad"], 168
+
                 )
+
                 plazo_fecha = datetime.now() + timedelta(hours=hours)
 
+
+
                 # Create gestiÃ³n
+
                 gestion = Gestion(
+
                     id_gestion="",  # Will be generated
+
                     id_reporte=reporte_id,
+
                     id_sucursal=sucursal.id,
+
                     sucursal=sucursal.nombre,
+
                     desvio=hallazgo_data["descripcion"],
+
                     severidad=Severidad(hallazgo_data["severidad"]),
+
                     responsable=sucursal.responsable,
+
                     tel_responsable=sucursal.tel_responsable,
+
                     plazo_fecha=plazo_fecha,
+
                     plan_accion="[Por definir por el responsable]",
+
                 )
+
+
 
                 gestion_id = self.sheets.create_gestion(gestion)
 
+
+
                 # Notify responsible
+
                 msg = (
+
                     f"ðŸš¨ **Nuevo Hallazgo de AuditorÃ­a**\n\n"
+
                     f"Sucursal: {sucursal.nombre}\n"
+
                     f"Ãrea: {hallazgo_data['area']}\n"
+
                     f"DesvÃ­o: {hallazgo_data['descripcion']}\n"
+
                     f"Severidad: {hallazgo_data['severidad']}\n"
+
                     f"Plazo: {plazo_fecha.strftime('%Y-%m-%d %H:%M')}\n\n"
+
                     f"ID GestiÃ³n: {gestion_id}"
+
                 )
+
                 await meta_client.send_text(sucursal.tel_responsable, msg)
 
+
+
             # Clean up
+
             self.sheets.delete_pendiente(conv.id_pendiente)
+
             self.sheets.update_conversacion(
+
                 telefono=conv.telefono,
+
                 estado=ConversationState.IDLE,
+
             )
 
+
+
             await meta_client.send_text(
+
                 conv.telefono,
+
                 "âœ… Hallazgos guardados. Notificaciones enviadas a responsables.",
+
             )
+
             return "confirmed"
+
         except Exception as e:
+
             logger.error(f"Error confirming and creating: {e}")
+
             await meta_client.send_text(
+
                 conv.telefono,
+
                 "âŒ Error guardando hallazgos.",
+
             )
+
             return "error"
 
+
+
     async def _iniciar_seleccion_sucursal(
+
         self,
+
         payload: WhatsAppPayload,
+
         meta_client: MetaClient,
+
     ) -> str:
+
         """Start guided audit flow: send sucursal list."""
+
         try:
+
             sucursales = self.sheets.get_all_sucursales()
+
             if not sucursales:
+
                 await meta_client.send_text(
+
                     payload.telefono,
+
                     "âŒ No hay sucursales disponibles.",
+
                 )
+
                 return "no_sucursales"
 
+
+
             # Build menu
+
             menu = "ðŸª Selecciona tu sucursal:\n\n"
+
             for i, s in enumerate(sucursales, 1):
+
                 menu += f"{i}. {s.nombre} ({s.zona})\n"
+
+
 
             menu += "\nResponde con el nÃºmero de la sucursal."
 
+
+
             await meta_client.send_text(payload.telefono, menu)
 
+
+
             # Update conversation state
+
             self.sheets.update_conversacion(
+
                 telefono=payload.telefono,
+
                 estado=ConversationState.SELECCIONANDO_SUCURSAL,
+
             )
+
+
 
             return "sucursal_menu_sent"
+
         except Exception as e:
+
             logger.error(f"Error initiating sucursal selection: {e}")
+
             await meta_client.send_text(
+
                 payload.telefono,
+
                 "âŒ Error iniciando auditorÃ­a.",
+
             )
+
             return "error"
 
+
+
     async def _handle_seleccionando_sucursal(
+
         self,
+
         payload: WhatsAppPayload,
+
         conv: Conversacion,
+
         meta_client: MetaClient,
+
     ) -> str:
+
         """Handle sucursal selection."""
+
         try:
+
             if not payload.contenido:
+
                 await meta_client.send_text(
+
                     payload.telefono,
+
                     "âš ï¸ Por favor responde con un nÃºmero.",
+
                 )
+
                 return "invalid_input"
 
+
+
             # Parse selection
+
             try:
+
                 choice = int(payload.contenido.strip())
+
             except ValueError:
+
                 await meta_client.send_text(
+
                     payload.telefono,
+
                     "âš ï¸ Responde con un nÃºmero vÃ¡lido.",
+
                 )
+
                 return "invalid_number"
 
+
+
             sucursales = self.sheets.get_all_sucursales()
+
             if choice < 1 or choice > len(sucursales):
+
                 await meta_client.send_text(
+
                     payload.telefono,
+
                     f"âš ï¸ NÃºmero fuera de rango. Elige entre 1 y {len(sucursales)}.",
+
                 )
+
                 return "out_of_range"
+
+
 
             sucursal = sucursales[choice - 1]
 
+
+
             # Get checklist
+
             checklist = self.sheets.get_checklist()
+
             if not checklist:
+
                 await meta_client.send_text(
+
                     payload.telefono,
+
                     "âŒ No hay checklist disponible.",
+
                 )
+
                 return "no_checklist"
 
+
+
             # Create session
+
             bloques = self.sheets.get_checklist_bloques()
+
             if not bloques:
+
                 await meta_client.send_text(
+
                     payload.telefono,
+
                     "âŒ No hay bloques de checklist disponibles.",
+
                 )
+
                 return "no_checklist_blocks"
 
+
+
             bloque_inicial = sorted(bloques.keys())[0]
+
             id_sesion = f"ses_{uuid.uuid4().hex[:8]}"
+
             sesion = SesionAuditoria(
+
                 id_sesion=id_sesion,
+
                 telefono_auditor=payload.telefono,
+
                 sucursal_id=sucursal.id,
+
                 punto_actual=0,
+
                 total_puntos=sum(len(items) for items in bloques.values()),
+
                 hallazgos_json="[]",
+
                 omitidos_json="[]",
+
                 estado="en_curso",
+
                 timestamp_inicio=datetime.now().isoformat(),
+
                 timestamp_ultimo_punto=datetime.now().isoformat(),
+
                 bloque_actual=bloque_inicial,
+
             )
+
+
 
             self.sheets.create_sesion(sesion)
 
+
+
             # Update conversation
+
             self.sheets.update_conversacion(
+
                 telefono=payload.telefono,
+
                 estado=ConversationState.EN_BLOQUE,
+
                 id_pendiente=id_sesion,
+
             )
+
+
 
             # Send first block
+
             await meta_client.send_text(
+
                 payload.telefono,
+
                 f"âœ… Iniciando auditorÃ­a en {sucursal.nombre}",
+
             )
+
             await meta_client.send_bloque_prompt(
+
                 payload.telefono,
+
                 bloque_inicial,
+
                 f"Bloque {bloque_inicial}",
+
                 bloques[bloque_inicial],
+
             )
+
+
 
             return "auditoria_started"
+
         except Exception as e:
+
             logger.error(f"Error handling sucursal selection: {e}")
+
             await meta_client.send_text(
+
                 payload.telefono,
+
                 "âŒ Error seleccionando sucursal.",
+
             )
+
             return "error"
 
+
+
     async def _handle_en_auditoria(
+
         self,
+
         payload: WhatsAppPayload,
+
         conv: Conversacion,
+
         meta_client: MetaClient,
+
     ) -> str:
+
         """Handle response during audit."""
+
         try:
+
             # Get active session
+
             sesion = self.sheets.get_sesion(conv.id_pendiente)
+
             if not sesion:
+
                 await meta_client.send_text(
+
                     payload.telefono,
+
                     "âŒ SesiÃ³n no encontrada.",
+
                 )
+
                 return "sesion_not_found"
 
+
+
             # Check for special commands
+
             if payload.contenido:
+
                 cmd = payload.contenido.lower().strip()
+
                 if cmd in {"saltar", "skip"}:
+
                     # Mark as omitted
+
                     omitidos = json.loads(sesion.omitidos_json)
+
                     omitidos.append(sesion.punto_actual)
+
                     sesion.omitidos_json = json.dumps(omitidos)
+
                     sesion.punto_actual += 1
+
                     sesion.timestamp_ultimo_punto = datetime.now().isoformat()
+
                     self.sheets.update_sesion(
+
                         id_sesion=sesion.id_sesion,
+
                         estado=sesion.estado,
+
                         timestamp_ultimo_punto=sesion.timestamp_ultimo_punto,
+
                         punto_actual=sesion.punto_actual,
+
                         hallazgos_json=sesion.hallazgos_json,
+
                         omitidos_json=sesion.omitidos_json,
+
                     )
+
+
 
                     # Check if finished
+
                     if sesion.punto_actual >= sesion.total_puntos:
+
                         return await self._cerrar_auditoria(sesion, meta_client, payload.telefono)
 
+
+
                     # Send next point
+
                     checklist = self.sheets.get_checklist()
+
                     await self._enviar_siguiente_punto(sesion, checklist, meta_client, payload.telefono)
+
                     return "punto_omitido"
 
+
+
                 if cmd == "pausar":
+
                     sesion.estado = "pausada"
+
                     self.sheets.update_sesion(
+
                         id_sesion=sesion.id_sesion,
+
                         estado=sesion.estado,
+
                         timestamp_ultimo_punto=sesion.timestamp_ultimo_punto,
+
                         punto_actual=sesion.punto_actual,
+
                         hallazgos_json=sesion.hallazgos_json,
+
                         omitidos_json=sesion.omitidos_json,
+
                     )
+
                     self.sheets.update_conversacion(
+
                         telefono=payload.telefono,
+
                         estado=ConversationState.AUDITORIA_PAUSADA,
+
                         id_pendiente=conv.id_pendiente,
+
                     )
+
                     await meta_client.send_text(
+
                         payload.telefono,
+
                         "â¸ï¸ AuditorÃ­a pausada. Escribe 'continuar' cuando quieras retomar.",
+
                     )
+
                     return "auditoria_pausada"
 
+
+
             # Get respuesta (transcribe audio if needed)
+
             respuesta = payload.contenido or ""
+
             if payload.tipo == "audio" and payload.media_url:
+
                 try:
+
                     respuesta = await self.transcriber.transcribe_from_url(payload.media_url)
+
                 except Exception as e:
+
                     logger.error(f"Failed to transcribe audio: {e}")
+
                     await meta_client.send_text(
+
                         payload.telefono,
+
                         "âŒ Error transcribiendo audio. Intenta de nuevo.",
+
                     )
+
                     return "transcription_error"
 
+
+
             if not respuesta:
+
                 await meta_client.send_text(
+
                     payload.telefono,
+
                     "âš ï¸ Por favor envÃ­a audio, foto o texto con tu observaciÃ³n.",
+
                 )
+
                 return "empty_response"
 
+
+
             # Upload photo if present
+
             photo_url = None
+
             if payload.tipo == "image" and payload.media_url:
+
                 try:
+
                     fecha = datetime.now().strftime("%Y%m%d")
+
                     checklist = self.sheets.get_checklist()
+
                     if sesion.punto_actual < len(checklist):
+
                         punto = checklist[sesion.punto_actual]
+
                         filename = f"{fecha}_{sesion.sucursal_id}_{punto.area.replace(' ','_')}_{punto.punto_orden}.jpg"
+
                         photo_url = await self.drive.upload_photo_from_url(
+
                             payload.media_url,
+
                             filename,
+
                         )
+
                 except Exception as e:
+
                     logger.warning(f"Failed to upload photo: {e}")
 
+
+
             # Evaluate response
+
             checklist = self.sheets.get_checklist()
 
+
+
             # Check if punto_actual is valid
+
             if sesion.punto_actual >= len(checklist):
+
                 logger.warning(f"punto_actual {sesion.punto_actual} exceeds checklist length {len(checklist)}")
+
                 return await self._cerrar_auditoria(sesion, meta_client, payload.telefono)
 
+
+
             punto = checklist[sesion.punto_actual]
+
             eval_result = await self.parser.evaluate_punto_respuesta(punto, respuesta)
 
+
+
             if not eval_result:
+
                 await meta_client.send_text(
+
                     payload.telefono,
+
                     "âŒ Error evaluando respuesta. Intenta de nuevo.",
+
                 )
+
                 return "eval_error"
 
+
+
             # If desvÃ­o, create reporte and gestiÃ³n automatically
+
             if eval_result.tiene_desvio:
+
                 # Create reporte
+
                 reporte = Reporte(
+
                     id="",
+
                     fecha=datetime.now().strftime("%Y-%m-%d"),
+
                     hora=datetime.now().strftime("%H:%M:%S"),
+
                     cuadrilla="",  # Will be filled from auditor
+
                     auditor="",  # Will be filled from auditor
+
                     id_sucursal=sesion.sucursal_id,
+
                     sucursal="",  # Will be filled below
+
                     area=punto.area,
+
                     subitem=punto.descripcion,
+
                     descripcion=eval_result.descripcion_desvio,
+
                     severidad=Severidad(eval_result.severidad),
+
                     foto_url=photo_url,
+
                     creado_por_audio=(payload.tipo == "audio"),
+
                 )
 
+
+
                 auditor = self.sheets.get_auditor(payload.telefono)
+
                 if auditor:
+
                     reporte.cuadrilla = auditor.cuadrilla
+
                     reporte.auditor = auditor.nombre
 
+
+
                 sucursal = self.sheets.get_sucursal(sesion.sucursal_id)
+
                 if sucursal:
+
                     reporte.sucursal = sucursal.nombre
+
+
 
                 reporte_id = self.sheets.create_reporte(reporte)
 
+
+
                 # Create gestiÃ³n
+
                 if sucursal:
+
                     from config import get_settings
+
                     settings = get_settings()
+
                     hours = settings.severity_deadlines.get(eval_result.severidad, 168)
+
                     plazo_fecha = datetime.now() + timedelta(hours=hours)
 
+
+
                     gestion = Gestion(
+
                         id_gestion="",
+
                         id_reporte=reporte_id,
+
                         id_sucursal=sucursal.id,
+
                         sucursal=sucursal.nombre,
+
                         desvio=eval_result.descripcion_desvio,
+
                         severidad=Severidad(eval_result.severidad),
+
                         responsable=sucursal.responsable,
+
                         tel_responsable=sucursal.tel_responsable,
+
                         plazo_fecha=plazo_fecha,
+
                         plan_accion="[Por definir por el responsable]",
+
                     )
+
+
 
                     gestion_id = self.sheets.create_gestion(gestion)
 
+
+
                     # Notify responsible
+
                     msg = (
+
                         f"ðŸš¨ **Hallazgo de AuditorÃ­a Guiada**\n\n"
+
                         f"Sucursal: {sucursal.nombre}\n"
+
                         f"Ãrea: {punto.area}\n"
+
                         f"DesvÃ­o: {eval_result.descripcion_desvio}\n"
+
                         f"Severidad: {eval_result.severidad}\n"
+
                         f"Plazo: {plazo_fecha.strftime('%Y-%m-%d %H:%M')}\n\n"
+
                         f"ID GestiÃ³n: {gestion_id}"
+
                     )
+
                     await meta_client.send_text(sucursal.tel_responsable, msg)
 
+
+
                 # Store in session
+
                 hallazgos = json.loads(sesion.hallazgos_json)
+
                 hallazgos.append({
+
                     "punto": punto.punto_orden,
+
                     "area": punto.area,
+
                     "descripcion": eval_result.descripcion_desvio,
+
                     "severidad": eval_result.severidad,
+
                 })
+
                 sesion.hallazgos_json = json.dumps(hallazgos)
 
+
+
             # Confirm to auditor
+
             await meta_client.send_text(payload.telefono, eval_result.ok_message)
 
+
+
             # Advance to next point
+
             sesion.punto_actual += 1
+
             sesion.timestamp_ultimo_punto = datetime.now().isoformat()
+
             self.sheets.update_sesion(
+
                 id_sesion=sesion.id_sesion,
+
                 estado=sesion.estado,
+
                 timestamp_ultimo_punto=sesion.timestamp_ultimo_punto,
+
                 punto_actual=sesion.punto_actual,
+
                 hallazgos_json=sesion.hallazgos_json,
+
                 omitidos_json=sesion.omitidos_json,
+
             )
+
+
 
             # Check if finished
+
             if sesion.punto_actual >= sesion.total_puntos:
+
                 return await self._cerrar_auditoria(sesion, meta_client, payload.telefono)
 
+
+
             # Send next point
+
             checklist = self.sheets.get_checklist()
+
             await self._enviar_siguiente_punto(sesion, checklist, meta_client, payload.telefono)
+
             return "punto_evaluado"
+
         except Exception as e:
+
             logger.error(f"Error handling en_auditoria: {e}")
+
             await meta_client.send_text(
+
                 payload.telefono,
+
                 "âŒ Error procesando respuesta.",
+
             )
+
             return "error"
+
+
 
     async def _handle_auditoria_pausada(
+
         self,
+
         payload: WhatsAppPayload,
+
         conv: Conversacion,
+
         meta_client: MetaClient,
+
     ) -> str:
+
         """Handle response in paused audit state."""
+
         try:
+
             if not payload.contenido:
+
                 return "invalid_input"
 
+
+
             cmd = payload.contenido.lower().strip()
+
             if cmd == "continuar":
+
                 # Resume audit
+
                 sesion = self.sheets.get_sesion(conv.id_pendiente)
+
                 if not sesion:
+
                     await meta_client.send_text(
+
                         payload.telefono,
+
                         "âŒ SesiÃ³n no encontrada.",
+
                     )
+
                     return "sesion_not_found"
 
+
+
                 sesion.estado = "en_curso"
+
                 sesion.timestamp_ultimo_punto = datetime.now().isoformat()
+
                 self.sheets.update_sesion(
+
                     id_sesion=sesion.id_sesion,
+
                     estado=sesion.estado,
+
                     timestamp_ultimo_punto=sesion.timestamp_ultimo_punto,
+
                     punto_actual=sesion.punto_actual,
+
                     hallazgos_json=sesion.hallazgos_json,
+
                     omitidos_json=sesion.omitidos_json,
+
                 )
+
+
 
                 self.sheets.update_conversacion(
+
                     telefono=payload.telefono,
+
                     estado=ConversationState.EN_AUDITORIA,
+
                     id_pendiente=conv.id_pendiente,
+
                 )
+
+
 
                 checklist = self.sheets.get_checklist()
+
                 await self._enviar_siguiente_punto(sesion, checklist, meta_client, payload.telefono)
+
                 return "auditoria_resumed"
+
             else:
+
                 await meta_client.send_text(
+
                     payload.telefono,
+
                     "âš ï¸ Escribe 'continuar' para retomar la auditorÃ­a.",
+
                 )
+
                 return "invalid_command"
+
         except Exception as e:
+
             logger.error(f"Error handling auditoria_pausada: {e}")
+
             return "error"
+
+
 
     async def _enviar_siguiente_punto(
+
         self,
+
         sesion: SesionAuditoria,
+
         checklist: list,
+
         meta_client: MetaClient,
+
         phone: str,
+
     ) -> None:
+
         """Send next checklist point."""
+
         if sesion.punto_actual < len(checklist):
+
             punto = checklist[sesion.punto_actual]
+
             await meta_client.send_punto(
+
                 phone,
+
                 punto.punto_orden,
+
                 sesion.total_puntos,
+
                 punto.area,
+
                 punto.descripcion,
+
             )
+
+
 
     async def _cerrar_auditoria(
+
         self,
+
         sesion: SesionAuditoria,
+
         meta_client: MetaClient,
+
         phone: str,
+
     ) -> str:
+
         """Close audit session and send summary."""
+
         try:
+
             sesion.estado = "completa"
+
             self.sheets.update_sesion(
+
                 id_sesion=sesion.id_sesion,
+
                 estado=sesion.estado,
+
                 timestamp_ultimo_punto=sesion.timestamp_ultimo_punto,
+
                 punto_actual=sesion.punto_actual,
+
                 hallazgos_json=sesion.hallazgos_json,
+
                 omitidos_json=sesion.omitidos_json,
+
             )
+
+
 
             # Parse results
+
             hallazgos = json.loads(sesion.hallazgos_json)
+
             omitidos = json.loads(sesion.omitidos_json)
+
             desvios = len(hallazgos)
+
             omitidos_count = len(omitidos)
 
+
+
             # Build detail
+
             detalle = "DesvÃ­os encontrados:\n"
+
             for h in hallazgos:
+
                 detalle += f"â€¢ {h['area']}: {h['descripcion']} ({h['severidad']})\n"
 
+
+
             if not hallazgos:
+
                 detalle = "No se encontraron desvÃ­os. Â¡Excelente auditorÃ­a!"
 
+
+
             # Send summary to auditor
+
             sucursal = self.sheets.get_sucursal(sesion.sucursal_id)
+
             sucursal_nombre = sucursal.nombre if sucursal else "Sucursal"
+
             await meta_client.send_resumen_auditoria(
+
                 phone,
+
                 sucursal_nombre,
+
                 sesion.total_puntos,
+
                 desvios,
+
                 omitidos_count,
+
                 detalle,
+
             )
+
+
 
             # Send summary to coordinator
+
             from config import get_settings
+
             settings = get_settings()
+
             if settings.coordinador_tel:
+
                 auditor = self.sheets.get_auditor(phone)
+
                 auditor_nombre = auditor.nombre if auditor else "Auditor"
+
                 coord_msg = (
+
                     f"ðŸ“Š **AuditorÃ­a Completada**\n\n"
+
                     f"Auditor: {auditor_nombre}\n"
+
                     f"Sucursal: {sucursal_nombre}\n"
+
                     f"Total de puntos: {sesion.total_puntos}\n"
+
                     f"DesvÃ­os: {desvios}\n"
+
                     f"Omitidos: {omitidos_count}\n"
+
                     f"ID SesiÃ³n: {sesion.id_sesion}"
+
                 )
+
                 await meta_client.send_text(settings.coordinador_tel, coord_msg)
 
+
+
             # Reset conversation
+
             self.sheets.update_conversacion(
+
                 telefono=phone,
+
                 estado=ConversationState.IDLE,
+
             )
 
+
+
             return "auditoria_cerrada"
+
         except Exception as e:
+
             logger.error(f"Error closing audit: {e}")
+
             return "error"
+
+
 
     # ========== Block-Based Audit Handlers ==========
 
+
+
     async def _handle_en_bloque(
+
         self,
+
         payload: WhatsAppPayload,
+
         conv: Conversacion,
+
         meta_client: MetaClient,
+
     ) -> str:
+
         """Handle auditor response in block evaluation state."""
+
         try:
+
             # Check for pause/continue commands
+
             if payload.tipo == "text" and payload.contenido:
+
                 cmd = payload.contenido.upper().strip()
+
                 if cmd == "PAUSAR":
+
                     self.sheets.update_conversacion(
+
                         telefono=payload.telefono,
+
                         estado=ConversationState.AUDITORIA_PAUSADA,
+
                     )
+
                     await meta_client.send_text(
+
                         payload.telefono,
+
                         "â¸ï¸ AuditorÃ­a pausada. MandÃ¡ 'continuar' cuando estÃ©s listo.",
+
                     )
+
                     return "auditoria_pausada"
 
+
+
             # Get session
+
             sesion = self.sheets.get_sesion(conv.id_pendiente or "")
+
             if not sesion:
+
                 await meta_client.send_text(payload.telefono, "âŒ SesiÃ³n no encontrada")
+
                 return "error"
 
+
+
             # Get block items
+
             bloques = self.sheets.get_checklist_bloques()
+
             bloque_id = sesion.bloque_actual
+
             if bloque_id not in bloques:
+
                 await meta_client.send_text(payload.telefono, "âŒ Bloque no encontrado")
+
                 return "error"
+
+
 
             items = bloques[bloque_id]
 
+
+
             # Transcribe audio if present
+
             respuesta_auditor = payload.contenido or ""
+
             if payload.tipo == "audio" and payload.media_url:
+
                 transcripcion = await self.transcriber.transcribe(payload.media_url)
+
                 if transcripcion:
+
                     respuesta_auditor = transcripcion
+
             elif payload.tipo == "image" and payload.media_url:
+
                 respuesta_auditor = payload.contenido or "(foto enviada)"
 
+
+
             # Parse bloque response
+
             resultados = await self.parser.parse_bloque(
+
                 bloque_id, f"Bloque {bloque_id}", items, respuesta_auditor
+
             )
+
             if not resultados:
+
                 await meta_client.send_text(
+
                     payload.telefono,
+
                     "âŒ No pude evaluar la respuesta. Intenta de nuevo.",
+
                 )
+
                 return "parse_error"
 
+
+
             # Store resultados in session temporarily
+
             sesion_data = json.loads(sesion.resultados_json) if sesion.resultados_json else {}
+
             sesion_data[bloque_id] = [vars(r) for r in resultados]
 
+
+
             self.sheets.update_sesion(
+
                 sesion.id_sesion,
+
                 estado=ConversationState.CONFIRMANDO_BLOQUE.value,
+
                 timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+
                 bloque_actual=bloque_id,
+
                 resultados_json=json.dumps(sesion_data, ensure_ascii=False),
+
             )
+
+
 
             # Send confirmation
+
             bloque_nombre = items[0].descripcion.split(":")[0] if items else bloque_id
+
             await meta_client.send_bloque_confirmacion(
+
                 payload.telefono, bloque_id, f"Bloque {bloque_id}", items, resultados
+
             )
 
+
+
             return "bloque_respondido"
+
         except Exception as e:
+
             logger.error(f"Error in _handle_en_bloque: {e}", exc_info=True)
+
             return "error"
 
+
+
     async def _handle_confirmando_bloque(
+
         self,
+
         payload: WhatsAppPayload,
+
         conv: Conversacion,
+
         meta_client: MetaClient,
+
     ) -> str:
+
         """Handle block confirmation (SI/EDITAR/SALTAR)."""
+
         try:
+
             if payload.tipo != "text" or not payload.contenido:
+
                 await meta_client.send_text(
+
                     payload.telefono,
-                    "âš ï¸ Respondé una de estas:
+
+                    """⚠️ Respondé una de estas:
+
 1 o SI - Confirmar
+
 2 o EDITAR - Cambios
-3 o SALTAR - Saltar",
+
+3 o SALTAR - Saltar""",
+
                 )
+
                 return "invalid_response"
+
+
 
             respuesta = payload.contenido.upper().strip()
 
+
+
             # Normalize response: accept shortcuts like "1", "S", "E", etc.
+
             respuesta_map = {
+
                 "1": "SI", "S": "SI", "Y": "SI",
+
                 "2": "EDITAR", "E": "EDITAR",
+
                 "3": "SALTAR", "SALTAR": "SALTAR BLOQUE",
+
             }
+
             respuesta = respuesta_map.get(respuesta, respuesta)
 
+
+
             # Get session
+
             sesion = self.sheets.get_sesion(conv.id_pendiente or "")
+
             if not sesion:
+
                 return "error"
 
+
+
             if respuesta == "SI":
+
                 # Save bloque results
+
                 sesion_data = json.loads(sesion.resultados_json) if sesion.resultados_json else {}
+
                 bloques = self.sheets.get_checklist_bloques()
+
                 bloque_id = sesion.bloque_actual
 
+
+
                 if bloque_id in bloques and bloque_id in sesion_data:
+
                     resultados = []
+
                     for item_data in sesion_data[bloque_id]:
+
                         resultados.append(ResultadoItem(**item_data))
 
+
+
                     auditor = self.sheets.get_auditor(payload.telefono)
+
                     auditor_nombre = auditor.nombre if auditor else "Auditor"
 
+
+
                     # Save results and create Reportes/Gestiones
+
                     self.sheets.save_bloque_resultado(
+
                         sesion.id_sesion,
+
                         bloque_id,
+
                         sesion.sucursal_id,
+
                         auditor_nombre,
+
                         resultados,
+
                     )
+
+
 
                     # Check for ALTA severity and send immediate alerts
+
                     for resultado in resultados:
+
                         if resultado.tiene_desvio and resultado.severidad == "Alta":
+
                             sucursal = self.sheets.get_sucursal(sesion.sucursal_id)
+
                             sucursal_nombre = sucursal.nombre if sucursal else sesion.sucursal_id
+
                             from config import get_settings
+
                             settings = get_settings()
+
                             if settings.coordinador_tel:
+
                                 await meta_client.send_alerta_coordinador(
+
                                     settings.coordinador_tel,
+
                                     sucursal_nombre,
+
                                     f"Bloque {bloque_id}",
+
                                     resultado.descripcion_desvio or "",
+
                                     "Alta",
+
                                 )
 
+
+
                 # Advance to next bloque
+
                 next_bloques = {"A": "B", "B": "C", "C": "D", "D": "STOCK_LOOP"}
+
                 next_state = next_bloques.get(bloque_id)
 
+
+
                 if next_state == "STOCK_LOOP":
+
                     self.sheets.update_conversacion(
+
                         telefono=payload.telefono,
+
                         estado=ConversationState.STOCK_LOOP,
+
                         id_pendiente=sesion.id_sesion,
-                    )
-                    await meta_client.send_text(
-                        payload.telefono,
-                        "ðŸ” VerificaciÃ³n de Stock\n\nÂ¿CuÃ¡ntos productos querÃ©s verificar? (0 para saltar)",
-                    )
-                else:
-                    sesion.bloque_actual = next_state
-                    self.sheets.update_sesion(
-                        sesion.id_sesion,
-                        estado=ConversationState.EN_BLOQUE.value,
-                        timestamp_ultimo_punto=datetime.utcnow().isoformat(),
-                        bloque_actual=next_state,
-                        resultados_json=json.dumps(sesion_data, ensure_ascii=False),
+
                     )
 
+                    await meta_client.send_text(
+
+                        payload.telefono,
+
+                        "ðŸ” VerificaciÃ³n de Stock\n\nÂ¿CuÃ¡ntos productos querÃ©s verificar? (0 para saltar)",
+
+                    )
+
+                else:
+
+                    sesion.bloque_actual = next_state
+
+                    self.sheets.update_sesion(
+
+                        sesion.id_sesion,
+
+                        estado=ConversationState.EN_BLOQUE.value,
+
+                        timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+
+                        bloque_actual=next_state,
+
+                        resultados_json=json.dumps(sesion_data, ensure_ascii=False),
+
+                    )
+
+
+
                     # Send next bloque
+
                     bloques = self.sheets.get_checklist_bloques()
+
                     if next_state in bloques:
+
                         await meta_client.send_bloque_prompt(
+
                             payload.telefono, next_state, f"Bloque {next_state}",
+
                             bloques[next_state]
+
                         )
+
+
 
                 return "bloque_confirmado"
 
+
+
             elif respuesta == "EDITAR":
+
                 # Re-send current bloque
+
                 self.sheets.update_conversacion(
+
                     telefono=payload.telefono,
+
                     estado=ConversationState.EN_BLOQUE,
+
                     id_pendiente=sesion.id_sesion,
+
                 )
+
                 bloques = self.sheets.get_checklist_bloques()
+
                 bloque_id = sesion.bloque_actual
+
                 if bloque_id in bloques:
+
                     await meta_client.send_bloque_prompt(
+
                         payload.telefono, bloque_id, f"Bloque {bloque_id}", bloques[bloque_id]
+
                     )
+
                 return "bloque_reditado"
 
+
+
             elif respuesta == "SALTAR BLOQUE" or respuesta == "SALTAR":
+
                 # Skip to next bloque without saving
+
                 next_bloques = {"A": "B", "B": "C", "C": "D", "D": "STOCK_LOOP"}
+
                 next_state = next_bloques.get(sesion.bloque_actual)
 
+
+
                 if next_state == "STOCK_LOOP":
+
                     self.sheets.update_conversacion(
+
                         telefono=payload.telefono,
+
                         estado=ConversationState.STOCK_LOOP,
+
                         id_pendiente=sesion.id_sesion,
-                    )
-                    await meta_client.send_text(
-                        payload.telefono,
-                        "ðŸ” VerificaciÃ³n de Stock\n\nÂ¿CuÃ¡ntos productos querÃ©s verificar? (0 para saltar)",
-                    )
-                else:
-                    self.sheets.update_conversacion(
-                        telefono=payload.telefono,
-                        estado=ConversationState.EN_BLOQUE,
-                        id_pendiente=sesion.id_sesion,
-                    )
-                    sesion.bloque_actual = next_state
-                    self.sheets.update_sesion(
-                        sesion.id_sesion,
-                        estado=ConversationState.EN_BLOQUE.value,
-                        timestamp_ultimo_punto=datetime.utcnow().isoformat(),
-                        bloque_actual=next_state,
+
                     )
 
+                    await meta_client.send_text(
+
+                        payload.telefono,
+
+                        "ðŸ” VerificaciÃ³n de Stock\n\nÂ¿CuÃ¡ntos productos querÃ©s verificar? (0 para saltar)",
+
+                    )
+
+                else:
+
+                    self.sheets.update_conversacion(
+
+                        telefono=payload.telefono,
+
+                        estado=ConversationState.EN_BLOQUE,
+
+                        id_pendiente=sesion.id_sesion,
+
+                    )
+
+                    sesion.bloque_actual = next_state
+
+                    self.sheets.update_sesion(
+
+                        sesion.id_sesion,
+
+                        estado=ConversationState.EN_BLOQUE.value,
+
+                        timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+
+                        bloque_actual=next_state,
+
+                    )
+
+
+
                     bloques = self.sheets.get_checklist_bloques()
+
                     if next_state in bloques:
+
                         await meta_client.send_bloque_prompt(
+
                             payload.telefono, next_state, f"Bloque {next_state}",
+
                             bloques[next_state]
+
                         )
+
+
 
                 return "bloque_saltado"
 
+
+
             else:
+
                 await meta_client.send_text(
+
                     payload.telefono,
-                    "âš ï¸ Respondé una de estas:
+
+                    """⚠️ Respondé una de estas:
+
 1 o SI - Confirmar
+
 2 o EDITAR - Cambios
-3 o SALTAR - Saltar",
+
+3 o SALTAR - Saltar""",
+
                 )
+
                 return "invalid_response"
 
+
+
         except Exception as e:
+
             logger.error(f"Error in _handle_confirmando_bloque: {e}", exc_info=True)
+
             return "error"
+
+
 
     async def _handle_stock_loop(
+
         self,
+
         payload: WhatsAppPayload,
+
         conv: Conversacion,
+
         meta_client: MetaClient,
+
     ) -> str:
+
         """Handle stock verification count input."""
+
         try:
+
             if payload.tipo != "text" or not payload.contenido:
+
                 await meta_client.send_text(payload.telefono, "⚠️ Mandá un número o 0 para saltar")
+
                 return "invalid_response"
+
+
 
             try:
+
                 cantidad = int(payload.contenido.strip())
+
             except ValueError:
+
                 await meta_client.send_text(payload.telefono, "⚠️ Mandá un número válido")
+
                 return "invalid_response"
 
+
+
             sesion = self.sheets.get_sesion(conv.id_pendiente or "")
+
             if not sesion:
+
                 return "error"
+
+
 
             if cantidad == 0:
+
                 self.sheets.update_conversacion(
+
                     telefono=payload.telefono,
+
                     estado=ConversationState.DESVIO_LIBRE,
+
                     id_pendiente=sesion.id_sesion,
+
                 )
+
                 sesion.stock_total = 0
+
                 sesion.stock_actual = 0
+
                 self.sheets.update_sesion(
+
                     sesion.id_sesion,
+
                     estado=ConversationState.DESVIO_LIBRE.value,
+
                     timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+
                     stock_total=0,
+
                     stock_actual=0,
+
                     stock_items_json=sesion.stock_items_json,
+
                     desvios_libres_json=sesion.desvios_libres_json,
+
                     bloque_actual=sesion.bloque_actual,
+
                     resultados_json=sesion.resultados_json,
+
                     punto_actual=sesion.punto_actual,
+
                     hallazgos_json=sesion.hallazgos_json,
+
                     omitidos_json=sesion.omitidos_json,
+
                 )
+
                 await meta_client.send_text(
+
                     payload.telefono,
+
                     "📋 Desvíos Libres\n\nTiene algún desvío o hallazgo libre para reportar?\n\nMandá 'NO' si no hay más desvíos, o describí el problema.",
+
                 )
+
                 return "stock_skipped"
 
+
+
             sesion.stock_total = cantidad
+
             sesion.stock_actual = 0
+
             self.sheets.update_conversacion(
+
                 telefono=payload.telefono,
+
                 estado=ConversationState.EN_STOCK_ITEM,
+
                 id_pendiente=sesion.id_sesion,
+
             )
+
             self.sheets.update_sesion(
+
                 sesion.id_sesion,
+
                 estado=ConversationState.EN_STOCK_ITEM.value,
+
                 timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+
                 stock_total=cantidad,
+
                 stock_actual=0,
+
                 stock_items_json=sesion.stock_items_json,
+
                 desvios_libres_json=sesion.desvios_libres_json,
+
                 bloque_actual=sesion.bloque_actual,
+
                 resultados_json=sesion.resultados_json,
+
                 punto_actual=sesion.punto_actual,
+
                 hallazgos_json=sesion.hallazgos_json,
+
                 omitidos_json=sesion.omitidos_json,
+
             )
+
             await meta_client.send_text(
+
                 payload.telefono,
+
                 f"📦 Producto 1/{cantidad}\n\nMandá: Nombre / Stock Físico / Stock Sistema\n\nEj: Ibuprofeno 400 / 23 / 18",
+
             )
+
             return "stock_started"
+
         except Exception as e:
+
             logger.error(f"Error in _handle_stock_loop: {e}", exc_info=True)
+
             return "error"
+
+
 
     async def _handle_en_stock_item(
+
         self,
+
         payload: WhatsAppPayload,
+
         conv: Conversacion,
+
         meta_client: MetaClient,
+
     ) -> str:
+
         """Handle stock item entry."""
+
         try:
+
             if payload.tipo != "text" or not payload.contenido:
+
                 await meta_client.send_text(
+
                     payload.telefono,
+
                     "⚠️ Mandá el formato: Nombre / Stock Físico / Stock Sistema",
+
                 )
+
                 return "invalid_response"
+
+
 
             sesion = self.sheets.get_sesion(conv.id_pendiente or "")
+
             if not sesion:
+
                 return "error"
 
+
+
             comando = payload.contenido.strip().lower()
+
             if comando in {"listo", "terminado", "terminé", "fin", "finalizar"}:
+
                 self.sheets.update_conversacion(
+
                     telefono=payload.telefono,
+
                     estado=ConversationState.DESVIO_LIBRE,
+
                     id_pendiente=sesion.id_sesion,
+
                 )
+
                 self.sheets.update_sesion(
+
                     sesion.id_sesion,
+
                     estado=ConversationState.DESVIO_LIBRE.value,
+
                     timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+
                     stock_total=sesion.stock_total,
+
                     stock_actual=sesion.stock_actual,
+
                     stock_items_json=sesion.stock_items_json,
+
                     desvios_libres_json=sesion.desvios_libres_json,
+
                     bloque_actual=sesion.bloque_actual,
+
                     resultados_json=sesion.resultados_json,
+
                     punto_actual=sesion.punto_actual,
+
                     hallazgos_json=sesion.hallazgos_json,
+
                     omitidos_json=sesion.omitidos_json,
+
                 )
+
                 await meta_client.send_text(
+
                     payload.telefono,
+
                     f"✓ Stock registrado: {sesion.stock_actual}/{sesion.stock_total}\n\n¿Algo más para registrar que no hayamos cubierto?\nPodés mandar texto, audio o foto. O escribí NO para terminar.",
+
                 )
+
                 return "stock_closed"
 
+
+
             stock_item = await self.parser.parse_stock_item(payload.contenido)
+
             if not stock_item:
+
                 await meta_client.send_text(
+
                     payload.telefono,
+
                     "❌ No pude entender el formato. Intenta: Nombre / Físico / Sistema",
+
                 )
+
                 return "parse_error"
 
+
+
             auditor = self.sheets.get_auditor(payload.telefono)
+
             auditor_nombre = auditor.nombre if auditor else "Auditor"
+
             self.sheets.save_stock_item(
+
                 sesion.id_sesion,
+
                 sesion.sucursal_id,
+
                 auditor_nombre,
+
                 stock_item,
+
             )
+
+
 
             stock_items = json.loads(sesion.stock_items_json) if sesion.stock_items_json else []
+
             stock_items.append(vars(stock_item))
+
             sesion.stock_items_json = json.dumps(stock_items, ensure_ascii=False)
+
             sesion.stock_actual = min(sesion.stock_actual + 1, sesion.stock_total or (sesion.stock_actual + 1))
 
+
+
             if sesion.stock_total and sesion.stock_actual >= sesion.stock_total:
+
                 self.sheets.update_conversacion(
+
                     telefono=payload.telefono,
+
                     estado=ConversationState.DESVIO_LIBRE,
+
                     id_pendiente=sesion.id_sesion,
+
                 )
+
                 self.sheets.update_sesion(
+
                     sesion.id_sesion,
+
                     estado=ConversationState.DESVIO_LIBRE.value,
+
                     timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+
                     stock_total=sesion.stock_total,
+
                     stock_actual=sesion.stock_actual,
+
                     stock_items_json=sesion.stock_items_json,
+
                     desvios_libres_json=sesion.desvios_libres_json,
+
                     bloque_actual=sesion.bloque_actual,
+
                     resultados_json=sesion.resultados_json,
+
                     punto_actual=sesion.punto_actual,
+
                     hallazgos_json=sesion.hallazgos_json,
+
                     omitidos_json=sesion.omitidos_json,
+
                 )
+
                 await meta_client.send_text(
+
                     payload.telefono,
+
                     f"✓ Registrado: {stock_item.nombre}\n\nStock completo ({sesion.stock_actual}/{sesion.stock_total}).\n¿Algo más para registrar que no hayamos cubierto?\nPodés mandar texto, audio o foto. O escribí NO para terminar.",
+
                 )
+
                 return "stock_completed"
 
+
+
             self.sheets.update_sesion(
+
                 sesion.id_sesion,
+
                 estado=ConversationState.EN_STOCK_ITEM.value,
+
                 timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+
                 stock_total=sesion.stock_total,
+
                 stock_actual=sesion.stock_actual,
+
                 stock_items_json=sesion.stock_items_json,
+
                 desvios_libres_json=sesion.desvios_libres_json,
+
             )
+
+
 
             await meta_client.send_text(
+
                 payload.telefono,
+
                 f"✓ Registrado: {stock_item.nombre} ({sesion.stock_actual}/{sesion.stock_total})\n\nMandá el próximo producto o 'listo'",
+
             )
+
             return "stock_item_guardado"
+
         except Exception as e:
+
             logger.error(f"Error in _handle_en_stock_item: {e}", exc_info=True)
+
             return "error"
 
+
+
     async def _handle_desvio_libre(
+
         self,
+
         payload: WhatsAppPayload,
+
         conv: Conversacion,
+
         meta_client: MetaClient,
+
     ) -> str:
+
         """Handle free-form deviations."""
+
         try:
+
             if payload.tipo != "text" or not payload.contenido:
+
                 await meta_client.send_text(
+
                     payload.telefono,
+
                     "âš ï¸ MandÃ¡ 'NO' o describÃ­ el desvÃ­o",
+
                 )
+
                 return "invalid_response"
+
+
 
             respuesta = payload.contenido.lower().strip()
 
+
+
             if respuesta == "no":
+
                 # Move to compromisos
+
                 sesion = self.sheets.get_sesion(conv.id_pendiente or "")
+
                 if not sesion:
+
                     return "error"
 
+
+
                 self.sheets.update_conversacion(
+
                     telefono=payload.telefono,
+
                     estado=ConversationState.COMPROMISOS,
+
                     id_pendiente=sesion.id_sesion,
+
                 )
+
                 self.sheets.update_sesion(
+
                     sesion.id_sesion,
+
                     estado=ConversationState.COMPROMISOS.value,
+
                     timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+
                     stock_total=sesion.stock_total,
+
                     stock_actual=sesion.stock_actual,
+
                     stock_items_json=sesion.stock_items_json,
+
                     desvios_libres_json=sesion.desvios_libres_json,
+
                     bloque_actual=sesion.bloque_actual,
+
                     resultados_json=sesion.resultados_json,
+
                     punto_actual=sesion.punto_actual,
+
                     hallazgos_json=sesion.hallazgos_json,
+
                     omitidos_json=sesion.omitidos_json,
+
                 )
+
                 await meta_client.send_text(
+
                     payload.telefono,
+
                     "ðŸ“ Compromisos\n\nÂ¿Firmaron compromisos de correcciÃ³n?\n\nSI / NO / PENDIENTE",
+
                 )
+
                 return "sin_desvios"
 
+
+
             # Parse free deviation
+
             desvio = await self.parser.parse_desvio_libre(payload.contenido)
+
             if not desvio:
+
                 await meta_client.send_text(
+
                     payload.telefono,
+
                     "âŒ No pude procesar el desvÃ­o. Intenta de nuevo.",
+
                 )
+
                 return "parse_error"
 
+
+
             sesion = self.sheets.get_sesion(conv.id_pendiente or "")
+
             if not sesion:
+
                 return "error"
 
+
+
             # Save deviation
+
             auditor = self.sheets.get_auditor(payload.telefono)
+
             auditor_nombre = auditor.nombre if auditor else "Auditor"
+
             self.sheets.save_desvio_libre(
+
                 sesion.id_sesion,
+
                 sesion.sucursal_id,
+
                 auditor_nombre,
+
                 desvio,
+
             )
+
+
 
             # Update desvios_libres_json
+
             desvios_libres = json.loads(sesion.desvios_libres_json) if sesion.desvios_libres_json else []
+
             desvios_libres.append(vars(desvio))
+
             sesion.desvios_libres_json = json.dumps(desvios_libres, ensure_ascii=False)
 
+
+
             self.sheets.update_sesion(
+
                 sesion.id_sesion,
+
                 estado=ConversationState.DESVIO_LIBRE.value,
+
                 timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+
                 desvios_libres_json=sesion.desvios_libres_json,
+
             )
+
+
 
             # Send alert if ALTA
+
             if desvio.severidad == "Alta":
+
                 from config import get_settings
+
                 settings = get_settings()
+
                 if settings.coordinador_tel:
+
                     sucursal = self.sheets.get_sucursal(sesion.sucursal_id)
+
                     sucursal_nombre = sucursal.nombre if sucursal else sesion.sucursal_id
+
                     await meta_client.send_alerta_coordinador(
+
                         settings.coordinador_tel,
+
                         sucursal_nombre,
+
                         desvio.area_estimada,
+
                         desvio.descripcion,
+
                         "Alta",
+
                     )
 
+
+
             await meta_client.send_text(
+
                 payload.telefono,
+
                 f"âœ“ Registrado desvÃ­o en {desvio.area_estimada}\n\nÂ¿Hay mÃ¡s desvÃ­os? DescribÃ­ o mandÃ¡ 'NO'",
+
             )
+
+
 
             return "desvio_registrado"
 
+
+
         except Exception as e:
+
             logger.error(f"Error in _handle_desvio_libre: {e}", exc_info=True)
+
             return "error"
 
+
+
     async def _handle_compromisos(
+
         self,
+
         payload: WhatsAppPayload,
+
         conv: Conversacion,
+
         meta_client: MetaClient,
+
     ) -> str:
+
         """Handle compromise commitments (SI/NO/PENDIENTE)."""
+
         try:
+
             if payload.tipo != "text" or not payload.contenido:
+
                 await meta_client.send_text(
+
                     payload.telefono,
+
                     "âš ï¸ RespondÃ© SI, NO o PENDIENTE",
+
                 )
+
                 return "invalid_response"
+
+
 
             respuesta = payload.contenido.upper().strip()
+
             if respuesta not in {"SI", "SÃ", "NO", "PENDIENTE"}:
+
                 await meta_client.send_text(
+
                     payload.telefono,
+
                     "âš ï¸ RespondÃ© SI, NO o PENDIENTE",
+
                 )
+
                 return "invalid_response"
 
+
+
             sesion = self.sheets.get_sesion(conv.id_pendiente or "")
+
             if not sesion:
+
                 return "error"
 
+
+
             # Save commitment status
+
             sesion.compromisos_firmados = respuesta
+
             self.sheets.update_sesion(
+
                 sesion.id_sesion,
+
                 estado="completa",
+
                 timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+
                 compromisos_firmados=respuesta,
+
             )
 
+
+
             # Calculate final score and send summary
+
             await self._cerrar_auditoria_bloques(sesion, meta_client, payload.telefono)
+
+
 
             return "compromisos_registrados"
 
+
+
         except Exception as e:
+
             logger.error(f"Error in _handle_compromisos: {e}", exc_info=True)
+
             return "error"
 
+
+
     async def _cerrar_auditoria_bloques(
+
         self,
+
         sesion: SesionAuditoria,
+
         meta_client: MetaClient,
+
         phone: str,
+
     ) -> None:
+
         """Close block-based audit and send summary."""
+
         try:
+
             # Calculate total score
+
             resultados_por_bloque: Dict[str, List[ResultadoItem]] = {}
+
             sesion_data = json.loads(sesion.resultados_json) if sesion.resultados_json else {}
 
+
+
             puntaje_total = 0.0
+
             puntaje_maximo = 0.0
+
             desvios_count = 0
+
             alta_count = 0
+
             media_count = 0
+
             baja_count = 0
 
+
+
             for bloque_id, items_data in sesion_data.items():
+
                 resultados = [ResultadoItem(**item) for item in items_data]
+
                 resultados_por_bloque[bloque_id] = resultados
 
+
+
                 for resultado in resultados:
+
                     if resultado.puntaje:
+
                         puntaje_total += resultado.puntaje
+
                         puntaje_maximo += 5
+
                     if resultado.tiene_desvio:
+
                         desvios_count += 1
+
                         if resultado.severidad == "Alta":
+
                             alta_count += 1
+
                         elif resultado.severidad == "Media":
+
                             media_count += 1
+
                         else:
+
                             baja_count += 1
+
+
 
             stock_count = len(json.loads(sesion.stock_items_json) or [])
 
+
+
             # Send final summary
+
             from datetime import date
+
             sucursal = self.sheets.get_sucursal(sesion.sucursal_id)
+
             sucursal_nombre = sucursal.nombre if sucursal else sesion.sucursal_id
 
+
+
             await meta_client.send_resumen_final(
+
                 phone,
+
                 sucursal_nombre,
+
                 date.today().isoformat(),
+
                 puntaje_total,
+
                 puntaje_maximo,
+
                 resultados_por_bloque,
+
                 desvios_count,
+
                 alta_count,
+
                 media_count,
+
                 baja_count,
+
                 stock_count,
+
                 sesion.compromisos_firmados or "Sin respuesta",
+
             )
+
+
 
             # Send summary to coordinator
+
             from config import get_settings
+
             settings = get_settings()
+
             if settings.coordinador_tel:
+
                 auditor = self.sheets.get_auditor(phone)
+
                 auditor_nombre = auditor.nombre if auditor else "Auditor"
+
                 coord_msg = (
+
                     f"ðŸ“Š **AuditorÃ­a Completada (Flujo Bloques)**\n\n"
+
                     f"Auditor: {auditor_nombre}\n"
+
                     f"Sucursal: {sucursal_nombre}\n"
+
                     f"Puntaje: {puntaje_total:.1f}/{puntaje_maximo:.1f}\n"
+
                     f"DesvÃ­os: {desvios_count}\n"
+
                     f"  ðŸ”´ CrÃ­ticos: {alta_count}\n"
+
                     f"  ðŸŸ¡ Importantes: {media_count}\n"
+
                     f"  ðŸŸ¢ Leves: {baja_count}\n"
+
                     f"Productos verificados: {stock_count}\n"
+
                     f"Compromisos: {sesion.compromisos_firmados}\n"
+
                     f"ID SesiÃ³n: {sesion.id_sesion}"
+
                 )
+
                 await meta_client.send_text(settings.coordinador_tel, coord_msg)
 
+
+
             # Reset conversation
+
             self.sheets.update_conversacion(
+
                 telefono=phone,
+
                 estado=ConversationState.IDLE,
+
             )
 
+
+
         except Exception as e:
+
             logger.error(f"Error closing block audit: {e}", exc_info=True)
+
+
 
