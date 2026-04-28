@@ -1160,13 +1160,15 @@ EDITAR â†’ Hacer cambios""",
 
 
 
-            # Update conversation state
+            # Update conversation state (clear old session if restarting)
 
             self.sheets.update_conversacion(
 
                 telefono=payload.telefono,
 
                 estado=ConversationState.SELECCIONANDO_SUCURSAL,
+
+                id_pendiente="",
 
             )
 
