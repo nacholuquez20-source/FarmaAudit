@@ -109,21 +109,6 @@ class ChecklistPerfumeriaPunto:
 
 
 @dataclass
-class ResultadoPerfumeria:
-    """Result from a perfumery checklist point."""
-
-    id: str
-    id_sesion: str
-    bloque_id: str
-    punto_orden: int
-    pregunta: str
-    respuesta_json: str
-    tipo_respuesta: str
-    foto_url: Optional[str] = None
-    timestamp: Optional[datetime] = None
-
-
-@dataclass
 class ItemBloque:
     """Item in a block-based audit checklist."""
 
