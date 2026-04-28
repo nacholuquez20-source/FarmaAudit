@@ -127,6 +127,67 @@ def setup_control_stock(sheet):
         print(f"   {i}. {h}")
 
 
+def setup_checklist_perfumeria(sheet):
+    """Create Checklist_Perfumeria sheet with perfumery-specific blocks."""
+    try:
+        ws = sheet.worksheet("Checklist_Perfumeria")
+        print("[*] Clearing existing 'Checklist_Perfumeria' sheet...")
+        ws.clear()
+    except gspread.exceptions.WorksheetNotFound:
+        print("[*] Creating 'Checklist_Perfumeria' sheet...")
+        ws = sheet.add_worksheet(title="Checklist_Perfumeria", rows=100, cols=7)
+
+    # Add headers
+    headers = ["bloque_id", "bloque_nombre", "punto_orden", "tipo_respuesta", "pregunta", "peso", "critico"]
+    ws.append_row(headers)
+
+    # Block-based perfumery audit items
+    checklist_data = [
+        # BLOQUE 1: PRESENTACION Y VIDRIERA
+        ["PRES", "PRESENTACION Y VIDRIERA", 1, "foto_si_no", "¿Vidriera limpia y ordenada?", 5, "FALSE"],
+        ["PRES", "PRESENTACION Y VIDRIERA", 2, "foto_si_no", "¿Productos exhibidos correctamente?", 4, "TRUE"],
+        ["PRES", "PRESENTACION Y VIDRIERA", 3, "si_no", "¿Iluminación adecuada en vidriera?", 3, "FALSE"],
+
+        # BLOQUE 2: GONDOLAS Y PUNTERAS
+        ["GOND", "GONDOLAS Y PUNTERAS", 1, "foto_si_no", "¿Góndolas limpias y ordenadas?", 5, "FALSE"],
+        ["GOND", "GONDOLAS Y PUNTERAS", 2, "foto_si_no", "¿Punteras organizadas correctamente?", 5, "TRUE"],
+        ["GOND", "GONDOLAS Y PUNTERAS", 3, "foto_si_no", "¿Hay productos caídos o desordenados?", 4, "FALSE"],
+
+        # BLOQUE 3: STOCK Y PROBADORES
+        ["STOCK", "STOCK Y PROBADORES", 1, "numero_audio", "¿Stock físico de perfumes? (cantidades por producto)", 8, "TRUE"],
+        ["STOCK", "STOCK Y PROBADORES", 2, "foto_si_no", "¿Probadores disponibles y limpios?", 6, "TRUE"],
+        ["STOCK", "STOCK Y PROBADORES", 3, "numero_audio", "¿Stock de probadores completo?", 5, "FALSE"],
+
+        # BLOQUE 4: REVISTA DE VENTAS
+        ["REVISTA", "REVISTA DE VENTAS", 1, "lista_texto", "¿Qué productos están en la revista de ventas? (envía lista o foto)", 7, "TRUE"],
+        ["REVISTA", "REVISTA DE VENTAS", 2, "si_no", "¿Precios coinciden con revista?", 4, "FALSE"],
+        ["REVISTA", "REVISTA DE VENTAS", 3, "si_no", "¿Promociones vigentes están activas?", 3, "FALSE"],
+
+        # BLOQUE 5: UNIFORME Y PERSONAL
+        ["PERSONAL", "UNIFORME Y PERSONAL", 1, "foto_si_no", "¿Personal con uniforme completo?", 3, "FALSE"],
+        ["PERSONAL", "UNIFORME Y PERSONAL", 2, "si_no", "¿Limpieza personal adecuada?", 3, "FALSE"],
+        ["PERSONAL", "UNIFORME Y PERSONAL", 3, "si_no", "¿Asesor de perfumería disponible?", 5, "TRUE"],
+
+        # BLOQUE 6: CONDICIONES GENERALES
+        ["COND", "CONDICIONES GENERALES", 1, "si_no", "¿Temperatura ambiente adecuada?", 3, "FALSE"],
+        ["COND", "CONDICIONES GENERALES", 2, "si_no", "¿Iluminación general del área?", 3, "FALSE"],
+        ["COND", "CONDICIONES GENERALES", 3, "foto_si_no", "¿Piso limpio y sin obstáculos?", 4, "FALSE"],
+
+        # BLOQUE 7: ATENCIÓN AL CLIENTE
+        ["ATENCION", "ATENCIÓN AL CLIENTE", 1, "si_no", "¿Personal disponible para asesorar?", 5, "TRUE"],
+        ["ATENCION", "ATENCIÓN AL CLIENTE", 2, "si_no", "¿Ofrece probadas a clientes?", 4, "FALSE"],
+        ["ATENCION", "ATENCIÓN AL CLIENTE", 3, "si_no", "¿Trato profesional y amable?", 5, "TRUE"],
+
+        # BLOQUE 8: OBSERVACIONES EXTRAS
+        ["EXTRAS", "OBSERVACIONES EXTRAS", 1, "mixto", "¿Hallazgos, problemas o sugerencias? (texto/audio/foto)", 0, "FALSE"],
+    ]
+
+    for row in checklist_data:
+        ws.append_row(row)
+
+    print("[OK] Checklist_Perfumeria created with 8 blocks and 23 items")
+
+
 if __name__ == "__main__":
     settings = get_settings()
 
@@ -151,3 +212,4 @@ if __name__ == "__main__":
     setup_checklist_plantillas(sheet)
     setup_sesiones_auditoria_simple(sheet)
     setup_control_stock(sheet)
+    setup_checklist_perfumeria(sheet)

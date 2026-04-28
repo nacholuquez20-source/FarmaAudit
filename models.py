@@ -13,8 +13,10 @@ class ConversationState(str, Enum):
     ESPERANDO_CONFIRMACION = "esperando_confirmacion"
     ESPERANDO_EDICION = "esperando_edicion"
     SELECCIONANDO_SUCURSAL = "seleccionando_sucursal"
+    SELECCIONANDO_TIPO_AUDITORIA = "seleccionando_tipo_auditoria"
     EN_AUDITORIA = "en_auditoria"  # Guided point-by-point audit flow
     EN_BLOQUE = "en_bloque"
+    EN_BLOQUE_PERFUMERIA = "en_bloque_perfumeria"
     CONFIRMANDO_BLOQUE = "confirmando_bloque"
     STOCK_LOOP = "stock_loop"
     EN_STOCK_ITEM = "en_stock_item"
@@ -29,6 +31,17 @@ class Severidad(str, Enum):
     ALTA = "Alta"
     MEDIA = "Media"
     BAJA = "Baja"
+
+
+class TipoRespuesta(str, Enum):
+    """Expected response types for audit questions."""
+
+    FOTO_SI_NO = "foto_si_no"      # Photo + sí/no confirmation
+    NUMERO_AUDIO = "numero_audio"  # Quantities (text/audio)
+    LISTA_TEXTO = "lista_texto"    # Product list
+    MIXTO = "mixto"                # Free text/audio/photo
+    SI_NO = "si_no"                # Yes/no only
+    FOTO = "foto"                  # Photo only
 
 
 class GestionState(str, Enum):
@@ -80,6 +93,19 @@ class ChecklistPunto:
     descripcion: str
     responsable_default: str
     severidad_default: str
+
+
+@dataclass
+class ChecklistPerfumeriaPunto:
+    """Single point in perfumery audit checklist."""
+
+    bloque_id: str
+    bloque_nombre: str
+    punto_orden: int
+    tipo_respuesta: str
+    pregunta: str
+    peso: int = 5
+    critico: bool = False
 
 
 @dataclass

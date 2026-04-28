@@ -3,7 +3,7 @@
 import json
 import logging
 from typing import List, Optional, Any, Dict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import base64
 
 import gspread
@@ -13,7 +13,8 @@ from config import get_settings
 from models import (
     Auditor, Sucursal, AreaSubitem, Conversacion, Pendiente, Reporte,
     Gestion, ConversationState, Severidad, GestionState, ChecklistPunto,
-    SesionAuditoria, ItemBloque, ResultadoItem, StockItem, DesvioLibre
+    SesionAuditoria, ItemBloque, ResultadoItem, StockItem, DesvioLibre,
+    ChecklistPerfumeriaPunto
 )
 
 logger = logging.getLogger(__name__)
@@ -446,7 +447,8 @@ class SheetsManager:
             sheet = self._get_sheet("Pendientes")
             rows = sheet.get_all_records()
             expired = []
-            now = datetime.utcnow()
+            now_utc = datetime.now(timezone.utc)
+            now_local = datetime.now()
 
             for row in rows:
                 expira_en = self._parse_datetime(row.get("Expira_en"))
@@ -593,6 +595,58 @@ class SheetsManager:
             logger.error(f"Failed to get checklist bloques: {e}")
             raise
 
+    def get_checklist_perfumeria(self) -> Dict[str, List[ChecklistPerfumeriaPunto]]:
+        """Get perfumery audit checklist grouped by block (cached 5 min)."""
+        cached = self._get_cache("Checklist_Perfumeria")
+        if cached:
+            return {
+                bloque: [ChecklistPerfumeriaPunto(**item) for item in items]
+                for bloque, items in cached.items()
+            }
+
+        try:
+            sheet = self._get_sheet("Checklist_Perfumeria")
+            rows = sheet.get_all_records()
+            bloques: Dict[str, List[ChecklistPerfumeriaPunto]] = {}
+
+            for row in rows:
+                critico = str(row.get("critico", "FALSE")).upper() == "TRUE"
+                punto = ChecklistPerfumeriaPunto(
+                    bloque_id=row.get("bloque_id", ""),
+                    bloque_nombre=row.get("bloque_nombre", ""),
+                    punto_orden=int(row.get("punto_orden", 0)),
+                    tipo_respuesta=row.get("tipo_respuesta", "si_no"),
+                    pregunta=row.get("pregunta", ""),
+                    peso=int(row.get("peso", 5)),
+                    critico=critico,
+                )
+                bloque_id = punto.bloque_id
+                if bloque_id not in bloques:
+                    bloques[bloque_id] = []
+                bloques[bloque_id].append(punto)
+
+            # Sort points within each block by punto_orden
+            for bloque_id in bloques:
+                bloques[bloque_id].sort(key=lambda p: p.punto_orden)
+
+            self._set_cache(
+                "Checklist_Perfumeria",
+                {b: [vars(item) for item in items] for b, items in bloques.items()}
+            )
+            logger.info(f"Retrieved perfumery checklist bloques: {list(bloques.keys())}")
+            return bloques
+        except Exception as e:
+            logger.error(f"Failed to get perfumery checklist: {e}")
+            raise
+
+    def get_checklist_perfumeria_flat(self) -> List[ChecklistPerfumeriaPunto]:
+        """Get all perfumery audit points as a flat list."""
+        bloques = self.get_checklist_perfumeria()
+        puntos = []
+        for bloque_list in bloques.values():
+            puntos.extend(bloque_list)
+        return sorted(puntos, key=lambda p: (p.bloque_id, p.punto_orden))
+
     # ========== Sesiones_Auditoria ==========
 
     def create_sesion(self, sesion: SesionAuditoria) -> str:
@@ -724,7 +778,14 @@ class SheetsManager:
                 if row.get("estado") in active_states:
                     timestamp_str = row.get("timestamp_ultimo_punto", "")
                     ts = self._parse_datetime(timestamp_str)
-                    if ts and (now - ts).total_seconds() > timeout_min * 60:
+                    if not ts:
+                        continue
+                    if ts.tzinfo is not None:
+                        elapsed_seconds = (now_utc - ts.astimezone(timezone.utc)).total_seconds()
+                    else:
+                        # Backward compatibility for legacy naive local timestamps.
+                        elapsed_seconds = (now_local - ts).total_seconds()
+                    if elapsed_seconds > timeout_min * 60:
                         expiradas.append(SesionAuditoria(
                             id_sesion=row.get("id_sesion", ""),
                             telefono_auditor=str(row.get("telefono_auditor", "")),
