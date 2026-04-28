@@ -1,4 +1,4 @@
-"""
+﻿"""
 Hydrate Supabase from Google Sheets.
 
 Supabase is the operational source of truth for the frontend. Google Sheets is
@@ -6,12 +6,12 @@ kept as an ingestion/legacy source for data produced by the WhatsApp bot.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Any
 import os
 
 from supabase import create_client, Client
-from sheets import SheetsManager
+from sheets_legacy import SheetsManager as LegacySheetsManager
 from models import Auditor, Sucursal, Reporte, Gestion
 from config import get_settings
 
@@ -36,7 +36,7 @@ class SheetsToSupabaseSync:
             raise ValueError("SUPABASE_URL and SUPABASE_SERVICE_KEY environment variables are required")
 
         self.supabase: Client = create_client(supabase_url, supabase_key)
-        self.sheets = SheetsManager()
+        self.sheets = LegacySheetsManager()
         logger.info("SheetsToSupabaseSync initialized")
 
     def sync_sucursales(self) -> None:
@@ -53,7 +53,7 @@ class SheetsToSupabaseSync:
                     "responsable": sucursal.responsable,
                     "tel_responsable": sucursal.tel_responsable,
                     "zona": sucursal.zona,
-                    "updated_at": datetime.utcnow().isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
                 # UPSERT: insert or update
                 self.supabase.table("sucursales").upsert(data).execute()
@@ -75,7 +75,7 @@ class SheetsToSupabaseSync:
                     "nombre": auditor.nombre,
                     "cuadrilla": auditor.cuadrilla,
                     "activo": auditor.activo,
-                    "updated_at": datetime.utcnow().isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
                 self.supabase.table("auditores").upsert(data).execute()
 
@@ -107,7 +107,7 @@ class SheetsToSupabaseSync:
                     "foto_url": row.get("Foto_URL") or None,
                     "creado_por_audio": str(row.get("Creado_Por_Audio", "false")).lower() == "true",
                     "timestamp": row.get("Timestamp", ""),
-                    "updated_at": datetime.utcnow().isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
                 if data["id"]:  # Only sync if has ID
                     self.supabase.table("reportes").upsert(data).execute()
@@ -167,7 +167,7 @@ class SheetsToSupabaseSync:
                     "estado": row.get("Estado", "Abierta"),
                     "fecha_cierre": row.get("Fecha_Cierre") or None,
                     "cerrado_por": row.get("Cerrado_Por") or None,
-                    "updated_at": datetime.utcnow().isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
                 if data["id_gestion"]:  # Only sync if has ID
                     data = self._preserve_operational_gestion_state(data)
@@ -200,7 +200,7 @@ class SheetsToSupabaseSync:
                     "stock_sistema": int(row.get("Stock_Sistema", 0)) if row.get("Stock_Sistema") else 0,
                     "diferencia": int(row.get("Diferencia", 0)) if row.get("Diferencia") else 0,
                     "alerta": row.get("Alerta", "NO"),
-                    "updated_at": datetime.utcnow().isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
                 self.supabase.table("control_stock").upsert(data).execute()
 
@@ -212,7 +212,7 @@ class SheetsToSupabaseSync:
     def sync_all(self) -> None:
         """Run full sync for all tables."""
         try:
-            logger.info("===== Starting full Sheets → Supabase sync =====")
+            logger.info("===== Starting full Sheets â†’ Supabase sync =====")
             self.sync_sucursales()
             self.sync_auditores()
             self.sync_reportes()
@@ -231,3 +231,4 @@ async def sync_sheets_to_supabase() -> None:
         sync.sync_all()
     except Exception as e:
         logger.error(f"Sync task failed: {e}")
+

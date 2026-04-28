@@ -180,6 +180,7 @@ def setup_checklist_perfumeria(sheet):
 
         # BLOQUE 8: OBSERVACIONES EXTRAS
         ["EXTRAS", "OBSERVACIONES EXTRAS", 1, "mixto", "¿Hallazgos, problemas o sugerencias? (texto/audio/foto)", 0, "FALSE"],
+        ["EXTRAS", "OBSERVACIONES EXTRAS", 2, "si_no", "¿Requiere seguimiento inmediato?", 1, "FALSE"],
     ]
 
     for row in checklist_data:

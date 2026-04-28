@@ -1,4 +1,4 @@
-"""Conversation router - state machine logic for audit interactions."""
+﻿"""Conversation router - state machine logic for audit interactions."""
 
 
 
@@ -139,7 +139,7 @@ class ConversationRouter:
 
                     payload.telefono,
 
-                    "âŒ No estÃ¡s registrado como auditor. Contacta al coordinador.",
+                    "ÃƒÂ¢Ã‚ÂÃ…â€™ No estÃƒÆ’Ã‚Â¡s registrado como auditor. Contacta al coordinador.",
 
                 )
 
@@ -231,7 +231,7 @@ class ConversationRouter:
 
             else:
 
-                await meta_client.send_text(payload.telefono, "âš ï¸ Estado desconocido")
+                await meta_client.send_text(payload.telefono, "ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â Estado desconocido")
 
                 return "unknown_state"
 
@@ -243,7 +243,7 @@ class ConversationRouter:
 
                 payload.telefono,
 
-                "âŒ Error procesando tu mensaje. Intenta de nuevo.",
+                "ÃƒÂ¢Ã‚ÂÃ…â€™ Error procesando tu mensaje. Intenta de nuevo.",
 
             )
 
@@ -291,9 +291,9 @@ class ConversationRouter:
 
                 payload.telefono,
 
-                "EscribÃ­ INICIO para comenzar la auditorÃ­a guiada.\n"
+                "EscribÃƒÆ’Ã‚Â­ INICIO para comenzar la auditorÃƒÆ’Ã‚Â­a guiada.\n"
 
-                "UsÃ¡ /ayuda para ver comandos.",
+                "UsÃƒÆ’Ã‚Â¡ /ayuda para ver comandos.",
 
             )
 
@@ -327,7 +327,7 @@ class ConversationRouter:
 
                     payload.telefono,
 
-                    "âŒ Error transcribiendo audio. Intenta de nuevo.",
+                    "ÃƒÂ¢Ã‚ÂÃ…â€™ Error transcribiendo audio. Intenta de nuevo.",
 
                 )
 
@@ -343,7 +343,7 @@ class ConversationRouter:
 
                 payload.telefono,
 
-                "ðŸ“¸ RecibÃ­ la foto. Â¿QuÃ© hallazgo describe? Enviame texto con el contexto.",
+                "ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã‚Â¸ RecibÃƒÆ’Ã‚Â­ la foto. Ãƒâ€šÃ‚Â¿QuÃƒÆ’Ã‚Â© hallazgo describe? Enviame texto con el contexto.",
 
             )
 
@@ -389,9 +389,9 @@ class ConversationRouter:
 
                 payload.telefono,
 
-                "âš ï¸ No entendÃ­ el hallazgo. Por favor, sÃ© mÃ¡s especÃ­fico:\n"
+                "ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â No entendÃƒÆ’Ã‚Â­ el hallazgo. Por favor, sÃƒÆ’Ã‚Â© mÃƒÆ’Ã‚Â¡s especÃƒÆ’Ã‚Â­fico:\n"
 
-                "â€¢ Sucursal\nâ€¢ Ãrea (PerfumerÃ­a, Farmacia, etc)\nâ€¢ Sub-item\nâ€¢ DescripciÃ³n",
+                "ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ Sucursal\nÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ ÃƒÆ’Ã‚Ârea (PerfumerÃƒÆ’Ã‚Â­a, Farmacia, etc)\nÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ Sub-item\nÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ DescripciÃƒÆ’Ã‚Â³n",
 
             )
 
@@ -519,7 +519,7 @@ class ConversationRouter:
 
         # Check for yes responses (with or without accent)
 
-        if answer in {"SI", "SÃ", "YES", "Y"}:
+        if answer in {"SI", "SÃƒÆ’Ã‚Â", "YES", "Y"}:
 
             logger.info(f"Confirmed finding for {payload.telefono}")
 
@@ -535,7 +535,7 @@ class ConversationRouter:
 
                 payload.telefono,
 
-                "âŒ Descartado. EnvÃ­ame otro hallazgo cuando estÃ©s listo.",
+                "ÃƒÂ¢Ã‚ÂÃ…â€™ Descartado. EnvÃƒÆ’Ã‚Â­ame otro hallazgo cuando estÃƒÆ’Ã‚Â©s listo.",
 
             )
 
@@ -571,7 +571,7 @@ class ConversationRouter:
 
                 payload.telefono,
 
-                "âœï¸ Â¿QuÃ© necesitas editar? Enviame la correcciÃ³n.",
+                "ÃƒÂ¢Ã…â€œÃ‚ÂÃƒÂ¯Ã‚Â¸Ã‚Â Ãƒâ€šÃ‚Â¿QuÃƒÆ’Ã‚Â© necesitas editar? Enviame la correcciÃƒÆ’Ã‚Â³n.",
 
             )
 
@@ -585,7 +585,7 @@ class ConversationRouter:
 
                 payload.telefono,
 
-                "âš ï¸ Por favor responde con:\nSI - para confirmar\nNO - para descartar\nEDITAR - para hacer cambios",
+                "ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â Por favor responde con:\nSI - para confirmar\nNO - para descartar\nEDITAR - para hacer cambios",
 
             )
 
@@ -623,7 +623,7 @@ class ConversationRouter:
 
                 payload.telefono,
 
-                "âŒ Error: No encontrÃ© el pendiente. Intenta de nuevo.",
+                "ÃƒÂ¢Ã‚ÂÃ…â€™ Error: No encontrÃƒÆ’Ã‚Â© el pendiente. Intenta de nuevo.",
 
             )
 
@@ -675,7 +675,7 @@ class ConversationRouter:
 
                     payload.telefono,
 
-                    "âš ï¸ No pude aplicar la correcciÃ³n. Intenta de nuevo.",
+                    "ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â No pude aplicar la correcciÃƒÆ’Ã‚Â³n. Intenta de nuevo.",
 
                 )
 
@@ -779,7 +779,7 @@ class ConversationRouter:
 
                 payload.telefono,
 
-                "âŒ Error procesando la correcciÃ³n.",
+                "ÃƒÂ¢Ã‚ÂÃ…â€™ Error procesando la correcciÃƒÆ’Ã‚Â³n.",
 
             )
 
@@ -811,37 +811,37 @@ class ConversationRouter:
 
                 payload.telefono,
 
-                """ðŸ“‹ **AYUDA AuditBot**
+                """ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã¢â‚¬Â¹ **AYUDA AuditBot**
 
 
 
-EnvÃ­ame hallazgos de auditorÃ­a:
+EnvÃƒÆ’Ã‚Â­ame hallazgos de auditorÃƒÆ’Ã‚Â­a:
 
-ðŸ“ **Texto**: DescripciÃ³n del hallazgo
+ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã‚Â **Texto**: DescripciÃƒÆ’Ã‚Â³n del hallazgo
 
-ðŸŽ¤ **Audio**: GrabaciÃ³n con el hallazgo
+ÃƒÂ°Ã…Â¸Ã…Â½Ã‚Â¤ **Audio**: GrabaciÃƒÆ’Ã‚Â³n con el hallazgo
 
-ðŸ“¸ **Foto**: Imagen + descripciÃ³n
+ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã‚Â¸ **Foto**: Imagen + descripciÃƒÆ’Ã‚Â³n
 
 
 
 Comandos:
 
-/ayuda â†’ Esta ayuda
+/ayuda ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Esta ayuda
 
-/resumen â†’ Resumen del dÃ­a
+/resumen ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Resumen del dÃƒÆ’Ã‚Â­a
 
-/mis â†’ Mis reportes hoy
+/mis ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Mis reportes hoy
 
 
 
-Responde a la confirmaciÃ³n con:
+Responde a la confirmaciÃƒÆ’Ã‚Â³n con:
 
-SI â†’ Confirmar hallazgo
+SI ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Confirmar hallazgo
 
-NO â†’ Descartar
+NO ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Descartar
 
-EDITAR â†’ Hacer cambios""",
+EDITAR ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Hacer cambios""",
 
             )
 
@@ -855,7 +855,7 @@ EDITAR â†’ Hacer cambios""",
 
                 payload.telefono,
 
-                "ðŸ“Š Resumen del dÃ­a:\n(Pronto disponible)",
+                "ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã…Â  Resumen del dÃƒÆ’Ã‚Â­a:\n(Pronto disponible)",
 
             )
 
@@ -869,7 +869,7 @@ EDITAR â†’ Hacer cambios""",
 
                 payload.telefono,
 
-                "ðŸ“„ Tus reportes de hoy:\n(Pronto disponible)",
+                "ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã¢â‚¬Å¾ Tus reportes de hoy:\n(Pronto disponible)",
 
             )
 
@@ -897,7 +897,7 @@ EDITAR â†’ Hacer cambios""",
 
         """Show draft for confirmation."""
 
-        draft = "ðŸ“‹ **Borrador de Hallazgos**:\n\n"
+        draft = "ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã¢â‚¬Â¹ **Borrador de Hallazgos**:\n\n"
 
         for i, h in enumerate(parse_result.hallazgos, 1):
 
@@ -905,7 +905,7 @@ EDITAR â†’ Hacer cambios""",
 
             draft += f"   Sub-item: {h.subitem}\n"
 
-            draft += f"   DescripciÃ³n: {h.descripcion}\n"
+            draft += f"   DescripciÃƒÆ’Ã‚Â³n: {h.descripcion}\n"
 
             draft += f"   Severidad: {h.severidad.value}\n"
 
@@ -913,7 +913,7 @@ EDITAR â†’ Hacer cambios""",
 
 
 
-        draft += "Â¿Confirmo? (SI/NO/EDITAR)"
+        draft += "Ãƒâ€šÃ‚Â¿Confirmo? (SI/NO/EDITAR)"
 
 
 
@@ -1029,7 +1029,7 @@ EDITAR â†’ Hacer cambios""",
 
 
 
-                # Create gestiÃ³n
+                # Create gestiÃƒÆ’Ã‚Â³n
 
                 gestion = Gestion(
 
@@ -1065,19 +1065,19 @@ EDITAR â†’ Hacer cambios""",
 
                 msg = (
 
-                    f"ðŸš¨ **Nuevo Hallazgo de AuditorÃ­a**\n\n"
+                    f"ÃƒÂ°Ã…Â¸Ã…Â¡Ã‚Â¨ **Nuevo Hallazgo de AuditorÃƒÆ’Ã‚Â­a**\n\n"
 
                     f"Sucursal: {sucursal.nombre}\n"
 
-                    f"Ãrea: {hallazgo_data['area']}\n"
+                    f"ÃƒÆ’Ã‚Ârea: {hallazgo_data['area']}\n"
 
-                    f"DesvÃ­o: {hallazgo_data['descripcion']}\n"
+                    f"DesvÃƒÆ’Ã‚Â­o: {hallazgo_data['descripcion']}\n"
 
                     f"Severidad: {hallazgo_data['severidad']}\n"
 
                     f"Plazo: {plazo_fecha.strftime('%Y-%m-%d %H:%M')}\n\n"
 
-                    f"ID GestiÃ³n: {gestion_id}"
+                    f"ID GestiÃƒÆ’Ã‚Â³n: {gestion_id}"
 
                 )
 
@@ -1103,7 +1103,7 @@ EDITAR â†’ Hacer cambios""",
 
                 conv.telefono,
 
-                "âœ… Hallazgos guardados. Notificaciones enviadas a responsables.",
+                "ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ Hallazgos guardados. Notificaciones enviadas a responsables.",
 
             )
 
@@ -1117,7 +1117,7 @@ EDITAR â†’ Hacer cambios""",
 
                 conv.telefono,
 
-                "âŒ Error guardando hallazgos.",
+                "ÃƒÂ¢Ã‚ÂÃ…â€™ Error guardando hallazgos.",
 
             )
 
@@ -1160,7 +1160,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "âŒ No hay sucursales disponibles.",
+                    "ÃƒÂ¢Ã‚ÂÃ…â€™ No hay sucursales disponibles.",
 
                 )
 
@@ -1171,9 +1171,9 @@ EDITAR â†’ Hacer cambios""",
             # Build menu
 
             # Present audit type menu
-            menu = "Qué tipo de auditoría deseas realizar?\n\n"
-            menu += "1 Perfumería\n"
-            menu += "\nResponde con el número."
+            menu = "QuÃƒÂ© tipo de auditorÃƒÂ­a deseas realizar?\n\n"
+            menu += "1 PerfumerÃƒÂ­a\n"
+            menu += "\nResponde con el nÃƒÂºmero."
 
 
 
@@ -1205,7 +1205,7 @@ EDITAR â†’ Hacer cambios""",
 
                 payload.telefono,
 
-                "âŒ Error iniciando auditorÃ­a.",
+                "ÃƒÂ¢Ã‚ÂÃ…â€™ Error iniciando auditorÃƒÆ’Ã‚Â­a.",
 
             )
 
@@ -1235,7 +1235,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "âš ï¸ Por favor responde con un nÃºmero.",
+                    "ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â Por favor responde con un nÃƒÆ’Ã‚Âºmero.",
 
                 )
 
@@ -1255,7 +1255,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "âš ï¸ Responde con un nÃºmero vÃ¡lido.",
+                    "ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â Responde con un nÃƒÆ’Ã‚Âºmero vÃƒÆ’Ã‚Â¡lido.",
 
                 )
 
@@ -1271,129 +1271,66 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    f"âš ï¸ NÃºmero fuera de rango. Elige entre 1 y {len(sucursales)}.",
+                    f"ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â NÃƒÆ’Ã‚Âºmero fuera de rango. Elige entre 1 y {len(sucursales)}.",
 
                 )
 
                 return "out_of_range"
-
-
-
             sucursal = sucursales[choice - 1]
 
-
-
-            # Get checklist
-
-            checklist = self.sheets.get_checklist()
-
-            if not checklist:
-
+            puntos_perfumeria = self.sheets.get_checklist_perfumeria_flat()
+            if not puntos_perfumeria:
                 await meta_client.send_text(
-
                     payload.telefono,
-
-                    "âŒ No hay checklist disponible.",
-
+                    "ERROR: No hay checklist de perfumeria disponible.",
                 )
+                return "no_checklist_perfumeria"
 
-                return "no_checklist"
-
-
-
-            # Create session
-
-            bloques = self.sheets.get_checklist_bloques()
-
-            if not bloques:
-
-                await meta_client.send_text(
-
-                    payload.telefono,
-
-                    "âŒ No hay bloques de checklist disponibles.",
-
-                )
-
-                return "no_checklist_blocks"
-
-
-
-            bloque_inicial = sorted(bloques.keys())[0]
-
+            primer_punto = puntos_perfumeria[0]
             id_sesion = f"ses_{uuid.uuid4().hex[:8]}"
 
             sesion = SesionAuditoria(
-
                 id_sesion=id_sesion,
-
                 telefono_auditor=payload.telefono,
-
                 sucursal_id=sucursal.id,
-
                 punto_actual=0,
-
-                total_puntos=sum(len(items) for items in bloques.values()),
-
+                total_puntos=len(puntos_perfumeria),
                 hallazgos_json="[]",
-
                 omitidos_json="[]",
-
                 estado="en_curso",
-
                 timestamp_inicio=self._utc_now_iso(),
-
                 timestamp_ultimo_punto=self._utc_now_iso(),
-
-                bloque_actual=bloque_inicial,
-
+                bloque_actual=primer_punto.bloque_id,
+                resultados_json="{}",
             )
-
-
 
             self.sheets.create_sesion(sesion)
 
-
-
-            # Update conversation
-
             self.sheets.update_conversacion(
-
                 telefono=payload.telefono,
-
-                estado=ConversationState.EN_BLOQUE,
-
+                estado=ConversationState.EN_BLOQUE_PERFUMERIA,
                 id_pendiente=id_sesion,
-
             )
-
-
-
-            # Send first block
 
             await meta_client.send_text(
-
                 payload.telefono,
-
-                f"âœ… Iniciando auditorÃ­a en {sucursal.nombre}",
-
+                f"OK. Iniciando auditoria en {sucursal.nombre}",
             )
 
-            await meta_client.send_bloque_prompt(
+            if primer_punto.tipo_respuesta == "foto_si_no":
+                mensaje = f"[Foto] {primer_punto.pregunta}\n\nEnvia foto y responde: si / no / problemas"
+            elif primer_punto.tipo_respuesta == "numero_audio":
+                mensaje = f"[Audio] {primer_punto.pregunta}\n\nEnvia numeros, texto o audio con las cantidades."
+            elif primer_punto.tipo_respuesta == "lista_texto":
+                mensaje = f"[Lista] {primer_punto.pregunta}\n\nEnvia una lista de texto, audio o foto."
+            elif primer_punto.tipo_respuesta == "mixto":
+                mensaje = f"[Mixto] {primer_punto.pregunta}\n\nPuedes responder con texto, audio o foto."
+            else:
+                mensaje = primer_punto.pregunta
 
-                payload.telefono,
+            await meta_client.send_text(payload.telefono, mensaje)
 
-                bloque_inicial,
-
-                f"Bloque {bloque_inicial}",
-
-                bloques[bloque_inicial],
-
-            )
-
-
-
-            return "auditoria_started"
+            return "auditoria_perfumeria_started"
 
         except Exception as e:
 
@@ -1403,7 +1340,7 @@ EDITAR â†’ Hacer cambios""",
 
                 payload.telefono,
 
-                "âŒ Error seleccionando sucursal.",
+                "ÃƒÂ¢Ã‚ÂÃ…â€™ Error seleccionando sucursal.",
 
             )
 
@@ -1421,7 +1358,7 @@ EDITAR â†’ Hacer cambios""",
             if not payload.contenido:
                 await meta_client.send_text(
                     payload.telefono,
-                    "⚠️ Por favor responde con un número.",
+                    "Ã¢Å¡Â Ã¯Â¸Â Por favor responde con un nÃƒÂºmero.",
                 )
                 return "invalid_input"
 
@@ -1430,7 +1367,7 @@ EDITAR â†’ Hacer cambios""",
             except ValueError:
                 await meta_client.send_text(
                     payload.telefono,
-                    "⚠️ Responde con un número válido.",
+                    "Ã¢Å¡Â Ã¯Â¸Â Responde con un nÃƒÂºmero vÃƒÂ¡lido.",
                 )
                 return "invalid_number"
 
@@ -1441,7 +1378,7 @@ EDITAR â†’ Hacer cambios""",
             else:
                 await meta_client.send_text(
                     payload.telefono,
-                    "⚠️ Opción no válida. Elige 1 para Perfumería.",
+                    "Ã¢Å¡Â Ã¯Â¸Â OpciÃƒÂ³n no vÃƒÂ¡lida. Elige 1 para PerfumerÃƒÂ­a.",
                 )
                 return "invalid_choice"
 
@@ -1449,7 +1386,7 @@ EDITAR â†’ Hacer cambios""",
             logger.error(f"Error handling audit type selection: {e}")
             await meta_client.send_text(
                 payload.telefono,
-                "❌ Error procesando tu selección.",
+                "Ã¢ÂÅ’ Error procesando tu selecciÃƒÂ³n.",
             )
             return "error"
 
@@ -1466,23 +1403,23 @@ EDITAR â†’ Hacer cambios""",
             if not sucursales:
                 await meta_client.send_text(
                     payload.telefono,
-                    "❌ No hay sucursales disponibles.",
+                    "Ã¢ÂÅ’ No hay sucursales disponibles.",
                 )
                 return "no_sucursales"
 
             # Build menu
-            menu = "🏪 Auditoría Perfumería\n\nSelecciona tu sucursal:\n\n"
+            menu = "Ã°Å¸ÂÂª AuditorÃƒÂ­a PerfumerÃƒÂ­a\n\nSelecciona tu sucursal:\n\n"
             for i, s in enumerate(sucursales, 1):
                 menu += f"{i}. {s.nombre} ({s.zona})\n"
 
-            menu += "\nResponde con el número de la sucursal."
+            menu += "\nResponde con el nÃƒÂºmero de la sucursal."
 
             await meta_client.send_text(payload.telefono, menu)
 
             # Update conversation state
             self.sheets.update_conversacion(
                 telefono=payload.telefono,
-                estado=ConversationState.SELECCIONANDO_TIPO_AUDITORIA,
+                estado=ConversationState.SELECCIONANDO_SUCURSAL,
                 id_pendiente="",
             )
 
@@ -1492,7 +1429,7 @@ EDITAR â†’ Hacer cambios""",
             logger.error(f"Error initiating sucursal selection for perfumery: {e}")
             await meta_client.send_text(
                 payload.telefono,
-                "❌ Error iniciando auditoría.",
+                "Ã¢ÂÅ’ Error iniciando auditorÃƒÂ­a.",
             )
             return "error"
 
@@ -1511,7 +1448,7 @@ EDITAR â†’ Hacer cambios""",
             if not sesion:
                 await meta_client.send_text(
                     payload.telefono,
-                    "❌ Sesión no encontrada.",
+                    "Ã¢ÂÅ’ SesiÃƒÂ³n no encontrada.",
                 )
                 return "sesion_not_found"
 
@@ -1521,7 +1458,7 @@ EDITAR â†’ Hacer cambios""",
             if not bloques_perfumeria:
                 await meta_client.send_text(
                     payload.telefono,
-                    "❌ No hay checklist de perfumería disponible.",
+                    "Ã¢ÂÅ’ No hay checklist de perfumerÃƒÂ­a disponible.",
                 )
                 return "no_checklist"
 
@@ -1532,7 +1469,7 @@ EDITAR â†’ Hacer cambios""",
                 # Audit complete
                 await meta_client.send_text(
                     payload.telefono,
-                    "✅ ¡Auditoría completada!",
+                    "Ã¢Å“â€¦ Ã‚Â¡AuditorÃƒÂ­a completada!",
                 )
 
                 self.sheets.update_sesion(
@@ -1586,7 +1523,7 @@ EDITAR â†’ Hacer cambios""",
             logger.error(f"Error in _handle_en_bloque_perfumeria: {e}", exc_info=True)
             await meta_client.send_text(
                 payload.telefono,
-                "❌ Error procesando tu respuesta.",
+                "Ã¢ÂÅ’ Error procesando tu respuesta.",
             )
             return "error"
 
@@ -1625,7 +1562,7 @@ EDITAR â†’ Hacer cambios""",
 
                     await meta_client.send_text(
                         payload.telefono,
-                        f"📸 Foto recibida.\n\n{punto.pregunta}\n\nResponde: sí / no / problemas"
+                        f"Ã°Å¸â€œÂ¸ Foto recibida.\n\n{punto.pregunta}\n\nResponde: sÃƒÂ­ / no / problemas"
                     )
 
                     return "waiting_confirmation"
@@ -1634,7 +1571,7 @@ EDITAR â†’ Hacer cambios""",
                     logger.error(f"Error uploading photo: {e}")
                     await meta_client.send_text(
                         payload.telefono,
-                        "❌ Error subiendo foto. Intenta de nuevo."
+                        "Ã¢ÂÅ’ Error subiendo foto. Intenta de nuevo."
                     )
                     return "upload_error"
 
@@ -1642,10 +1579,10 @@ EDITAR â†’ Hacer cambios""",
             elif payload.contenido:
                 respuesta = payload.contenido.lower().strip()
 
-                if respuesta not in {"sí", "si", "no", "problemas"}:
+                if respuesta not in {"sÃƒÂ­", "si", "no", "problemas"}:
                     await meta_client.send_text(
                         payload.telefono,
-                        "⚠️ Responde: sí / no / problemas"
+                        "Ã¢Å¡Â Ã¯Â¸Â Responde: sÃƒÂ­ / no / problemas"
                     )
                     return "invalid_response"
 
@@ -1677,12 +1614,12 @@ EDITAR â†’ Hacer cambios""",
                     siguiente = todos_puntos[siguiente_punto]
                     await meta_client.send_text(
                         payload.telefono,
-                        f"✅ Registrado.\n\n{siguiente.pregunta}"
+                        f"Ã¢Å“â€¦ Registrado.\n\n{siguiente.pregunta}"
                     )
                 else:
                     await meta_client.send_text(
                         payload.telefono,
-                        "✅ ¡Auditoría completada!"
+                        "Ã¢Å“â€¦ Ã‚Â¡AuditorÃƒÂ­a completada!"
                     )
 
                 return "response_stored"
@@ -1690,7 +1627,7 @@ EDITAR â†’ Hacer cambios""",
             else:
                 await meta_client.send_text(
                     payload.telefono,
-                    f"📸 {punto.pregunta}\n\nEnvía una foto o responde: sí / no / problemas"
+                    f"Ã°Å¸â€œÂ¸ {punto.pregunta}\n\nEnvÃƒÂ­a una foto o responde: sÃƒÂ­ / no / problemas"
                 )
                 return "waiting_input"
 
@@ -1719,7 +1656,7 @@ EDITAR â†’ Hacer cambios""",
                     logger.error(f"Error transcribing audio: {e}")
                     await meta_client.send_text(
                         payload.telefono,
-                        "❌ Error transcribiendo audio. Intenta de nuevo."
+                        "Ã¢ÂÅ’ Error transcribiendo audio. Intenta de nuevo."
                     )
                     return "transcription_error"
             elif payload.contenido:
@@ -1727,7 +1664,7 @@ EDITAR â†’ Hacer cambios""",
             else:
                 await meta_client.send_text(
                     payload.telefono,
-                    f"🎤 {punto.pregunta}\n\nEnvía números, texto o un audio con las cantidades."
+                    f"Ã°Å¸Å½Â¤ {punto.pregunta}\n\nEnvÃƒÂ­a nÃƒÂºmeros, texto o un audio con las cantidades."
                 )
                 return "waiting_input"
 
@@ -1759,12 +1696,12 @@ EDITAR â†’ Hacer cambios""",
                 siguiente = todos_puntos[siguiente_punto]
                 await meta_client.send_text(
                     payload.telefono,
-                    f"✅ Registrado.\n\n{siguiente.pregunta}"
+                    f"Ã¢Å“â€¦ Registrado.\n\n{siguiente.pregunta}"
                 )
             else:
                 await meta_client.send_text(
                     payload.telefono,
-                    "✅ ¡Auditoría completada!"
+                    "Ã¢Å“â€¦ Ã‚Â¡AuditorÃƒÂ­a completada!"
                 )
 
             return "response_stored"
@@ -1791,7 +1728,7 @@ EDITAR â†’ Hacer cambios""",
                 # TODO: Implement OCR for image-based lists
                 await meta_client.send_text(
                     payload.telefono,
-                    "📋 Recibí la foto. Por favor, envía una lista de texto con los productos separados por comas."
+                    "Ã°Å¸â€œâ€¹ RecibÃƒÂ­ la foto. Por favor, envÃƒÂ­a una lista de texto con los productos separados por comas."
                 )
                 return "image_received_need_text"
 
@@ -1800,7 +1737,7 @@ EDITAR â†’ Hacer cambios""",
             else:
                 await meta_client.send_text(
                     payload.telefono,
-                    f"📋 {punto.pregunta}\n\nEnvía la lista separada por comas o líneas."
+                    f"Ã°Å¸â€œâ€¹ {punto.pregunta}\n\nEnvÃƒÂ­a la lista separada por comas o lÃƒÂ­neas."
                 )
                 return "waiting_input"
 
@@ -1832,12 +1769,12 @@ EDITAR â†’ Hacer cambios""",
                 siguiente = todos_puntos[siguiente_punto]
                 await meta_client.send_text(
                     payload.telefono,
-                    f"✅ Registrado.\n\n{siguiente.pregunta}"
+                    f"Ã¢Å“â€¦ Registrado.\n\n{siguiente.pregunta}"
                 )
             else:
                 await meta_client.send_text(
                     payload.telefono,
-                    "✅ ¡Auditoría completada!"
+                    "Ã¢Å“â€¦ Ã‚Â¡AuditorÃƒÂ­a completada!"
                 )
 
             return "response_stored"
@@ -1860,16 +1797,16 @@ EDITAR â†’ Hacer cambios""",
             if not payload.contenido:
                 await meta_client.send_text(
                     payload.telefono,
-                    f"✅❌ {punto.pregunta}\n\nResponde: sí / no"
+                    f"Ã¢Å“â€¦Ã¢ÂÅ’ {punto.pregunta}\n\nResponde: sÃƒÂ­ / no"
                 )
                 return "waiting_input"
 
             respuesta = payload.contenido.lower().strip()
 
-            if respuesta not in {"sí", "si", "no"}:
+            if respuesta not in {"sÃƒÂ­", "si", "no"}:
                 await meta_client.send_text(
                     payload.telefono,
-                    "⚠️ Responde: sí / no"
+                    "Ã¢Å¡Â Ã¯Â¸Â Responde: sÃƒÂ­ / no"
                 )
                 return "invalid_response"
 
@@ -1901,12 +1838,12 @@ EDITAR â†’ Hacer cambios""",
                 siguiente = todos_puntos[siguiente_punto]
                 await meta_client.send_text(
                     payload.telefono,
-                    f"✅ Registrado.\n\n{siguiente.pregunta}"
+                    f"Ã¢Å“â€¦ Registrado.\n\n{siguiente.pregunta}"
                 )
             else:
                 await meta_client.send_text(
                     payload.telefono,
-                    "✅ ¡Auditoría completada!"
+                    "Ã¢Å“â€¦ Ã‚Â¡AuditorÃƒÂ­a completada!"
                 )
 
             return "response_stored"
@@ -1953,7 +1890,7 @@ EDITAR â†’ Hacer cambios""",
             else:
                 await meta_client.send_text(
                     payload.telefono,
-                    f"📝 {punto.pregunta}\n\nPuedes enviar texto, audio o foto (opcional)."
+                    f"Ã°Å¸â€œÂ {punto.pregunta}\n\nPuedes enviar texto, audio o foto (opcional)."
                 )
                 return "waiting_input"
 
@@ -1987,7 +1924,7 @@ EDITAR â†’ Hacer cambios""",
 
             await meta_client.send_text(
                 payload.telefono,
-                "✅ ¡Auditoría completada!\n\nGracias por tu participación."
+                "Ã¢Å“â€¦ Ã‚Â¡AuditorÃƒÂ­a completada!\n\nGracias por tu participaciÃƒÂ³n."
             )
 
             return "auditoria_completa"
@@ -2023,7 +1960,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "âŒ SesiÃ³n no encontrada.",
+                    "ÃƒÂ¢Ã‚ÂÃ…â€™ SesiÃƒÆ’Ã‚Â³n no encontrada.",
 
                 )
 
@@ -2121,7 +2058,7 @@ EDITAR â†’ Hacer cambios""",
 
                         payload.telefono,
 
-                        "â¸ï¸ AuditorÃ­a pausada. Escribe 'continuar' cuando quieras retomar.",
+                        "ÃƒÂ¢Ã‚ÂÃ‚Â¸ÃƒÂ¯Ã‚Â¸Ã‚Â AuditorÃƒÆ’Ã‚Â­a pausada. Escribe 'continuar' cuando quieras retomar.",
 
                     )
 
@@ -2147,7 +2084,7 @@ EDITAR â†’ Hacer cambios""",
 
                         payload.telefono,
 
-                        "âŒ Error transcribiendo audio. Intenta de nuevo.",
+                        "ÃƒÂ¢Ã‚ÂÃ…â€™ Error transcribiendo audio. Intenta de nuevo.",
 
                     )
 
@@ -2161,7 +2098,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "âš ï¸ Por favor envÃ­a audio, foto o texto con tu observaciÃ³n.",
+                    "ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â Por favor envÃƒÆ’Ã‚Â­a audio, foto o texto con tu observaciÃƒÆ’Ã‚Â³n.",
 
                 )
 
@@ -2229,7 +2166,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "âŒ Error evaluando respuesta. Intenta de nuevo.",
+                    "ÃƒÂ¢Ã‚ÂÃ…â€™ Error evaluando respuesta. Intenta de nuevo.",
 
                 )
 
@@ -2237,7 +2174,7 @@ EDITAR â†’ Hacer cambios""",
 
 
 
-            # If desvÃ­o, create reporte and gestiÃ³n automatically
+            # If desvÃƒÆ’Ã‚Â­o, create reporte and gestiÃƒÆ’Ã‚Â³n automatically
 
             if eval_result.tiene_desvio:
 
@@ -2297,7 +2234,7 @@ EDITAR â†’ Hacer cambios""",
 
 
 
-                # Create gestiÃ³n
+                # Create gestiÃƒÆ’Ã‚Â³n
 
                 if sucursal:
 
@@ -2345,19 +2282,19 @@ EDITAR â†’ Hacer cambios""",
 
                     msg = (
 
-                        f"ðŸš¨ **Hallazgo de AuditorÃ­a Guiada**\n\n"
+                        f"ÃƒÂ°Ã…Â¸Ã…Â¡Ã‚Â¨ **Hallazgo de AuditorÃƒÆ’Ã‚Â­a Guiada**\n\n"
 
                         f"Sucursal: {sucursal.nombre}\n"
 
-                        f"Ãrea: {punto.area}\n"
+                        f"ÃƒÆ’Ã‚Ârea: {punto.area}\n"
 
-                        f"DesvÃ­o: {eval_result.descripcion_desvio}\n"
+                        f"DesvÃƒÆ’Ã‚Â­o: {eval_result.descripcion_desvio}\n"
 
                         f"Severidad: {eval_result.severidad}\n"
 
                         f"Plazo: {plazo_fecha.strftime('%Y-%m-%d %H:%M')}\n\n"
 
-                        f"ID GestiÃ³n: {gestion_id}"
+                        f"ID GestiÃƒÆ’Ã‚Â³n: {gestion_id}"
 
                     )
 
@@ -2439,7 +2376,7 @@ EDITAR â†’ Hacer cambios""",
 
                 payload.telefono,
 
-                "âŒ Error procesando respuesta.",
+                "ÃƒÂ¢Ã‚ÂÃ…â€™ Error procesando respuesta.",
 
             )
 
@@ -2483,7 +2420,7 @@ EDITAR â†’ Hacer cambios""",
 
                         payload.telefono,
 
-                        "âŒ SesiÃ³n no encontrada.",
+                        "ÃƒÂ¢Ã‚ÂÃ…â€™ SesiÃƒÆ’Ã‚Â³n no encontrada.",
 
                     )
 
@@ -2537,7 +2474,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "âš ï¸ Escribe 'continuar' para retomar la auditorÃ­a.",
+                    "ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â Escribe 'continuar' para retomar la auditorÃƒÆ’Ã‚Â­a.",
 
                 )
 
@@ -2637,17 +2574,17 @@ EDITAR â†’ Hacer cambios""",
 
             # Build detail
 
-            detalle = "DesvÃ­os encontrados:\n"
+            detalle = "DesvÃƒÆ’Ã‚Â­os encontrados:\n"
 
             for h in hallazgos:
 
-                detalle += f"â€¢ {h['area']}: {h['descripcion']} ({h['severidad']})\n"
+                detalle += f"ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ {h['area']}: {h['descripcion']} ({h['severidad']})\n"
 
 
 
             if not hallazgos:
 
-                detalle = "No se encontraron desvÃ­os. Â¡Excelente auditorÃ­a!"
+                detalle = "No se encontraron desvÃƒÆ’Ã‚Â­os. Ãƒâ€šÃ‚Â¡Excelente auditorÃƒÆ’Ã‚Â­a!"
 
 
 
@@ -2689,7 +2626,7 @@ EDITAR â†’ Hacer cambios""",
 
                 coord_msg = (
 
-                    f"ðŸ“Š **AuditorÃ­a Completada**\n\n"
+                    f"ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã…Â  **AuditorÃƒÆ’Ã‚Â­a Completada**\n\n"
 
                     f"Auditor: {auditor_nombre}\n"
 
@@ -2697,11 +2634,11 @@ EDITAR â†’ Hacer cambios""",
 
                     f"Total de puntos: {sesion.total_puntos}\n"
 
-                    f"DesvÃ­os: {desvios}\n"
+                    f"DesvÃƒÆ’Ã‚Â­os: {desvios}\n"
 
                     f"Omitidos: {omitidos_count}\n"
 
-                    f"ID SesiÃ³n: {sesion.id_sesion}"
+                    f"ID SesiÃƒÆ’Ã‚Â³n: {sesion.id_sesion}"
 
                 )
 
@@ -2771,7 +2708,7 @@ EDITAR â†’ Hacer cambios""",
 
                         payload.telefono,
 
-                        "â¸ï¸ AuditorÃ­a pausada. MandÃ¡ 'continuar' cuando estÃ©s listo.",
+                        "ÃƒÂ¢Ã‚ÂÃ‚Â¸ÃƒÂ¯Ã‚Â¸Ã‚Â AuditorÃƒÆ’Ã‚Â­a pausada. MandÃƒÆ’Ã‚Â¡ 'continuar' cuando estÃƒÆ’Ã‚Â©s listo.",
 
                     )
 
@@ -2785,7 +2722,7 @@ EDITAR â†’ Hacer cambios""",
 
             if not sesion:
 
-                await meta_client.send_text(payload.telefono, "âŒ SesiÃ³n no encontrada")
+                await meta_client.send_text(payload.telefono, "ÃƒÂ¢Ã‚ÂÃ…â€™ SesiÃƒÆ’Ã‚Â³n no encontrada")
 
                 return "error"
 
@@ -2799,7 +2736,7 @@ EDITAR â†’ Hacer cambios""",
 
             if bloque_id not in bloques:
 
-                await meta_client.send_text(payload.telefono, "âŒ Bloque no encontrado")
+                await meta_client.send_text(payload.telefono, "ÃƒÂ¢Ã‚ÂÃ…â€™ Bloque no encontrado")
 
                 return "error"
 
@@ -2841,7 +2778,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "âŒ No pude evaluar la respuesta. Intenta de nuevo.",
+                    "ÃƒÂ¢Ã‚ÂÃ…â€™ No pude evaluar la respuesta. Intenta de nuevo.",
 
                 )
 
@@ -2863,7 +2800,7 @@ EDITAR â†’ Hacer cambios""",
 
                 estado=ConversationState.CONFIRMANDO_BLOQUE.value,
 
-                timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+                timestamp_ultimo_punto=datetime.now(timezone.utc).isoformat(),
 
                 bloque_actual=bloque_id,
 
@@ -2917,7 +2854,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    """⚠️ Respondé una de estas:
+                    """Ã¢Å¡Â Ã¯Â¸Â RespondÃƒÂ© una de estas:
 
 1 o SI - Confirmar
 
@@ -3063,7 +3000,7 @@ EDITAR â†’ Hacer cambios""",
 
                         payload.telefono,
 
-                        "ðŸ” VerificaciÃ³n de Stock\n\nÂ¿CuÃ¡ntos productos querÃ©s verificar? (0 para saltar)",
+                        "ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ‚Â VerificaciÃƒÆ’Ã‚Â³n de Stock\n\nÃƒâ€šÃ‚Â¿CuÃƒÆ’Ã‚Â¡ntos productos querÃƒÆ’Ã‚Â©s verificar? (0 para saltar)",
 
                     )
 
@@ -3077,7 +3014,7 @@ EDITAR â†’ Hacer cambios""",
 
                         estado=ConversationState.EN_BLOQUE.value,
 
-                        timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+                        timestamp_ultimo_punto=datetime.now(timezone.utc).isoformat(),
 
                         bloque_actual=next_state,
 
@@ -3163,7 +3100,7 @@ EDITAR â†’ Hacer cambios""",
 
                         payload.telefono,
 
-                        "ðŸ” VerificaciÃ³n de Stock\n\nÂ¿CuÃ¡ntos productos querÃ©s verificar? (0 para saltar)",
+                        "ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ‚Â VerificaciÃƒÆ’Ã‚Â³n de Stock\n\nÃƒâ€šÃ‚Â¿CuÃƒÆ’Ã‚Â¡ntos productos querÃƒÆ’Ã‚Â©s verificar? (0 para saltar)",
 
                     )
 
@@ -3187,7 +3124,7 @@ EDITAR â†’ Hacer cambios""",
 
                         estado=ConversationState.EN_BLOQUE.value,
 
-                        timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+                        timestamp_ultimo_punto=datetime.now(timezone.utc).isoformat(),
 
                         bloque_actual=next_state,
 
@@ -3219,7 +3156,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    """⚠️ Respondé una de estas:
+                    """Ã¢Å¡Â Ã¯Â¸Â RespondÃƒÂ© una de estas:
 
 1 o SI - Confirmar
 
@@ -3259,7 +3196,7 @@ EDITAR â†’ Hacer cambios""",
 
             if payload.tipo != "text" or not payload.contenido:
 
-                await meta_client.send_text(payload.telefono, "⚠️ Mandá un número o 0 para saltar")
+                await meta_client.send_text(payload.telefono, "Ã¢Å¡Â Ã¯Â¸Â MandÃƒÂ¡ un nÃƒÂºmero o 0 para saltar")
 
                 return "invalid_response"
 
@@ -3271,7 +3208,7 @@ EDITAR â†’ Hacer cambios""",
 
             except ValueError:
 
-                await meta_client.send_text(payload.telefono, "⚠️ Mandá un número válido")
+                await meta_client.send_text(payload.telefono, "Ã¢Å¡Â Ã¯Â¸Â MandÃƒÂ¡ un nÃƒÂºmero vÃƒÂ¡lido")
 
                 return "invalid_response"
 
@@ -3307,7 +3244,7 @@ EDITAR â†’ Hacer cambios""",
 
                     estado=ConversationState.DESVIO_LIBRE.value,
 
-                    timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+                    timestamp_ultimo_punto=datetime.now(timezone.utc).isoformat(),
 
                     stock_total=0,
 
@@ -3333,7 +3270,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "📋 Desvíos Libres\n\nTiene algún desvío o hallazgo libre para reportar?\n\nMandá 'NO' si no hay más desvíos, o describí el problema.",
+                    "Ã°Å¸â€œâ€¹ DesvÃƒÂ­os Libres\n\nTiene algÃƒÂºn desvÃƒÂ­o o hallazgo libre para reportar?\n\nMandÃƒÂ¡ 'NO' si no hay mÃƒÂ¡s desvÃƒÂ­os, o describÃƒÂ­ el problema.",
 
                 )
 
@@ -3361,7 +3298,7 @@ EDITAR â†’ Hacer cambios""",
 
                 estado=ConversationState.EN_STOCK_ITEM.value,
 
-                timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+                timestamp_ultimo_punto=datetime.now(timezone.utc).isoformat(),
 
                 stock_total=cantidad,
 
@@ -3387,7 +3324,7 @@ EDITAR â†’ Hacer cambios""",
 
                 payload.telefono,
 
-                f"📦 Producto 1/{cantidad}\n\nMandá: Nombre / Stock Físico / Stock Sistema\n\nEj: Ibuprofeno 400 / 23 / 18",
+                f"Ã°Å¸â€œÂ¦ Producto 1/{cantidad}\n\nMandÃƒÂ¡: Nombre / Stock FÃƒÂ­sico / Stock Sistema\n\nEj: Ibuprofeno 400 / 23 / 18",
 
             )
 
@@ -3423,7 +3360,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "⚠️ Mandá el formato: Nombre / Stock Físico / Stock Sistema",
+                    "Ã¢Å¡Â Ã¯Â¸Â MandÃƒÂ¡ el formato: Nombre / Stock FÃƒÂ­sico / Stock Sistema",
 
                 )
 
@@ -3441,7 +3378,7 @@ EDITAR â†’ Hacer cambios""",
 
             comando = payload.contenido.strip().lower()
 
-            if comando in {"listo", "terminado", "terminé", "fin", "finalizar"}:
+            if comando in {"listo", "terminado", "terminÃƒÂ©", "fin", "finalizar"}:
 
                 self.sheets.update_conversacion(
 
@@ -3459,7 +3396,7 @@ EDITAR â†’ Hacer cambios""",
 
                     estado=ConversationState.DESVIO_LIBRE.value,
 
-                    timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+                    timestamp_ultimo_punto=datetime.now(timezone.utc).isoformat(),
 
                     stock_total=sesion.stock_total,
 
@@ -3485,7 +3422,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    f"✓ Stock registrado: {sesion.stock_actual}/{sesion.stock_total}\n\n¿Algo más para registrar que no hayamos cubierto?\nPodés mandar texto, audio o foto. O escribí NO para terminar.",
+                    f"Ã¢Å“â€œ Stock registrado: {sesion.stock_actual}/{sesion.stock_total}\n\nÃ‚Â¿Algo mÃƒÂ¡s para registrar que no hayamos cubierto?\nPodÃƒÂ©s mandar texto, audio o foto. O escribÃƒÂ­ NO para terminar.",
 
                 )
 
@@ -3501,7 +3438,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "❌ No pude entender el formato. Intenta: Nombre / Físico / Sistema",
+                    "Ã¢ÂÅ’ No pude entender el formato. Intenta: Nombre / FÃƒÂ­sico / Sistema",
 
                 )
 
@@ -3555,7 +3492,7 @@ EDITAR â†’ Hacer cambios""",
 
                     estado=ConversationState.DESVIO_LIBRE.value,
 
-                    timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+                    timestamp_ultimo_punto=datetime.now(timezone.utc).isoformat(),
 
                     stock_total=sesion.stock_total,
 
@@ -3581,7 +3518,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    f"✓ Registrado: {stock_item.nombre}\n\nStock completo ({sesion.stock_actual}/{sesion.stock_total}).\n¿Algo más para registrar que no hayamos cubierto?\nPodés mandar texto, audio o foto. O escribí NO para terminar.",
+                    f"Ã¢Å“â€œ Registrado: {stock_item.nombre}\n\nStock completo ({sesion.stock_actual}/{sesion.stock_total}).\nÃ‚Â¿Algo mÃƒÂ¡s para registrar que no hayamos cubierto?\nPodÃƒÂ©s mandar texto, audio o foto. O escribÃƒÂ­ NO para terminar.",
 
                 )
 
@@ -3595,7 +3532,7 @@ EDITAR â†’ Hacer cambios""",
 
                 estado=ConversationState.EN_STOCK_ITEM.value,
 
-                timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+                timestamp_ultimo_punto=datetime.now(timezone.utc).isoformat(),
 
                 stock_total=sesion.stock_total,
 
@@ -3613,7 +3550,7 @@ EDITAR â†’ Hacer cambios""",
 
                 payload.telefono,
 
-                f"✓ Registrado: {stock_item.nombre} ({sesion.stock_actual}/{sesion.stock_total})\n\nMandá el próximo producto o 'listo'",
+                f"Ã¢Å“â€œ Registrado: {stock_item.nombre} ({sesion.stock_actual}/{sesion.stock_total})\n\nMandÃƒÂ¡ el prÃƒÂ³ximo producto o 'listo'",
 
             )
 
@@ -3649,7 +3586,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "âš ï¸ MandÃ¡ 'NO' o describÃ­ el desvÃ­o",
+                    "ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â MandÃƒÆ’Ã‚Â¡ 'NO' o describÃƒÆ’Ã‚Â­ el desvÃƒÆ’Ã‚Â­o",
 
                 )
 
@@ -3689,7 +3626,7 @@ EDITAR â†’ Hacer cambios""",
 
                     estado=ConversationState.COMPROMISOS.value,
 
-                    timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+                    timestamp_ultimo_punto=datetime.now(timezone.utc).isoformat(),
 
                     stock_total=sesion.stock_total,
 
@@ -3715,7 +3652,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "ðŸ“ Compromisos\n\nÂ¿Firmaron compromisos de correcciÃ³n?\n\nSI / NO / PENDIENTE",
+                    "ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã‚Â Compromisos\n\nÃƒâ€šÃ‚Â¿Firmaron compromisos de correcciÃƒÆ’Ã‚Â³n?\n\nSI / NO / PENDIENTE",
 
                 )
 
@@ -3733,7 +3670,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "âŒ No pude procesar el desvÃ­o. Intenta de nuevo.",
+                    "ÃƒÂ¢Ã‚ÂÃ…â€™ No pude procesar el desvÃƒÆ’Ã‚Â­o. Intenta de nuevo.",
 
                 )
 
@@ -3785,7 +3722,7 @@ EDITAR â†’ Hacer cambios""",
 
                 estado=ConversationState.DESVIO_LIBRE.value,
 
-                timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+                timestamp_ultimo_punto=datetime.now(timezone.utc).isoformat(),
 
                 desvios_libres_json=sesion.desvios_libres_json,
 
@@ -3827,7 +3764,7 @@ EDITAR â†’ Hacer cambios""",
 
                 payload.telefono,
 
-                f"âœ“ Registrado desvÃ­o en {desvio.area_estimada}\n\nÂ¿Hay mÃ¡s desvÃ­os? DescribÃ­ o mandÃ¡ 'NO'",
+                f"ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Registrado desvÃƒÆ’Ã‚Â­o en {desvio.area_estimada}\n\nÃƒâ€šÃ‚Â¿Hay mÃƒÆ’Ã‚Â¡s desvÃƒÆ’Ã‚Â­os? DescribÃƒÆ’Ã‚Â­ o mandÃƒÆ’Ã‚Â¡ 'NO'",
 
             )
 
@@ -3867,7 +3804,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "âš ï¸ RespondÃ© SI, NO o PENDIENTE",
+                    "ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â RespondÃƒÆ’Ã‚Â© SI, NO o PENDIENTE",
 
                 )
 
@@ -3877,13 +3814,13 @@ EDITAR â†’ Hacer cambios""",
 
             respuesta = payload.contenido.upper().strip()
 
-            if respuesta not in {"SI", "SÃ", "NO", "PENDIENTE"}:
+            if respuesta not in {"SI", "SÃƒÆ’Ã‚Â", "NO", "PENDIENTE"}:
 
                 await meta_client.send_text(
 
                     payload.telefono,
 
-                    "âš ï¸ RespondÃ© SI, NO o PENDIENTE",
+                    "ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â RespondÃƒÆ’Ã‚Â© SI, NO o PENDIENTE",
 
                 )
 
@@ -3909,7 +3846,7 @@ EDITAR â†’ Hacer cambios""",
 
                 estado="completa",
 
-                timestamp_ultimo_punto=datetime.utcnow().isoformat(),
+                timestamp_ultimo_punto=datetime.now(timezone.utc).isoformat(),
 
                 compromisos_firmados=respuesta,
 
@@ -4065,7 +4002,7 @@ EDITAR â†’ Hacer cambios""",
 
                 coord_msg = (
 
-                    f"ðŸ“Š **AuditorÃ­a Completada (Flujo Bloques)**\n\n"
+                    f"ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã…Â  **AuditorÃƒÆ’Ã‚Â­a Completada (Flujo Bloques)**\n\n"
 
                     f"Auditor: {auditor_nombre}\n"
 
@@ -4073,19 +4010,19 @@ EDITAR â†’ Hacer cambios""",
 
                     f"Puntaje: {puntaje_total:.1f}/{puntaje_maximo:.1f}\n"
 
-                    f"DesvÃ­os: {desvios_count}\n"
+                    f"DesvÃƒÆ’Ã‚Â­os: {desvios_count}\n"
 
-                    f"  ðŸ”´ CrÃ­ticos: {alta_count}\n"
+                    f"  ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ‚Â´ CrÃƒÆ’Ã‚Â­ticos: {alta_count}\n"
 
-                    f"  ðŸŸ¡ Importantes: {media_count}\n"
+                    f"  ÃƒÂ°Ã…Â¸Ã…Â¸Ã‚Â¡ Importantes: {media_count}\n"
 
-                    f"  ðŸŸ¢ Leves: {baja_count}\n"
+                    f"  ÃƒÂ°Ã…Â¸Ã…Â¸Ã‚Â¢ Leves: {baja_count}\n"
 
                     f"Productos verificados: {stock_count}\n"
 
                     f"Compromisos: {sesion.compromisos_firmados}\n"
 
-                    f"ID SesiÃ³n: {sesion.id_sesion}"
+                    f"ID SesiÃƒÆ’Ã‚Â³n: {sesion.id_sesion}"
 
                 )
 
@@ -4108,6 +4045,9 @@ EDITAR â†’ Hacer cambios""",
         except Exception as e:
 
             logger.error(f"Error closing block audit: {e}", exc_info=True)
+
+
+
 
 
 

@@ -1,4 +1,4 @@
-"""FastAPI application for AuditBot webhook and background jobs."""
+﻿"""FastAPI application for AuditBot webhook and background jobs."""
 
 import logging
 from datetime import datetime, timedelta, timezone
@@ -6,6 +6,7 @@ import json
 import asyncio
 import uuid
 from collections import OrderedDict
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse
@@ -18,6 +19,7 @@ from models import WhatsAppPayload, ConversationState
 from router import ConversationRouter
 from meta_client import MetaClient
 from sheets import SheetsManager
+from supabase_client import SupabaseManager
 from sync_sheets_to_supabase import sync_sheets_to_supabase
 
 # Configure logging
@@ -27,13 +29,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="AuditBot", version="1.0.0")
 settings = get_settings()
 scheduler = AsyncIOScheduler()
 
 # Lazy initialization - these will be created on demand
 router = None
 sheets = None
+supabase_manager = None
 
 # Message deduplication cache: {message_id: (timestamp, phone)}
 # TTL: 5 minutes (prevents reprocessing of Meta retries)
@@ -82,7 +84,7 @@ def _claim_message_distributed(message_id: str, phone: str) -> bool:
         client.table("webhook_dedup").insert({
             "message_id": message_id,
             "phone": phone,
-            "claimed_at": datetime.utcnow().isoformat(),
+            "claimed_at": datetime.now(timezone.utc).isoformat(),
         }).execute()
         return True
     except Exception as exc:
@@ -113,7 +115,7 @@ def _is_message_processed(message_id: str) -> bool:
     if message_id not in _processed_messages:
         return False
     timestamp, _ = _processed_messages[message_id]
-    if datetime.utcnow() - timestamp > timedelta(seconds=_MESSAGE_TTL_SECONDS):
+    if datetime.now(timezone.utc) - timestamp > timedelta(seconds=_MESSAGE_TTL_SECONDS):
         del _processed_messages[message_id]
         return False
     return True
@@ -122,7 +124,7 @@ def _is_message_processed(message_id: str) -> bool:
 async def _mark_message_processed(message_id: str, phone: str) -> None:
     """Mark message as processed."""
     async with _message_lock:
-        _processed_messages[message_id] = (datetime.utcnow(), phone)
+        _processed_messages[message_id] = (datetime.now(timezone.utc), phone)
         _processing_messages.discard(message_id)
         if len(_processed_messages) > 1000:
             _processed_messages.popitem(last=False)
@@ -162,34 +164,41 @@ def get_sheets():
     return sheets
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize background jobs on startup."""
+def get_supabase_manager():
+    """Get or create the Supabase manager."""
+    global supabase_manager
+    if supabase_manager is None:
+        supabase_manager = SupabaseManager()
+    return supabase_manager
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize and tear down background jobs."""
     logger.info("Starting AuditBot...")
 
-    # Start scheduler
     scheduler.add_job(
         check_expired_confirmations,
         "interval",
         minutes=settings.timeout_check_interval,
         id="timeout_check",
-        max_instances=1,  # Prevent concurrent executions
+        max_instances=1,
     )
     scheduler.add_job(
         check_expired_audit_sessions,
         "interval",
         minutes=settings.timeout_check_interval,
         id="audit_timeout_check",
-        max_instances=1,  # Prevent concurrent executions
+        max_instances=1,
     )
     scheduler.add_job(
         daily_summary_job,
         "cron",
-        hour=23,  # UTC (20:00 ART = 23:00 UTC)
+        hour=23,
         minute=0,
         id="daily_summary",
         timezone=pytz.UTC,
-        max_instances=1,  # Prevent concurrent executions
+        max_instances=1,
     )
     scheduler.add_job(
         sync_sheets_to_supabase,
@@ -201,13 +210,14 @@ async def startup_event():
     scheduler.start()
 
     logger.info("Background jobs started")
+    try:
+        yield
+    finally:
+        scheduler.shutdown()
+        logger.info("AuditBot shutdown")
 
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown."""
-    scheduler.shutdown()
-    logger.info("AuditBot shutdown")
+app = FastAPI(title="AuditBot", version="1.0.0", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -215,7 +225,7 @@ async def health_check():
     """Health check endpoint."""
     return {
         "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -228,6 +238,37 @@ async def sync_now():
     except Exception as e:
         import traceback
         logger.error(f"Manual sync failed: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return {"status": "error", "message": str(e), "traceback": traceback.format_exc()}
+
+
+@app.get("/supabase-health")
+async def supabase_health():
+    """Check Supabase connectivity and core table counts."""
+    try:
+        db = get_supabase_manager()
+        db.validate_connection()
+
+        tables = [
+            "auditores",
+            "sucursales",
+            "checklist_perfumeria",
+            "conversaciones",
+            "pendientes",
+            "sesiones_auditoria",
+            "resultados_perfumeria",
+            "reportes",
+            "gestion",
+        ]
+        counts = {table: db.count_rows(table) for table in tables}
+
+        return {
+            "status": "healthy",
+            "tables": counts,
+        }
+    except Exception as e:
+        import traceback
+        logger.error(f"Supabase health check failed: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         return {"status": "error", "message": str(e), "traceback": traceback.format_exc()}
 
@@ -358,7 +399,7 @@ async def check_expired_confirmations():
             # Notify auditor
             await meta_client.send_text(
                 pendiente.telefono_auditor,
-                "â° Tu confirmaciÃ³n expirÃ³. EnvÃ­ame un nuevo hallazgo cuando estÃ©s listo.",
+                "Ã¢ÂÂ° Tu confirmaciÃƒÂ³n expirÃƒÂ³. EnvÃƒÂ­ame un nuevo hallazgo cuando estÃƒÂ©s listo.",
             )
 
             # Reset conversation state
@@ -422,7 +463,7 @@ async def check_expired_audit_sessions():
                 # Notify auditor
                 await meta_client.send_text(
                     sesion.telefono_auditor,
-                    "Punto omitido automáticamente por inactividad (60+ min). Continuando...",
+                    "Punto omitido automÃ¡ticamente por inactividad (60+ min). Continuando...",
                 )
 
                 # Move to next point if not finished
@@ -434,7 +475,7 @@ async def check_expired_audit_sessions():
                         f"""Punto {punto.punto_orden}/{sesion.total_puntos}:
 {punto.area} - {punto.descripcion}
 
-Tu evaluación:""",
+Tu evaluaciÃ³n:""",
                     )
                 # Clear reminder tracking for this session
                 _last_reminder_sent.pop(sesion.id_sesion, None)
@@ -457,8 +498,8 @@ Tu evaluación:""",
                     punto = checklist[sesion.punto_actual]
                     await meta_client.send_text(
                         sesion.telefono_auditor,
-                        f"""Recordatorio: estás en el punto {punto.punto_orden}/{sesion.total_puntos}.
-Mandá tu observación o escribe 'saltar'.""",
+                        f"""Recordatorio: estÃ¡s en el punto {punto.punto_orden}/{sesion.total_puntos}.
+MandÃ¡ tu observaciÃ³n o escribe 'saltar'.""",
                     )
 
         if expired_sesiones:
@@ -477,13 +518,13 @@ async def daily_summary_job():
         # TODO: Implement query to get today's reports from Reportes sheet
         # This would require extending SheetsManager with a method to query by date
 
-        summary = f"""ðŸ“Š **Resumen Diario AuditBot**
+        summary = f"""Ã°Å¸â€œÅ  **Resumen Diario AuditBot**
 
 Fecha: {datetime.now().strftime('%Y-%m-%d')}
 
-[Resumen en construcciÃ³n]
+[Resumen en construcciÃƒÂ³n]
 
-Para mÃ¡s detalles, consulta la hoja de Reportes."""
+Para mÃƒÂ¡s detalles, consulta la hoja de Reportes."""
 
         meta_client = MetaClient()
         await meta_client.send_text(settings.coordinador_tel, summary)
@@ -502,3 +543,4 @@ if __name__ == "__main__":
         port=settings.port,
         log_level="info",
     )
+
