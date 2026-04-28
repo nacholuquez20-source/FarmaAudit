@@ -21,6 +21,7 @@ from meta_client import MetaClient
 from sheets import SheetsManager
 from supabase_client import SupabaseManager
 from sync_sheets_to_supabase import sync_sheets_to_supabase
+from init_supabase import init_supabase_schema
 
 # Configure logging
 logging.basicConfig(
@@ -176,6 +177,7 @@ def get_supabase_manager():
 async def lifespan(app: FastAPI):
     """Initialize and tear down background jobs."""
     logger.info("Starting AuditBot...")
+    init_supabase_schema()
 
     scheduler.add_job(
         check_expired_confirmations,
