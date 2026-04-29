@@ -11,7 +11,7 @@ from models import (
     ParserResponse, Hallazgo, Severidad, ChecklistPunto, PuntoEvalResult,
     ItemBloque, ResultadoItem, StockItem, DesvioLibre
 )
-from sheets import SheetsManager
+from supabase_manager import SupabaseManager
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class AuditParser:
         settings = get_settings()
         self.client = AsyncAnthropic(api_key=settings.anthropic_api_key)
         self.model = "claude-sonnet-4-20250514"
-        self.sheets = SheetsManager()
+        self.sheets = SupabaseManager()
         logger.info(f"AuditParser initialized with model {self.model}")
 
     def _build_system_prompt(self) -> str:
