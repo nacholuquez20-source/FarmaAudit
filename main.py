@@ -158,7 +158,7 @@ def get_sheets():
     """Get or create sheets manager."""
     global sheets
     if sheets is None:
-        sheets = SheetsManager()
+        sheets = SupabaseManager()
     return sheets
 
 
