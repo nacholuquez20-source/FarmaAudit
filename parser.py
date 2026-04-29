@@ -20,12 +20,17 @@ class AuditParser:
     """Parser using Claude API for audit findings."""
 
     def __init__(self):
-        """Initialize Claude API client."""
-        settings = get_settings()
-        self.client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+        """Initialize parser (AsyncAnthropic is lazily initialized)."""
+        self._client: Optional[AsyncAnthropic] = None
         self.model = "claude-sonnet-4-6"
         self.sheets = SupabaseManager()
-        logger.info(f"AuditParser initialized with model {self.model}")
+
+    def _get_client(self) -> AsyncAnthropic:
+        """Lazy initialization of AsyncAnthropic client."""
+        if self._client is None:
+            settings = get_settings()
+            self._client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+        return self._client
 
     def _build_system_prompt(self) -> str:
         """Build system prompt with facility and area catalogs."""
@@ -92,7 +97,7 @@ Responde EXCLUSIVAMENTE con un JSON válido, sin markdown ni explicaciones:
         try:
             system_prompt = self._build_system_prompt()
 
-            response = await self.client.messages.create(
+            response = await self._get_client().messages.create(
                 model=self.model,
                 max_tokens=2048,
                 system=system_prompt,
@@ -166,7 +171,7 @@ PARSE ANTERIOR: {json.dumps(vars(previous_response), default=str, ensure_ascii=F
 
 Por favor, regenera el parse aplicando la corrección."""
 
-            response = await self.client.messages.create(
+            response = await self._get_client().messages.create(
                 model=self.model,
                 max_tokens=2048,
                 system=system_prompt,
@@ -243,7 +248,7 @@ Responde SOLO con JSON:
   "ok_message": "mensaje corto de confirmación para el auditor"
 }}"""
 
-            response = await self.client.messages.create(
+            response = await self._get_client().messages.create(
                 model=self.model,
                 max_tokens=1024,
                 system=system_prompt,
@@ -334,7 +339,7 @@ Responde SOLO con JSON array, un objeto por ítem en el mismo orden:
   ...
 ]"""
 
-            response = await self.client.messages.create(
+            response = await self._get_client().messages.create(
                 model=self.model,
                 max_tokens=2048,
                 system=system_prompt,
@@ -404,7 +409,7 @@ Si puedes extraer la información completa, responde con:
 Si NO puedes extraer información válida (faltan datos o son incoherentes), responde con:
 {{"nombre": null, "stock_fisico": null, "stock_sistema": null}}"""
 
-            response = await self.client.messages.create(
+            response = await self._get_client().messages.create(
                 model=self.model,
                 max_tokens=512,
                 system=system_prompt,
@@ -476,7 +481,7 @@ Responde con JSON:
 Si no puedes extraer información válida, responde con:
 {{"area_estimada": null, "descripcion": null, "severidad": null}}"""
 
-            response = await self.client.messages.create(
+            response = await self._get_client().messages.create(
                 model=self.model,
                 max_tokens=512,
                 system=system_prompt,

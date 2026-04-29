@@ -60,13 +60,9 @@ class Settings:
     }
 
     def validate(self) -> None:
-        """Validate required settings."""
+        """Validate required settings for core functionality (WhatsApp + Anthropic)."""
         required = [
             "anthropic_api_key",
-            "openai_api_key",
-            "google_sheets_id",
-            "google_service_account_json",
-            "google_drive_folder_id",
             "meta_phone_number_id",
             "meta_access_token",
             "meta_verify_token",
