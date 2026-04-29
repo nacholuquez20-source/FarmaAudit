@@ -139,7 +139,7 @@ class ConversationRouter:
 
                     payload.telefono,
 
-                    "âŒ No estÃ¡s registrado como auditor. Contacta al coordinador.",
+                    "❌ No estás registrado como auditor. Contacta al coordinador.",
 
                 )
 
@@ -231,7 +231,7 @@ class ConversationRouter:
 
             else:
 
-                await meta_client.send_text(payload.telefono, "âš ï¸ Estado desconocido")
+                await meta_client.send_text(payload.telefono, "⚠️ Estado desconocido")
 
                 return "unknown_state"
 
@@ -243,7 +243,7 @@ class ConversationRouter:
 
                 payload.telefono,
 
-                "âŒ Error procesando tu mensaje. Intenta de nuevo.",
+                "❌ Error procesando tu mensaje. Intenta de nuevo.",
 
             )
 
@@ -291,9 +291,9 @@ class ConversationRouter:
 
                 payload.telefono,
 
-                "EscribÃ­ INICIO para comenzar la auditorÃ­a guiada.\n"
+                "Escribí INICIO para comenzar la auditoría guiada.\n"
 
-                "UsÃ¡ /ayuda para ver comandos.",
+                "Usá /ayuda para ver comandos.",
 
             )
 
@@ -327,7 +327,7 @@ class ConversationRouter:
 
                     payload.telefono,
 
-                    "âŒ Error transcribiendo audio. Intenta de nuevo.",
+                    "❌ Error transcribiendo audio. Intenta de nuevo.",
 
                 )
 
@@ -389,9 +389,9 @@ class ConversationRouter:
 
                 payload.telefono,
 
-                "âš ï¸ No entendÃ­ el hallazgo. Por favor, sÃ© mÃ¡s especÃ­fico:\n"
+                "⚠️ No entendí el hallazgo. Por favor, sé más específico:\n"
 
-                "â€¢ Sucursal\nâ€¢ Ãrea (PerfumerÃ­a, Farmacia, etc)\nâ€¢ Sub-item\nâ€¢ DescripciÃ³n",
+                "• Sucursal\n• Área (Perfumería, Farmacia, etc)\n• Sub-item\n• Descripción",
 
             )
 
@@ -519,7 +519,7 @@ class ConversationRouter:
 
         # Check for yes responses (with or without accent)
 
-        if answer in {"SI", "SÃ", "YES", "Y"}:
+        if answer in {"SI", "SÍ", "YES", "Y"}:
 
             logger.info(f"Confirmed finding for {payload.telefono}")
 
@@ -535,7 +535,7 @@ class ConversationRouter:
 
                 payload.telefono,
 
-                "âŒ Descartado. EnvÃ­ame otro hallazgo cuando estÃ©s listo.",
+                "❌ Descartado. Envíame otro hallazgo cuando estés listo.",
 
             )
 
@@ -585,7 +585,7 @@ class ConversationRouter:
 
                 payload.telefono,
 
-                "âš ï¸ Por favor responde con:\nSI - para confirmar\nNO - para descartar\nEDITAR - para hacer cambios",
+                "⚠️ Por favor responde con:\nSI - para confirmar\nNO - para descartar\nEDITAR - para hacer cambios",
 
             )
 
@@ -623,7 +623,7 @@ class ConversationRouter:
 
                 payload.telefono,
 
-                "âŒ Error: No encontrÃ© el pendiente. Intenta de nuevo.",
+                "❌ Error: No encontré el pendiente. Intenta de nuevo.",
 
             )
 
@@ -675,7 +675,7 @@ class ConversationRouter:
 
                     payload.telefono,
 
-                    "âš ï¸ No pude aplicar la correcciÃ³n. Intenta de nuevo.",
+                    "⚠️ No pude aplicar la corrección. Intenta de nuevo.",
 
                 )
 
@@ -779,7 +779,7 @@ class ConversationRouter:
 
                 payload.telefono,
 
-                "âŒ Error procesando la correcciÃ³n.",
+                "❌ Error procesando la corrección.",
 
             )
 
@@ -811,37 +811,37 @@ class ConversationRouter:
 
                 payload.telefono,
 
-                """ðŸ“‹ **AYUDA AuditBot**
+                """📋 **AYUDA AuditBot**
 
 
 
-EnvÃ­ame hallazgos de auditorÃ­a:
+Envíame hallazgos de auditoría:
 
-ðŸ“ **Texto**: DescripciÃ³n del hallazgo
+📝 **Texto**: Descripción del hallazgo
 
-ðŸŽ¤ **Audio**: GrabaciÃ³n con el hallazgo
+🎤 **Audio**: Grabación con el hallazgo
 
-ðŸ“¸ **Foto**: Imagen + descripciÃ³n
+📸 **Foto**: Imagen + descripción
 
 
 
 Comandos:
 
-/ayuda â†’ Esta ayuda
+/ayuda → Esta ayuda
 
-/resumen â†’ Resumen del dÃ­a
+/resumen → Resumen del día
 
-/mis â†’ Mis reportes hoy
+/mis → Mis reportes hoy
 
 
 
-Responde a la confirmaciÃ³n con:
+Responde a la confirmación con:
 
-SI â†’ Confirmar hallazgo
+SI → Confirmar hallazgo
 
-NO â†’ Descartar
+NO → Descartar
 
-EDITAR â†’ Hacer cambios""",
+EDITAR → Hacer cambios""",
 
             )
 
@@ -855,7 +855,7 @@ EDITAR â†’ Hacer cambios""",
 
                 payload.telefono,
 
-                "ðŸ“Š Resumen del dÃ­a:\n(Pronto disponible)",
+                "📊 Resumen del día:\n(Pronto disponible)",
 
             )
 
@@ -869,7 +869,7 @@ EDITAR â†’ Hacer cambios""",
 
                 payload.telefono,
 
-                "ðŸ“„ Tus reportes de hoy:\n(Pronto disponible)",
+                "📄 Tus reportes de hoy:\n(Pronto disponible)",
 
             )
 
@@ -897,7 +897,7 @@ EDITAR â†’ Hacer cambios""",
 
         """Show draft for confirmation."""
 
-        draft = "ðŸ“‹ **Borrador de Hallazgos**:\n\n"
+        draft = "📋 **Borrador de Hallazgos**:\n\n"
 
         for i, h in enumerate(parse_result.hallazgos, 1):
 
@@ -905,7 +905,7 @@ EDITAR â†’ Hacer cambios""",
 
             draft += f"   Sub-item: {h.subitem}\n"
 
-            draft += f"   DescripciÃ³n: {h.descripcion}\n"
+            draft += f"   Descripción: {h.descripcion}\n"
 
             draft += f"   Severidad: {h.severidad.value}\n"
 
@@ -1029,7 +1029,7 @@ EDITAR â†’ Hacer cambios""",
 
 
 
-                # Create gestiÃ³n
+                # Create gestión
 
                 gestion = Gestion(
 
@@ -1065,19 +1065,19 @@ EDITAR â†’ Hacer cambios""",
 
                 msg = (
 
-                    f"ðŸš¨ **Nuevo Hallazgo de AuditorÃ­a**\n\n"
+                    f"🚨 **Nuevo Hallazgo de Auditoría**\n\n"
 
                     f"Sucursal: {sucursal.nombre}\n"
 
-                    f"Ãrea: {hallazgo_data['area']}\n"
+                    f"Área: {hallazgo_data['area']}\n"
 
-                    f"DesvÃ­o: {hallazgo_data['descripcion']}\n"
+                    f"Desvío: {hallazgo_data['descripcion']}\n"
 
                     f"Severidad: {hallazgo_data['severidad']}\n"
 
                     f"Plazo: {plazo_fecha.strftime('%Y-%m-%d %H:%M')}\n\n"
 
-                    f"ID GestiÃ³n: {gestion_id}"
+                    f"ID Gestión: {gestion_id}"
 
                 )
 
@@ -1103,7 +1103,7 @@ EDITAR â†’ Hacer cambios""",
 
                 conv.telefono,
 
-                "âœ… Hallazgos guardados. Notificaciones enviadas a responsables.",
+                "✅ Hallazgos guardados. Notificaciones enviadas a responsables.",
 
             )
 
@@ -1117,7 +1117,7 @@ EDITAR â†’ Hacer cambios""",
 
                 conv.telefono,
 
-                "âŒ Error guardando hallazgos.",
+                "❌ Error guardando hallazgos.",
 
             )
 
@@ -1160,7 +1160,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "âŒ No hay sucursales disponibles.",
+                    "❌ No hay sucursales disponibles.",
 
                 )
 
@@ -1205,7 +1205,7 @@ EDITAR â†’ Hacer cambios""",
 
                 payload.telefono,
 
-                "âŒ Error iniciando auditorÃ­a.",
+                "❌ Error iniciando auditoría.",
 
             )
 
@@ -1235,7 +1235,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "âš ï¸ Por favor responde con un nÃºmero.",
+                    "⚠️ Por favor responde con un número.",
 
                 )
 
@@ -1255,7 +1255,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "âš ï¸ Responde con un nÃºmero vÃ¡lido.",
+                    "⚠️ Responde con un número válido.",
 
                 )
 
@@ -1271,7 +1271,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    f"âš ï¸ NÃºmero fuera de rango. Elige entre 1 y {len(sucursales)}.",
+                    f"⚠️ Número fuera de rango. Elige entre 1 y {len(sucursales)}.",
 
                 )
 
@@ -1293,7 +1293,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "âŒ No hay checklist disponible.",
+                    "❌ No hay checklist disponible.",
 
                 )
 
@@ -1311,7 +1311,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "âŒ No hay bloques de checklist disponibles.",
+                    "❌ No hay bloques de checklist disponibles.",
 
                 )
 
@@ -1375,7 +1375,7 @@ EDITAR â†’ Hacer cambios""",
 
                 payload.telefono,
 
-                f"âœ… Iniciando auditorÃ­a en {sucursal.nombre}",
+                f"✅ Iniciando auditoría en {sucursal.nombre}",
 
             )
 
@@ -1403,7 +1403,7 @@ EDITAR â†’ Hacer cambios""",
 
                 payload.telefono,
 
-                "âŒ Error seleccionando sucursal.",
+                "❌ Error seleccionando sucursal.",
 
             )
 
@@ -2023,7 +2023,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "âŒ SesiÃ³n no encontrada.",
+                    "❌ Sesión no encontrada.",
 
                 )
 
@@ -2121,7 +2121,7 @@ EDITAR â†’ Hacer cambios""",
 
                         payload.telefono,
 
-                        "â¸ï¸ AuditorÃ­a pausada. Escribe 'continuar' cuando quieras retomar.",
+                        "⏸️ Auditoría pausada. Escribe 'continuar' cuando quieras retomar.",
 
                     )
 
@@ -2147,7 +2147,7 @@ EDITAR â†’ Hacer cambios""",
 
                         payload.telefono,
 
-                        "âŒ Error transcribiendo audio. Intenta de nuevo.",
+                        "❌ Error transcribiendo audio. Intenta de nuevo.",
 
                     )
 
@@ -2161,7 +2161,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "âš ï¸ Por favor envÃ­a audio, foto o texto con tu observaciÃ³n.",
+                    "⚠️ Por favor envía audio, foto o texto con tu observación.",
 
                 )
 
@@ -2229,7 +2229,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "âŒ Error evaluando respuesta. Intenta de nuevo.",
+                    "❌ Error evaluando respuesta. Intenta de nuevo.",
 
                 )
 
@@ -2237,7 +2237,7 @@ EDITAR â†’ Hacer cambios""",
 
 
 
-            # If desvÃ­o, create reporte and gestiÃ³n automatically
+            # If desvío, create reporte and gestión automatically
 
             if eval_result.tiene_desvio:
 
@@ -2297,7 +2297,7 @@ EDITAR â†’ Hacer cambios""",
 
 
 
-                # Create gestiÃ³n
+                # Create gestión
 
                 if sucursal:
 
@@ -2345,19 +2345,19 @@ EDITAR â†’ Hacer cambios""",
 
                     msg = (
 
-                        f"ðŸš¨ **Hallazgo de AuditorÃ­a Guiada**\n\n"
+                        f"🚨 **Hallazgo de Auditoría Guiada**\n\n"
 
                         f"Sucursal: {sucursal.nombre}\n"
 
-                        f"Ãrea: {punto.area}\n"
+                        f"Área: {punto.area}\n"
 
-                        f"DesvÃ­o: {eval_result.descripcion_desvio}\n"
+                        f"Desvío: {eval_result.descripcion_desvio}\n"
 
                         f"Severidad: {eval_result.severidad}\n"
 
                         f"Plazo: {plazo_fecha.strftime('%Y-%m-%d %H:%M')}\n\n"
 
-                        f"ID GestiÃ³n: {gestion_id}"
+                        f"ID Gestión: {gestion_id}"
 
                     )
 
@@ -2439,7 +2439,7 @@ EDITAR â†’ Hacer cambios""",
 
                 payload.telefono,
 
-                "âŒ Error procesando respuesta.",
+                "❌ Error procesando respuesta.",
 
             )
 
@@ -2483,7 +2483,7 @@ EDITAR â†’ Hacer cambios""",
 
                         payload.telefono,
 
-                        "âŒ SesiÃ³n no encontrada.",
+                        "❌ Sesión no encontrada.",
 
                     )
 
@@ -2537,7 +2537,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "âš ï¸ Escribe 'continuar' para retomar la auditorÃ­a.",
+                    "⚠️ Escribe 'continuar' para retomar la auditoría.",
 
                 )
 
@@ -2637,17 +2637,17 @@ EDITAR â†’ Hacer cambios""",
 
             # Build detail
 
-            detalle = "DesvÃ­os encontrados:\n"
+            detalle = "Desvíos encontrados:\n"
 
             for h in hallazgos:
 
-                detalle += f"â€¢ {h['area']}: {h['descripcion']} ({h['severidad']})\n"
+                detalle += f"• {h['area']}: {h['descripcion']} ({h['severidad']})\n"
 
 
 
             if not hallazgos:
 
-                detalle = "No se encontraron desvÃ­os. Â¡Excelente auditorÃ­a!"
+                detalle = "No se encontraron desvíos. ¡Excelente auditoría!"
 
 
 
@@ -2689,7 +2689,7 @@ EDITAR â†’ Hacer cambios""",
 
                 coord_msg = (
 
-                    f"ðŸ“Š **AuditorÃ­a Completada**\n\n"
+                    f"📊 **Auditoría Completada**\n\n"
 
                     f"Auditor: {auditor_nombre}\n"
 
@@ -2697,11 +2697,11 @@ EDITAR â†’ Hacer cambios""",
 
                     f"Total de puntos: {sesion.total_puntos}\n"
 
-                    f"DesvÃ­os: {desvios}\n"
+                    f"Desvíos: {desvios}\n"
 
                     f"Omitidos: {omitidos_count}\n"
 
-                    f"ID SesiÃ³n: {sesion.id_sesion}"
+                    f"ID Sesión: {sesion.id_sesion}"
 
                 )
 
@@ -2771,7 +2771,7 @@ EDITAR â†’ Hacer cambios""",
 
                         payload.telefono,
 
-                        "â¸ï¸ AuditorÃ­a pausada. MandÃ¡ 'continuar' cuando estÃ©s listo.",
+                        "⏸️ Auditoría pausada. Mandá 'continuar' cuando estés listo.",
 
                     )
 
@@ -2785,7 +2785,7 @@ EDITAR â†’ Hacer cambios""",
 
             if not sesion:
 
-                await meta_client.send_text(payload.telefono, "âŒ SesiÃ³n no encontrada")
+                await meta_client.send_text(payload.telefono, "❌ Sesión no encontrada")
 
                 return "error"
 
@@ -2799,7 +2799,7 @@ EDITAR â†’ Hacer cambios""",
 
             if bloque_id not in bloques:
 
-                await meta_client.send_text(payload.telefono, "âŒ Bloque no encontrado")
+                await meta_client.send_text(payload.telefono, "❌ Bloque no encontrado")
 
                 return "error"
 
@@ -2841,7 +2841,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "âŒ No pude evaluar la respuesta. Intenta de nuevo.",
+                    "❌ No pude evaluar la respuesta. Intenta de nuevo.",
 
                 )
 
@@ -3649,7 +3649,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "âš ï¸ MandÃ¡ 'NO' o describÃ­ el desvÃ­o",
+                    "⚠️ Mandá 'NO' o describí el desvío",
 
                 )
 
@@ -3733,7 +3733,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "âŒ No pude procesar el desvÃ­o. Intenta de nuevo.",
+                    "❌ No pude procesar el desvío. Intenta de nuevo.",
 
                 )
 
@@ -3867,7 +3867,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "âš ï¸ RespondÃ© SI, NO o PENDIENTE",
+                    "⚠️ Respondé SI, NO o PENDIENTE",
 
                 )
 
@@ -3877,13 +3877,13 @@ EDITAR â†’ Hacer cambios""",
 
             respuesta = payload.contenido.upper().strip()
 
-            if respuesta not in {"SI", "SÃ", "NO", "PENDIENTE"}:
+            if respuesta not in {"SI", "SÍ", "NO", "PENDIENTE"}:
 
                 await meta_client.send_text(
 
                     payload.telefono,
 
-                    "âš ï¸ RespondÃ© SI, NO o PENDIENTE",
+                    "⚠️ Respondé SI, NO o PENDIENTE",
 
                 )
 
@@ -4065,7 +4065,7 @@ EDITAR â†’ Hacer cambios""",
 
                 coord_msg = (
 
-                    f"ðŸ“Š **AuditorÃ­a Completada (Flujo Bloques)**\n\n"
+                    f"📊 **Auditoría Completada (Flujo Bloques)**\n\n"
 
                     f"Auditor: {auditor_nombre}\n"
 
@@ -4073,19 +4073,19 @@ EDITAR â†’ Hacer cambios""",
 
                     f"Puntaje: {puntaje_total:.1f}/{puntaje_maximo:.1f}\n"
 
-                    f"DesvÃ­os: {desvios_count}\n"
+                    f"Desvíos: {desvios_count}\n"
 
-                    f"  ðŸ”´ CrÃ­ticos: {alta_count}\n"
+                    f"  🔴 Críticos: {alta_count}\n"
 
-                    f"  ðŸŸ¡ Importantes: {media_count}\n"
+                    f"  🟡 Importantes: {media_count}\n"
 
-                    f"  ðŸŸ¢ Leves: {baja_count}\n"
+                    f"  🟢 Leves: {baja_count}\n"
 
                     f"Productos verificados: {stock_count}\n"
 
                     f"Compromisos: {sesion.compromisos_firmados}\n"
 
-                    f"ID SesiÃ³n: {sesion.id_sesion}"
+                    f"ID Sesión: {sesion.id_sesion}"
 
                 )
 
