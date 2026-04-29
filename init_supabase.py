@@ -50,7 +50,7 @@ def init_supabase_schema():
             "conversaciones",
             "sesiones_auditoria",
             "reportes",
-            "gestiones"
+            "gestion"
         ]
 
         for table in critical_tables:
