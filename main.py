@@ -18,7 +18,7 @@ from models import WhatsAppPayload, ConversationState
 from router import ConversationRouter
 from meta_client import MetaClient
 from sheets import SheetsManager
-from sync_sheets_to_supabase import sync_sheets_to_supabase
+# from sync_sheets_to_supabase import sync_sheets_to_supabase  # Disabled: using Supabase directly
 from init_supabase import init_supabase_schema
 
 # Configure logging
@@ -193,13 +193,14 @@ async def startup_event():
         timezone=pytz.UTC,
         max_instances=1,  # Prevent concurrent executions
     )
-    scheduler.add_job(
-        sync_sheets_to_supabase,
-        "interval",
-        minutes=5,
-        id="sheets_supabase_sync",
-        max_instances=1,
-    )
+    # Disabled: Using Supabase directly, no longer syncing from Google Sheets
+    # scheduler.add_job(
+    #     sync_sheets_to_supabase,
+    #     "interval",
+    #     minutes=5,
+    #     id="sheets_supabase_sync",
+    #     max_instances=1,
+    # )
     scheduler.start()
 
     logger.info("Background jobs started")
@@ -221,17 +222,11 @@ async def health_check():
     }
 
 
-@app.get("/sync-now")
-async def sync_now():
-    """Manual sync endpoint for testing."""
-    try:
-        await sync_sheets_to_supabase()
-        return {"status": "success", "message": "Sync completed"}
-    except Exception as e:
-        import traceback
-        logger.error(f"Manual sync failed: {e}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        return {"status": "error", "message": str(e), "traceback": traceback.format_exc()}
+# @app.get("/sync-now")
+# async def sync_now():
+#     """Manual sync endpoint for testing."""
+#     # Disabled: using Supabase directly, no longer syncing from Google Sheets
+#     pass
 
 
 @app.get("/webhook")
