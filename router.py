@@ -26,7 +26,7 @@ from models import (
 
 )
 
-from sheets import SheetsManager
+from supabase_manager import SupabaseManager
 
 from parser import AuditParser
 
@@ -67,7 +67,7 @@ class ConversationRouter:
 
         """Initialize router with dependencies."""
 
-        self.sheets = SheetsManager()
+        self.sheets = SupabaseManager()
 
         self.parser = AuditParser()
 

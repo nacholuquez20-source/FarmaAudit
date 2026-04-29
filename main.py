@@ -17,8 +17,7 @@ from config import get_settings
 from models import WhatsAppPayload, ConversationState
 from router import ConversationRouter
 from meta_client import MetaClient
-from sheets import SheetsManager
-# from sync_sheets_to_supabase import sync_sheets_to_supabase  # Disabled: using Supabase directly
+from supabase_manager import SupabaseManager
 from init_supabase import init_supabase_schema
 
 # Configure logging
