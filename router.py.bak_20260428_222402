@@ -343,7 +343,7 @@ class ConversationRouter:
 
                 payload.telefono,
 
-                "📸 Recibí la foto. ¿Qué hallazgo describe? Enviame texto con el contexto.",
+                "ðŸ“¸ RecibÃ­ la foto. Â¿QuÃ© hallazgo describe? Enviame texto con el contexto.",
 
             )
 
@@ -571,7 +571,7 @@ class ConversationRouter:
 
                 payload.telefono,
 
-                "✏️ ¿Qué necesitas editar? Enviame la corrección.",
+                "âœï¸ Â¿QuÃ© necesitas editar? Enviame la correcciÃ³n.",
 
             )
 
@@ -913,7 +913,7 @@ EDITAR â†’ Hacer cambios""",
 
 
 
-        draft += "¿Confirmo? (SI/NO/EDITAR)"
+        draft += "Â¿Confirmo? (SI/NO/EDITAR)"
 
 
 
@@ -3063,7 +3063,7 @@ EDITAR â†’ Hacer cambios""",
 
                         payload.telefono,
 
-                        "🔍 Verificación de Stock\n\n¿Cuántos productos querés verificar? (0 para saltar)",
+                        "ðŸ” VerificaciÃ³n de Stock\n\nÂ¿CuÃ¡ntos productos querÃ©s verificar? (0 para saltar)",
 
                     )
 
@@ -3163,7 +3163,7 @@ EDITAR â†’ Hacer cambios""",
 
                         payload.telefono,
 
-                        "🔍 Verificación de Stock\n\n¿Cuántos productos querés verificar? (0 para saltar)",
+                        "ðŸ” VerificaciÃ³n de Stock\n\nÂ¿CuÃ¡ntos productos querÃ©s verificar? (0 para saltar)",
 
                     )
 
@@ -3715,7 +3715,7 @@ EDITAR â†’ Hacer cambios""",
 
                     payload.telefono,
 
-                    "📝 Compromisos\n\n¿Firmaron compromisos de corrección?\n\nSI / NO / PENDIENTE",
+                    "ðŸ“ Compromisos\n\nÂ¿Firmaron compromisos de correcciÃ³n?\n\nSI / NO / PENDIENTE",
 
                 )
 
@@ -3827,7 +3827,7 @@ EDITAR â†’ Hacer cambios""",
 
                 payload.telefono,
 
-                f"✓ Registrado desvío en {desvio.area_estimada}\n\n¿Hay más desvíos? Describí o mandá 'NO'",
+                f"âœ“ Registrado desvÃ­o en {desvio.area_estimada}\n\nÂ¿Hay mÃ¡s desvÃ­os? DescribÃ­ o mandÃ¡ 'NO'",
 
             )
 
