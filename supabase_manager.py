@@ -106,14 +106,19 @@ class SupabaseManager:
         try:
             response = self.client.table("auditores").select("*").execute()
             auditores = response.data or []
+            logger.debug(f"get_auditor: searching for {telefono_norm}, total auditores in DB: {len(auditores)}")
             for aud in auditores:
-                if self._normalize_phone(str(aud.get("telefono", ""))) == telefono_norm:
+                aud_phone_norm = self._normalize_phone(str(aud.get("telefono", "")))
+                logger.debug(f"get_auditor: comparing {telefono_norm} == {aud_phone_norm} (stored: {aud.get('telefono')}, nombre: {aud.get('nombre')})")
+                if aud_phone_norm == telefono_norm:
+                    logger.info(f"get_auditor: MATCH found for {telefono_norm}")
                     return Auditor(
                         telefono=str(aud.get("telefono", "")),
                         nombre=aud.get("nombre", ""),
                         cuadrilla=aud.get("cuadrilla", ""),
                         activo=aud.get("activo", False),
                     )
+            logger.warning(f"get_auditor: NO MATCH found for {telefono_norm}")
             return None
         except Exception as e:
             logger.error(f"Failed to get auditor {telefono}: {e}")

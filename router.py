@@ -133,6 +133,8 @@ class ConversationRouter:
 
             auditor = self.sheets.get_auditor(payload.telefono)
 
+            logger.info(f"DEBUG: Searching for auditor with phone={payload.telefono}, found={auditor is not None}, active={auditor.activo if auditor else 'N/A'}")
+
             if not auditor or not auditor.activo:
 
                 await meta_client.send_text(
