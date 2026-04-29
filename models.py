@@ -12,6 +12,8 @@ class ConversationState(str, Enum):
     IDLE = "idle"
     ESPERANDO_CONFIRMACION = "esperando_confirmacion"
     ESPERANDO_EDICION = "esperando_edicion"
+    SELECCIONANDO_ESCUADRON = "seleccionando_escuadron"
+    SELECCIONANDO_SUCURSAL_PERFUMERIA = "seleccionando_sucursal_perfumeria"
     SELECCIONANDO_SUCURSAL = "seleccionando_sucursal"
     SELECCIONANDO_TIPO_AUDITORIA = "seleccionando_tipo_auditoria"
     EN_AUDITORIA = "en_auditoria"  # Guided point-by-point audit flow

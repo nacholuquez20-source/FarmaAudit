@@ -179,6 +179,14 @@ class ConversationRouter:
 
                 return await self._handle_idle_state(payload, auditor, conv, meta_client)
 
+            elif conv.estado_actual == ConversationState.SELECCIONANDO_ESCUADRON:
+
+                return await self._handle_seleccionando_escuadron(payload, auditor, conv, meta_client)
+
+            elif conv.estado_actual == ConversationState.SELECCIONANDO_SUCURSAL_PERFUMERIA:
+
+                return await self._handle_seleccionando_sucursal_perfumeria(payload, conv, meta_client)
+
             elif conv.estado_actual == ConversationState.SELECCIONANDO_SUCURSAL:
 
                 return await self._handle_seleccionando_sucursal(payload, conv, meta_client)
@@ -788,6 +796,169 @@ class ConversationRouter:
             return "error"
 
 
+    async def _handle_seleccionando_escuadron(
+        self,
+        payload: WhatsAppPayload,
+        auditor: Auditor,
+        conv: Conversacion,
+        meta_client: MetaClient,
+    ) -> str:
+        """Handle escuadrón selection."""
+        try:
+            if not payload.contenido:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "⚠️ Por favor, escribe: Perfumería o Medicamentos"
+                )
+                return "empty_escuadron"
+
+            escuadron_input = payload.contenido.strip().lower()
+
+            # Normalize auditor's escuadrón
+            escuadron_auditor = auditor.cuadrilla.lower().strip()
+
+            # Check if auditor belongs to this escuadrón
+            if escuadron_input not in escuadron_auditor:
+                await meta_client.send_text(
+                    payload.telefono,
+                    f"❌ No perteneces al escuadrón '{payload.contenido.strip()}'. Tu escuadrón es: {auditor.cuadrilla}"
+                )
+                return "escuadron_mismatch"
+
+            # Get all sucursales
+            sucursales = self.sheets.get_all_sucursales()
+            if not sucursales:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "❌ No hay sucursales disponibles.",
+                )
+                return "no_sucursales"
+
+            # Build sucursal menu
+            menu = f"🏪 Auditoría {auditor.cuadrilla}\n\nSelecciona tu sucursal:\n\n"
+            for i, s in enumerate(sucursales, 1):
+                menu += f"{i}. {s.nombre} ({s.zona})\n"
+            menu += "\nResponde con el número de la sucursal."
+
+            await meta_client.send_text(payload.telefono, menu)
+
+            # Update conversation state
+            self.sheets.update_conversacion(
+                telefono=payload.telefono,
+                estado=ConversationState.SELECCIONANDO_SUCURSAL_PERFUMERIA,
+                id_pendiente="",
+            )
+
+            return "sucursal_menu_sent"
+
+        except Exception as e:
+            logger.error(f"Error handling escuadrón selection: {e}")
+            await meta_client.send_text(
+                payload.telefono,
+                "❌ Error procesando tu escuadrón.",
+            )
+            return "error"
+
+
+    async def _handle_seleccionando_sucursal_perfumeria(
+        self,
+        payload: WhatsAppPayload,
+        conv: Conversacion,
+        meta_client: MetaClient,
+    ) -> str:
+        """Handle sucursal selection for perfumery audit."""
+        try:
+            if not payload.contenido:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "⚠️ Por favor, responde con el número de la sucursal."
+                )
+                return "empty_sucursal"
+
+            try:
+                choice = int(payload.contenido.strip())
+            except ValueError:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "⚠️ Opción no válida. Elige un número entre 1 y 25."
+                )
+                return "invalid_number"
+
+            sucursales = self.sheets.get_all_sucursales()
+            if not sucursales or choice < 1 or choice > len(sucursales):
+                await meta_client.send_text(
+                    payload.telefono,
+                    f"⚠️ Opción no válida. Elige un número entre 1 y {len(sucursales)}."
+                )
+                return "invalid_choice"
+
+            sucursal = sucursales[choice - 1]
+
+            # Get perfumery checklist
+            bloques_perfumeria = self.sheets.get_checklist_perfumeria()
+            if not bloques_perfumeria:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "❌ No hay checklist de perfumería disponible.",
+                )
+                return "no_checklist"
+
+            # Create audit session
+            import uuid
+            sesion_id = str(uuid.uuid4())[:12]
+            auditor = self.sheets.get_auditor(payload.telefono)
+
+            sesion = SesionAuditoria(
+                id_sesion=sesion_id,
+                telefono_auditor=payload.telefono,
+                sucursal_id=sucursal.id,
+                estado="en_curso",
+                timestamp_inicio=self._utc_now_iso(),
+                timestamp_ultimo_punto=self._utc_now_iso(),
+                punto_actual=0,
+                total_puntos=len(self.sheets.get_checklist_perfumeria_flat()),
+                hallazgos_json="[]",
+                omitidos_json="[]",
+                bloque_actual="",
+                resultados_json="{}",
+                stock_total=0,
+                stock_actual=0,
+                stock_items_json="[]",
+                desvios_libres_json="[]",
+                compromisos_firmados="",
+            )
+
+            self.sheets.create_sesion(sesion)
+
+            # Update conversation state
+            self.sheets.update_conversacion(
+                telefono=payload.telefono,
+                estado=ConversationState.EN_BLOQUE_PERFUMERIA,
+                id_pendiente=sesion_id,
+            )
+
+            # Send welcome message
+            await meta_client.send_text(
+                payload.telefono,
+                f"✅ Comenzando auditoría de perfumería en {sucursal.nombre}\n\nResponde las siguientes preguntas."
+            )
+
+            # Get updated conversation
+            conv_updated = self.sheets.get_conversacion(payload.telefono)
+            if conv_updated:
+                # Trigger first question by calling _handle_en_bloque_perfumeria
+                return await self._handle_en_bloque_perfumeria(payload, conv_updated, meta_client)
+            else:
+                return "sesion_created"
+
+        except Exception as e:
+            logger.error(f"Error handling sucursal selection: {e}")
+            await meta_client.send_text(
+                payload.telefono,
+                "❌ Error iniciando auditoría.",
+            )
+            return "error"
+
 
     async def _handle_command(
 
@@ -1137,7 +1308,7 @@ EDITAR → Hacer cambios""",
 
     ) -> str:
 
-        """Start guided audit flow: send sucursal list."""
+        """Start audit flow: ask for escuadrón (squad/team)."""
 
         try:
 
@@ -1154,54 +1325,23 @@ EDITAR → Hacer cambios""",
                         omitidos_json=sesion_previa.omitidos_json,
                     )
 
-            sucursales = self.sheets.get_all_sucursales()
-
-            if not sucursales:
-
-                await meta_client.send_text(
-
-                    payload.telefono,
-
-                    "❌ No hay sucursales disponibles.",
-
-                )
-
-                return "no_sucursales"
-
-
-
-            # Build menu
-
-            # Present audit type menu
-            menu = "Qué tipo de auditoría deseas realizar?\n\n"
-            menu += "1 Perfumería\n"
-            menu += "\nResponde con el número."
-
-
+            menu = "👋 ¡Hola! ¿A qué escuadrón perteneces?\n\n"
+            menu += "Escribe: Perfumería o Medicamentos"
 
             await meta_client.send_text(payload.telefono, menu)
 
-
-
-            # Update conversation state (clear old session if restarting)
-
+            # Update conversation state
             self.sheets.update_conversacion(
-
                 telefono=payload.telefono,
-
-                estado=ConversationState.SELECCIONANDO_TIPO_AUDITORIA,
-
+                estado=ConversationState.SELECCIONANDO_ESCUADRON,
                 id_pendiente="",
-
             )
 
-
-
-            return "tipo_auditoria_menu_sent"
+            return "escuadron_menu_sent"
 
         except Exception as e:
 
-            logger.error(f"Error initiating audit type selection: {e}")
+            logger.error(f"Error initiating audit: {e}")
 
             await meta_client.send_text(
 
