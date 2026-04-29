@@ -75,6 +75,9 @@ class Settings:
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Get application settings (cached singleton)."""
+    import logging
+    logger = logging.getLogger(__name__)
     settings = Settings()
+    logger.info(f"Settings loaded: supabase_url={'SET' if settings.supabase_url else 'NOT SET'}, supabase_service_key={'SET' if settings.supabase_service_key else 'NOT SET'}")
     settings.validate()
     return settings
