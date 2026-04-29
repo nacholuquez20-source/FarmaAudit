@@ -23,7 +23,7 @@ class AuditParser:
         """Initialize Claude API client."""
         settings = get_settings()
         self.client = AsyncAnthropic(api_key=settings.anthropic_api_key)
-        self.model = "claude-sonnet-4-20250514"
+        self.model = "claude-sonnet-4-6"
         self.sheets = SupabaseManager()
         logger.info(f"AuditParser initialized with model {self.model}")
 
