@@ -1308,10 +1308,20 @@ EDITAR → Hacer cambios""",
 
     ) -> str:
 
-        """Start audit flow: ask for escuadrón (squad/team)."""
+        """Start audit flow: show sucursal list based on auditor's escuadrón."""
 
         try:
 
+            # Get auditor to check their cuadrilla
+            auditor = self.sheets.get_auditor(payload.telefono)
+            if not auditor or not auditor.activo:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "❌ No estás registrado como auditor. Contacta al coordinador.",
+                )
+                return "auditor_not_found"
+
+            # Cancel any previous session
             conv_actual = self.sheets.get_conversacion(payload.telefono)
             if conv_actual and conv_actual.id_pendiente:
                 sesion_previa = self.sheets.get_sesion(conv_actual.id_pendiente)
@@ -1325,19 +1335,32 @@ EDITAR → Hacer cambios""",
                         omitidos_json=sesion_previa.omitidos_json,
                     )
 
-            menu = "👋 ¡Hola! ¿A qué escuadrón perteneces?\n\n"
-            menu += "Escribe: Perfumería o Medicamentos"
+            # Get all sucursales
+            sucursales = self.sheets.get_all_sucursales()
+            if not sucursales:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "❌ No hay sucursales disponibles.",
+                )
+                return "no_sucursales"
+
+            # Build sucursal menu with auditor's escuadrón
+            menu = f"👋 ¡Hola {auditor.nombre}! 🏪 Auditoría {auditor.cuadrilla}\n\n"
+            menu += "Selecciona tu sucursal:\n\n"
+            for i, s in enumerate(sucursales, 1):
+                menu += f"{i}. {s.nombre} ({s.zona})\n"
+            menu += "\nResponde con el número de la sucursal."
 
             await meta_client.send_text(payload.telefono, menu)
 
-            # Update conversation state
+            # Update conversation state directly to sucursal selection
             self.sheets.update_conversacion(
                 telefono=payload.telefono,
-                estado=ConversationState.SELECCIONANDO_ESCUADRON,
+                estado=ConversationState.SELECCIONANDO_SUCURSAL_PERFUMERIA,
                 id_pendiente="",
             )
 
-            return "escuadron_menu_sent"
+            return "sucursal_menu_sent"
 
         except Exception as e:
 
