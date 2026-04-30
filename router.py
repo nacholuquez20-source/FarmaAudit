@@ -908,6 +908,10 @@ class ConversationRouter:
             sesion_id = str(uuid.uuid4())[:12]
             auditor = self.sheets.get_auditor(payload.telefono)
 
+            # Get first block
+            bloques_ordenados = sorted(bloques_perfumeria.keys())
+            primer_bloque = bloques_ordenados[0] if bloques_ordenados else ""
+
             sesion = SesionAuditoria(
                 id_sesion=sesion_id,
                 telefono_auditor=payload.telefono,
@@ -916,10 +920,10 @@ class ConversationRouter:
                 timestamp_inicio=self._utc_now_iso(),
                 timestamp_ultimo_punto=self._utc_now_iso(),
                 punto_actual=0,
-                total_puntos=len(self.sheets.get_checklist_perfumeria_flat()),
+                total_puntos=len(bloques_ordenados),
                 hallazgos_json="[]",
                 omitidos_json="[]",
-                bloque_actual="",
+                bloque_actual=primer_bloque,
                 resultados_json="{}",
                 stock_total=0,
                 stock_actual=0,
@@ -1662,13 +1666,34 @@ EDITAR → Hacer cambios""",
             return "error"
 
 
+    def _build_tema_pregunta(self, bloque_id: str, bloque_nombre: str, puntos: list) -> str:
+        """Build thematic question with context of all points in block."""
+        emoji_map = {
+            "PRES": "🏪",
+            "GOND": "📦",
+            "STOCK": "📊",
+            "REVISTA": "📰",
+            "PERSONAL": "👔",
+            "COND": "🏗️",
+            "ATENCION": "👥",
+            "EXTRAS": "📝",
+        }
+        emoji = emoji_map.get(bloque_id, "📋")
+
+        msg = f"{emoji} {bloque_nombre.upper()}\n\n"
+        msg += "Verifica:\n"
+        for punto in puntos:
+            msg += f"• {punto.pregunta}\n"
+        msg += "\n¿Qué observas?"
+        return msg
+
     async def _handle_en_bloque_perfumeria(
         self,
         payload: WhatsAppPayload,
         conv: Conversacion,
         meta_client: MetaClient,
     ) -> str:
-        """Handle perfumery block-by-block audit flow."""
+        """Handle perfumery audit flow - thematic questions grouped by block."""
         try:
             # Get active session
             sesion = self.sheets.get_sesion(conv.id_pendiente)
@@ -1680,7 +1705,7 @@ EDITAR → Hacer cambios""",
                 )
                 return "sesion_not_found"
 
-            # Get perfumery checklist
+            # Get perfumery checklist grouped by block
             bloques_perfumeria = self.sheets.get_checklist_perfumeria()
 
             if not bloques_perfumeria:
@@ -1690,10 +1715,11 @@ EDITAR → Hacer cambios""",
                 )
                 return "no_checklist"
 
-            # Get flat list of all points
-            todos_puntos = self.sheets.get_checklist_perfumeria_flat()
+            # Get ordered list of block IDs
+            bloques_ordenados = sorted(bloques_perfumeria.keys())
 
-            if sesion.punto_actual >= len(todos_puntos):
+            # Check if audit is complete
+            if sesion.bloque_actual not in bloques_ordenados:
                 # Audit complete
                 await meta_client.send_text(
                     payload.telefono,
@@ -1717,35 +1743,18 @@ EDITAR → Hacer cambios""",
 
                 return "auditoria_completa"
 
-            # Get current point
-            punto_actual = todos_puntos[sesion.punto_actual]
+            # Get current block
+            bloque_actual_id = sesion.bloque_actual
+            puntos_bloque = bloques_perfumeria.get(bloque_actual_id, [])
 
-            # Handle response based on expected type
-            tipo_respuesta = punto_actual.tipo_respuesta
+            if not puntos_bloque:
+                logger.warning(f"No puntos found for bloque {bloque_actual_id}")
+                return "bloque_not_found"
 
-            if tipo_respuesta == "foto_si_no":
-                return await self._handle_perfumeria_foto_si_no(
-                    payload, punto_actual, sesion, todos_puntos, meta_client
-                )
-            elif tipo_respuesta == "numero_audio":
-                return await self._handle_perfumeria_numero_audio(
-                    payload, punto_actual, sesion, todos_puntos, meta_client
-                )
-            elif tipo_respuesta == "lista_texto":
-                return await self._handle_perfumeria_lista_texto(
-                    payload, punto_actual, sesion, todos_puntos, meta_client
-                )
-            elif tipo_respuesta == "si_no":
-                return await self._handle_perfumeria_si_no(
-                    payload, punto_actual, sesion, todos_puntos, meta_client
-                )
-            elif tipo_respuesta == "mixto":
-                return await self._handle_perfumeria_observaciones(
-                    payload, punto_actual, sesion, todos_puntos, meta_client
-                )
-            else:
-                logger.warning(f"Unknown response type: {tipo_respuesta}")
-                return "unknown_type"
+            # Handle response (text/photo)
+            return await self._handle_perfumeria_respuesta_abierta(
+                payload, bloque_actual_id, puntos_bloque, sesion, bloques_ordenados, meta_client
+            )
 
         except Exception as e:
             logger.error(f"Error in _handle_en_bloque_perfumeria: {e}", exc_info=True)
@@ -1755,6 +1764,197 @@ EDITAR → Hacer cambios""",
             )
             return "error"
 
+    async def _handle_perfumeria_respuesta_abierta(
+        self,
+        payload: WhatsAppPayload,
+        bloque_id: str,
+        puntos_bloque: list,
+        sesion: SesionAuditoria,
+        bloques_ordenados: list,
+        meta_client: MetaClient,
+    ) -> str:
+        """Handle open-ended responses for perfumery audit blocks."""
+        try:
+            # Handle photo first
+            if payload.tipo == "image" and payload.media_url:
+                try:
+                    photo_url = await self.drive.upload_photo_from_url(
+                        payload.media_url,
+                        f"perf_audit_{sesion.id_sesion}_{bloque_id}_{uuid.uuid4().hex[:4]}.jpg"
+                    )
+                    resultados = json.loads(sesion.resultados_json) if sesion.resultados_json else {}
+                    if f"bloque_{bloque_id}_fotos" not in resultados:
+                        resultados[f"bloque_{bloque_id}_fotos"] = []
+                    resultados[f"bloque_{bloque_id}_fotos"].append(photo_url)
+
+                    self.sheets.update_sesion(
+                        id_sesion=sesion.id_sesion,
+                        estado=sesion.estado,
+                        timestamp_ultimo_punto=self._utc_now_iso(),
+                        punto_actual=sesion.punto_actual,
+                        hallazgos_json=sesion.hallazgos_json,
+                        omitidos_json=sesion.omitidos_json,
+                        resultados_json=json.dumps(resultados, ensure_ascii=False),
+                    )
+
+                    # Ask for text observation
+                    bloque_nombre = puntos_bloque[0].bloque_nombre if puntos_bloque else bloque_id
+                    await meta_client.send_text(
+                        payload.telefono,
+                        f"📸 Foto guardada.\n\nAhora, describe: ¿Qué observas en {bloque_nombre}?"
+                    )
+                    return "waiting_text"
+
+                except Exception as e:
+                    logger.error(f"Error uploading photo: {e}")
+                    await meta_client.send_text(
+                        payload.telefono,
+                        "❌ Error subiendo foto. Intenta de nuevo."
+                    )
+                    return "upload_error"
+
+            # Handle text response
+            elif payload.contenido:
+                respuesta = payload.contenido.strip()
+
+                if not respuesta or len(respuesta) < 2:
+                    await meta_client.send_text(
+                        payload.telefono,
+                        "⚠️ Por favor describe con más detalle lo que observas."
+                    )
+                    return "invalid_response"
+
+                # Store response and extract deviations with Claude
+                resultados = json.loads(sesion.resultados_json) if sesion.resultados_json else {}
+                bloque_nombre = puntos_bloque[0].bloque_nombre if puntos_bloque else bloque_id
+
+                # Build context for Claude
+                contexto_puntos = "\n".join([f"- {p.pregunta}" for p in puntos_bloque])
+
+                resultados[f"bloque_{bloque_id}"] = {
+                    "bloque_nombre": bloque_nombre,
+                    "respuesta": respuesta,
+                    "timestamp": self._utc_now_iso()
+                }
+
+                # Parse deviations with Claude
+                desvios = await self._extract_perfumeria_deviations(
+                    bloque_nombre, contexto_puntos, respuesta
+                )
+
+                # Add deviations to hallazgos
+                hallazgos = json.loads(sesion.hallazgos_json) if sesion.hallazgos_json else []
+                for desvio in desvios:
+                    hallazgos.append(desvio)
+
+                # Move to next block
+                current_index = bloques_ordenados.index(bloque_id)
+                siguiente_bloque = bloques_ordenados[current_index + 1] if current_index + 1 < len(bloques_ordenados) else None
+
+                self.sheets.update_sesion(
+                    id_sesion=sesion.id_sesion,
+                    estado=sesion.estado,
+                    timestamp_ultimo_punto=self._utc_now_iso(),
+                    punto_actual=sesion.punto_actual + 1,
+                    hallazgos_json=json.dumps(hallazgos, ensure_ascii=False),
+                    omitidos_json=sesion.omitidos_json,
+                    resultados_json=json.dumps(resultados, ensure_ascii=False),
+                    bloque_actual=siguiente_bloque or "",
+                )
+
+                # Show next question or completion
+                if siguiente_bloque:
+                    bloques_perfumeria = self.sheets.get_checklist_perfumeria()
+                    puntos_siguiente = bloques_perfumeria.get(siguiente_bloque, [])
+                    siguiente_nombre = puntos_siguiente[0].bloque_nombre if puntos_siguiente else siguiente_bloque
+                    pregunta = self._build_tema_pregunta(siguiente_bloque, siguiente_nombre, puntos_siguiente)
+                    await meta_client.send_text(payload.telefono, f"✅ Registrado.\n\n{pregunta}")
+                else:
+                    await meta_client.send_text(
+                        payload.telefono,
+                        "✅ ¡Auditoría completada!"
+                    )
+
+                return "respuesta_procesada"
+
+            else:
+                # Initial question display
+                bloque_nombre = puntos_bloque[0].bloque_nombre if puntos_bloque else bloque_id
+                pregunta = self._build_tema_pregunta(bloque_id, bloque_nombre, puntos_bloque)
+                await meta_client.send_text(payload.telefono, pregunta)
+                return "waiting_input"
+
+        except Exception as e:
+            logger.error(f"Error in _handle_perfumeria_respuesta_abierta: {e}", exc_info=True)
+            await meta_client.send_text(
+                payload.telefono,
+                "❌ Error procesando tu respuesta.",
+            )
+            return "error"
+
+    async def _extract_perfumeria_deviations(
+        self,
+        bloque_nombre: str,
+        contexto_puntos: str,
+        respuesta_auditor: str,
+    ) -> list:
+        """Extract deviations from auditor's open-ended response using Claude."""
+        try:
+            prompt = f"""Analiza la respuesta del auditor y extrae SOLO los desvios o problemas observados.
+
+BLOQUE: {bloque_nombre}
+PUNTOS A VERIFICAR:
+{contexto_puntos}
+
+RESPUESTA DEL AUDITOR:
+"{respuesta_auditor}"
+
+TAREA:
+1. Si la respuesta indica que TODO está bien/correcto, retorna: []
+2. Si hay desvios/problemas, retorna un JSON array con desvios. Cada desvio debe tener:
+   - "desvio": descripción clara del problema
+   - "severidad": "Alta" si es crítico/urgente, "Media" si es importante, "Baja" si es menor
+
+Retorna SOLO el JSON array, sin explicaciones.
+
+EJEMPLO SI TODO ESTÁ BIEN:
+[]
+
+EJEMPLO SI HAY DESVIOS:
+[
+  {{"desvio": "Vidriera desordenada", "severidad": "Media"}},
+  {{"desvio": "Falta stock en gondolas", "severidad": "Alta"}}
+]"""
+
+            response = self.parser.client.messages.create(
+                model="claude-3-5-sonnet-20241022",
+                max_tokens=500,
+                messages=[{"role": "user", "content": prompt}]
+            )
+
+            respuesta_texto = response.content[0].text.strip()
+
+            # Parse JSON response
+            desvios_data = json.loads(respuesta_texto)
+
+            # Convert to hallazgo format
+            desvios = []
+            for dev in desvios_data:
+                desvios.append({
+                    "bloque": bloque_nombre,
+                    "desvio": dev.get("desvio", ""),
+                    "severidad": dev.get("severidad", "Media"),
+                    "timestamp": self._utc_now_iso()
+                })
+
+            return desvios
+
+        except json.JSONDecodeError:
+            logger.warning(f"Could not parse Claude response as JSON: {respuesta_texto}")
+            return []
+        except Exception as e:
+            logger.error(f"Error extracting deviations: {e}")
+            return []
 
     async def _handle_perfumeria_foto_si_no(
         self,
