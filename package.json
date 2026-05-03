@@ -1,0 +1,10 @@
+{
+  "name": "farma-audit",
+  "version": "1.0.0",
+  "description": "FarmaAudit - Pharmacy Audit System",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
