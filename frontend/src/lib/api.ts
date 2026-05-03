@@ -14,12 +14,19 @@ import type {
   BranchAgg,
 } from '../types';
 
+function handleApiError(error: { message?: string }): string {
+  if (import.meta.env.DEV) {
+    return error.message || 'An error occurred';
+  }
+  return 'Error al obtener datos. Intente de nuevo.';
+}
+
 export async function getSucursales(): Promise<Sucursal[]> {
   const { data, error } = await supabase
     .from('sucursales')
     .select('*')
     .order('nombre');
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(handleApiError(error));
   return data || [];
 }
 
@@ -29,7 +36,7 @@ export async function getSucursal(id: string): Promise<Sucursal> {
     .select('*')
     .eq('id', id)
     .single();
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(handleApiError(error));
   return data;
 }
 
@@ -39,7 +46,7 @@ export async function getReporte(id: string): Promise<Reporte | null> {
     .select('*')
     .eq('id', id)
     .maybeSingle();
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(handleApiError(error));
   return data;
 }
 
@@ -56,7 +63,7 @@ export async function getReportes(params?: { sucursal_id?: string; auditor?: str
   }
 
   const { data, error } = await query.order('fecha', { ascending: false });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(handleApiError(error));
   return data || [];
 }
 
@@ -73,7 +80,7 @@ export async function getGestion(params?: { sucursal_id?: string; estado?: strin
   }
 
   const { data, error } = await query.order('plazo_fecha');
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(handleApiError(error));
   return data || [];
 }
 
@@ -83,7 +90,7 @@ export async function getGestionById(id: string): Promise<Gestion | null> {
     .select('*')
     .eq('id_gestion', id)
     .maybeSingle();
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(handleApiError(error));
   return data;
 }
 
@@ -101,7 +108,7 @@ export async function getDesvioEventos(idGestion: string): Promise<DesvioEvento[
 
   if (error) {
     if (isMissingOptionalTableError(error)) return [];
-    throw new Error(error.message);
+    throw new Error(handleApiError(error));
   }
 
   return data || [];
@@ -118,7 +125,7 @@ export async function createDesvioEvento(input: CreateDesvioEventoInput): Promis
     if (isMissingOptionalTableError(error)) {
       throw new Error('La tabla desvio_eventos no existe. Ejecuta frontend/docs/sql/etapa-2.sql en Supabase.');
     }
-    throw new Error(error.message);
+    throw new Error(handleApiError(error));
   }
 
   return data;
@@ -140,7 +147,7 @@ export async function updateGestion(id: string, estado: GestionState, cerrado_po
     .select()
     .single();
 
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(handleApiError(error));
   return data;
 }
 
@@ -149,7 +156,7 @@ export async function getAuditores(): Promise<Auditor[]> {
     .from('auditores')
     .select('*')
     .order('nombre');
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(handleApiError(error));
   return data || [];
 }
 
@@ -160,7 +167,7 @@ export async function createAuditor(auditor: Auditor): Promise<Auditor> {
     .select()
     .single();
 
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(handleApiError(error));
   return data;
 }
 
@@ -172,7 +179,7 @@ export async function updateAuditor(telefono: string, data: Partial<Auditor>): P
     .select()
     .single();
 
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(handleApiError(error));
   return result;
 }
 
@@ -183,7 +190,7 @@ export async function listPanelProfiles(): Promise<UserProfile[]> {
     .order('role', { ascending: true })
     .order('nombre', { ascending: true });
 
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(handleApiError(error));
   return (data || []) as UserProfile[];
 }
 
@@ -203,7 +210,7 @@ export async function updatePanelProfile(
     .select('id, role, nombre, telefono, id_sucursal')
     .single();
 
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(handleApiError(error));
   return data as UserProfile;
 }
 
@@ -267,6 +274,7 @@ function getDemoData(): DashboardStats {
     gestiones_resueltas: 3,
     gestiones_cerradas: 2,
     tasa_cierre: 33,
+    sucursales_sin_auditoria: 0,
     criticos_activos: 2,
     criticos_vencidos: 1,
     severidad: { alta: 3, media: 5, baja: 4 },
@@ -318,12 +326,7 @@ function getDemoData(): DashboardStats {
       { id_sucursal: 'demo-1', sucursal: 'Sucursal Centro', abiertos: 2, vencidos: 1, altas: 2, criticos_activos: 1 },
       { id_sucursal: 'demo-2', sucursal: 'Sucursal Norte', abiertos: 2, vencidos: 1, altas: 1, criticos_activos: 1 },
     ],
-    por_zona: [
-      { zona: 'Centro', sucursales: 1, total_desvios: 5, abiertos: 2, vencidos: 1, criticos_activos: 1, puntaje_promedio: 76 },
-      { zona: 'Norte', sucursales: 1, total_desvios: 4, abiertos: 2, vencidos: 1, criticos_activos: 1, puntaje_promedio: 64 },
-      { zona: 'Sur', sucursales: 1, total_desvios: 3, abiertos: 1, vencidos: 0, criticos_activos: 0, puntaje_promedio: 88 },
-    ],
-    trend: Array.from({ length: 30 }, (_, i) => {
+    tendencia_ultimos_30_dias: Array.from({ length: 30 }, (_, i) => {
       const fecha = new Date();
       fecha.setDate(fecha.getDate() - (29 - i));
       return {
@@ -332,6 +335,12 @@ function getDemoData(): DashboardStats {
         cerrados: Math.floor(Math.random() * 5) + 1,
       };
     }),
+    por_zona: [
+      { zona: 'Centro', sucursales: 1, total_desvios: 5, abiertos: 2, vencidos: 1, criticos_activos: 1, puntaje_promedio: 76 },
+      { zona: 'Norte', sucursales: 1, total_desvios: 4, abiertos: 2, vencidos: 1, criticos_activos: 1, puntaje_promedio: 64 },
+      { zona: 'Sur', sucursales: 1, total_desvios: 3, abiertos: 1, vencidos: 0, criticos_activos: 0, puntaje_promedio: 88 },
+    ],
+    isDemoData: true,
   };
 }
 

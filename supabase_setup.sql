@@ -185,6 +185,14 @@ create policy "profiles_admin_update" on profiles for update using (
   exists (select 1 from profiles where id = auth.uid() and role = 'admin')
 );
 
+-- Prevent role escalation: role field can only be changed by admins
+create policy "profiles_role_protected" on profiles for update
+  using (true)
+  with check (
+    -- Role can only be changed if the user doing the update is an admin
+    (new.role = old.role) or (exists (select 1 from profiles where id = auth.uid() and role = 'admin'))
+  );
+
 -- Webhook dedup: only service role should access; deny anon/authenticated
 create policy "webhook_dedup_deny_all" on webhook_dedup for all using (false);
 

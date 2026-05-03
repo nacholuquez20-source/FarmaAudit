@@ -3,6 +3,23 @@ import type { User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import type { UserProfile, Role } from '../types';
 
+const DEV_USER = {
+  id: 'dev-user-123',
+  email: 'dev@test.com',
+  user_metadata: {},
+  app_metadata: {},
+  aud: 'authenticated',
+  created_at: new Date().toISOString(),
+} as unknown as User;
+
+const DEV_PROFILE: UserProfile = {
+  id: 'dev-user-123',
+  role: 'admin',
+  nombre: 'Dev Admin',
+  telefono: null,
+  id_sucursal: null,
+};
+
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -26,26 +43,14 @@ export function useAuth() {
           setProfile(data);
         }
       } else {
-        // Development mode: fake admin user
-        const fakeUser = {
-          id: 'dev-user-123',
-          email: 'dev@test.com',
-          user_metadata: {},
-          app_metadata: {},
-          aud: 'authenticated',
-          created_at: new Date().toISOString(),
-        } as unknown as User;
-
-        setUser(fakeUser);
-        setProfile({
-          id: 'dev-user-123',
-          role: 'admin',
-          nombre: 'Dev Admin',
-          telefono: null,
-          id_sucursal: null,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        });
+        // In dev mode, use fake user for local testing. In production, user is null (redirects to login).
+        if (import.meta.env.DEV) {
+          setUser(DEV_USER);
+          setProfile(DEV_PROFILE);
+        } else {
+          setUser(null);
+          setProfile(null);
+        }
       }
 
       if (!cancelled) {
@@ -67,26 +72,14 @@ export function useAuth() {
           setProfile(data);
         }
       } else {
-        // Development mode: fake admin user
-        const fakeUser = {
-          id: 'dev-user-123',
-          email: 'dev@test.com',
-          user_metadata: {},
-          app_metadata: {},
-          aud: 'authenticated',
-          created_at: new Date().toISOString(),
-        } as unknown as User;
-
-        setUser(fakeUser);
-        setProfile({
-          id: 'dev-user-123',
-          role: 'admin',
-          nombre: 'Dev Admin',
-          telefono: null,
-          id_sucursal: null,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        });
+        // In dev mode, use fake user for local testing. In production, user is null (redirects to login).
+        if (import.meta.env.DEV) {
+          setUser(DEV_USER);
+          setProfile(DEV_PROFILE);
+        } else {
+          setUser(null);
+          setProfile(null);
+        }
       }
     });
 

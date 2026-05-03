@@ -128,6 +128,8 @@ export interface DashboardStats {
   tendencia_ultimos_30_dias: TendenciaDia[];
   /** Agregados por zona (maestro sucursales) para vista segmentada. */
   por_zona: ZonaResumen[];
+  /** True if showing demo data because database is empty. */
+  isDemoData?: boolean;
 }
 
 export interface BranchAgg {
