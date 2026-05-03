@@ -18,14 +18,36 @@ export function useAuth() {
       } = await supabase.auth.getSession();
 
       if (cancelled) return;
-      setUser(session?.user || null);
 
       if (session?.user) {
+        setUser(session.user);
         const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
         if (!cancelled) {
           setProfile(data);
         }
+      } else {
+        // Development mode: fake admin user
+        const fakeUser = {
+          id: 'dev-user-123',
+          email: 'dev@test.com',
+          user_metadata: {},
+          app_metadata: {},
+          aud: 'authenticated',
+          created_at: new Date().toISOString(),
+        } as unknown as User;
+
+        setUser(fakeUser);
+        setProfile({
+          id: 'dev-user-123',
+          role: 'admin',
+          nombre: 'Dev Admin',
+          telefono: null,
+          id_sucursal: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
       }
+
       if (!cancelled) {
         setLoading(false);
       }
@@ -38,16 +60,33 @@ export function useAuth() {
     } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (cancelled) return;
 
-      setUser(session?.user || null);
       if (session?.user) {
+        setUser(session.user);
         const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
         if (!cancelled) {
           setProfile(data);
         }
       } else {
-        if (!cancelled) {
-          setProfile(null);
-        }
+        // Development mode: fake admin user
+        const fakeUser = {
+          id: 'dev-user-123',
+          email: 'dev@test.com',
+          user_metadata: {},
+          app_metadata: {},
+          aud: 'authenticated',
+          created_at: new Date().toISOString(),
+        } as unknown as User;
+
+        setUser(fakeUser);
+        setProfile({
+          id: 'dev-user-123',
+          role: 'admin',
+          nombre: 'Dev Admin',
+          telefono: null,
+          id_sucursal: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
       }
     });
 
