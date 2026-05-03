@@ -1,18 +1,21 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { login } from '../hooks/useAuth';
+import { login, requestPasswordReset } from '../hooks/useAuth';
 import { supabase } from '../lib/supabase';
 
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setMessage('');
     setLoading(true);
 
     try {
@@ -35,6 +38,27 @@ export default function Login() {
       setError(err instanceof Error ? err.message : 'Error al iniciar sesion');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePasswordReset = async () => {
+    setError('');
+    setMessage('');
+
+    if (!email) {
+      setError('Ingresa tu email para enviarte el enlace de recuperacion.');
+      return;
+    }
+
+    setResetLoading(true);
+
+    try {
+      await requestPasswordReset(email);
+      setMessage('Te enviamos un enlace para crear una nueva contrasena. Usalo apenas llegue.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al enviar el enlace de recuperacion');
+    } finally {
+      setResetLoading(false);
     }
   };
 
@@ -85,6 +109,12 @@ export default function Login() {
             </div>
           )}
 
+          {message && (
+            <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+              {message}
+            </div>
+          )}
+
           <button
             type="submit"
             disabled={loading}
@@ -101,6 +131,15 @@ export default function Login() {
             ) : (
               'Iniciar sesion'
             )}
+          </button>
+
+          <button
+            type="button"
+            onClick={handlePasswordReset}
+            disabled={resetLoading}
+            className="w-full text-sm font-medium text-blue-700 hover:text-blue-900 disabled:opacity-50"
+          >
+            {resetLoading ? 'Enviando enlace...' : 'Olvide mi contrasena'}
           </button>
         </form>
 

@@ -5,6 +5,7 @@ import { FeedbackState } from './components/FeedbackState';
 import type { Role } from './types';
 
 const Login = lazy(() => import('./pages/Login'));
+const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Desvios = lazy(() => import('./pages/Desvios'));
 const DesvioDetail = lazy(() => import('./pages/DesvioDetail'));
@@ -56,6 +57,7 @@ export default function App() {
       <Suspense fallback={<div className="min-h-screen bg-gray-50 p-8"><FeedbackState title="Cargando vista..." /></div>}>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
 
           <Route
             path="/dashboard"
