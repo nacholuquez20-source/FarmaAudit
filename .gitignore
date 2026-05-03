@@ -7,6 +7,8 @@
 # Google Service Account
 service-account.json
 *.json
+!vercel.json
+!/frontend/vercel.json
 
 # Python
 __pycache__/
