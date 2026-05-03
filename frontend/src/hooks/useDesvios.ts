@@ -1,20 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useGestion } from './useGestion';
 import { useReportes } from './useReportes';
-import type { Gestion, GestionState, Severidad } from '../types';
-
-export interface DesvioFilters {
-  sucursal: string;
-  severidad: '' | Severidad;
-  estado: '' | GestionState;
-  fechaDesde: string;
-  fechaHasta: string;
-  search: string;
-}
-
-export interface Desvio extends Gestion {
-  area: string;
-}
+import { useAuth } from './useAuth';
+import type { Desvio, DesvioFilters, Gestion, Severidad } from '../types';
 
 const initialFilters: DesvioFilters = {
   sucursal: '',
@@ -81,8 +69,10 @@ function compareDesvios(a: Gestion, b: Gestion): number {
 }
 
 export function useDesvios() {
-  const { gestiones, loading: loadingGestion, error: gestionError } = useGestion();
-  const { reportes, loading: loadingReportes, error: reportesError } = useReportes();
+  const { role, profile } = useAuth();
+  const scopedSucursalId = role === 'sucursal' ? profile?.id_sucursal ?? undefined : undefined;
+  const { gestiones, loading: loadingGestion, error: gestionError } = useGestion({ sucursal_id: scopedSucursalId });
+  const { reportes, loading: loadingReportes, error: reportesError } = useReportes({ sucursal_id: scopedSucursalId });
   const [filters, setFilters] = useState<DesvioFilters>(initialFilters);
 
   const allDesvios = useMemo<Desvio[]>(() => {

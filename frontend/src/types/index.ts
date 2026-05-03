@@ -1,7 +1,10 @@
-export type Role = 'admin' | 'auditor';
+export type Role = 'admin' | 'auditor' | 'sucursal';
 export type Severidad = 'Alta' | 'Media' | 'Baja';
 export type GestionState = 'Abierta' | 'En_proceso' | 'Resuelta' | 'Cerrada' | 'Vencida';
 export type DesvioEventoTipo = 'creacion' | 'contacto' | 'respuesta' | 'cierre' | 'nota' | 'evidencia';
+export type AdminTabKey = 'auditores' | 'usuarios';
+export type DashboardView = 'general' | 'zona';
+export type SucursalDetailTab = 'reportes' | 'gestiones' | 'stock';
 
 export interface Sucursal {
   id: string;
@@ -47,6 +50,25 @@ export interface Gestion {
   updated_at?: string;
 }
 
+export interface GestionUpdate {
+  estado: GestionState;
+  cerrado_por?: string;
+  fecha_cierre?: string;
+}
+
+export interface Desvio extends Gestion {
+  area: string;
+}
+
+export interface DesvioFilters {
+  sucursal: string;
+  severidad: '' | Severidad;
+  estado: '' | GestionState;
+  fechaDesde: string;
+  fechaHasta: string;
+  search: string;
+}
+
 export interface DesvioEvento {
   id: string;
   id_gestion: string;
@@ -79,6 +101,8 @@ export interface UserProfile {
   role: Role;
   nombre: string | null;
   telefono: string | null;
+  /** Responsable de sucursal: id en tabla sucursales (perfumerías). */
+  id_sucursal: string | null;
 }
 
 export interface DashboardStats {
@@ -90,6 +114,10 @@ export interface DashboardStats {
   gestiones_cerradas: number;
   tasa_cierre: number;
   sucursales_sin_auditoria: number;
+  /** Severidad Alta y estado aún sin cierre efectivo (Abierta, En proceso o Vencida). */
+  criticos_activos: number;
+  /** Subconjunto Alta + Vencida. */
+  criticos_vencidos: number;
   severidad: {
     alta: number;
     media: number;
@@ -98,17 +126,59 @@ export interface DashboardStats {
   sucursales_estado: SucursalSupervision[];
   ranking_sucursales: SucursalRanking[];
   tendencia_ultimos_30_dias: TendenciaDia[];
+  /** Agregados por zona (maestro sucursales) para vista segmentada. */
+  por_zona: ZonaResumen[];
+}
+
+export interface BranchAgg {
+  id_sucursal: string;
+  sucursal: string;
+  zona: string;
+  abiertos: number;
+  vencidos: number;
+  altas: number;
+  criticos_activos: number;
+  resueltos: number;
+  cerrados: number;
+  total: number;
+}
+
+export interface ControlStockItem {
+  id: string;
+  auditoria_id: string | null;
+  sucursal_id: string;
+  fecha: string;
+  auditor: string;
+  nombre_item: string;
+  stock_fisico: number;
+  stock_sistema: number;
+  diferencia: number;
+  alerta: string;
+}
+
+export interface ZonaResumen {
+  zona: string;
+  sucursales: number;
+  total_desvios: number;
+  abiertos: number;
+  vencidos: number;
+  criticos_activos: number;
+  puntaje_promedio: number;
 }
 
 export interface SucursalSupervision {
   id_sucursal: string;
   sucursal: string;
+  zona: string;
   abiertos: number;
   vencidos: number;
   altas: number;
+  criticos_activos: number;
   resueltos: number;
   cerrados: number;
   total: number;
+  /** 0–100, mayor es mejor cumplimiento frente a desvíos/vencidos. */
+  puntaje: number;
   semaforo: 'verde' | 'amarillo' | 'rojo';
 }
 
@@ -118,6 +188,7 @@ export interface SucursalRanking {
   abiertos: number;
   vencidos: number;
   altas: number;
+  criticos_activos: number;
 }
 
 export interface TendenciaDia {

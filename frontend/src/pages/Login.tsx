@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { login } from '../hooks/useAuth';
+import { supabase } from '../lib/supabase';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -16,7 +17,20 @@ export default function Login() {
 
     try {
       await login(email, password);
-      navigate('/dashboard');
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        navigate('/login');
+        return;
+      }
+      const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).maybeSingle();
+      const r = profile?.role;
+      if (r === 'admin' || r === 'sucursal') {
+        navigate('/dashboard');
+      } else {
+        navigate('/desvios');
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al iniciar sesion');
     } finally {

@@ -7,14 +7,14 @@ import { useGestion } from '../hooks/useGestion';
 import { useReportes } from '../hooks/useReportes';
 import { getSucursal } from '../lib/api';
 import { formatDate, gestionStateLabel, severidadColor } from '../lib/utils';
-import type { Sucursal } from '../types';
+import type { Sucursal, SucursalDetailTab } from '../types';
 
 export default function SucursalDetail() {
   const { id } = useParams<{ id: string }>();
   const [sucursal, setSucursal] = useState<Sucursal | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [activeTab, setActiveTab] = useState<'reportes' | 'gestiones' | 'stock'>('reportes');
+  const [activeTab, setActiveTab] = useState<SucursalDetailTab>('reportes');
   const navigate = useNavigate();
 
   const { reportes } = useReportes(id ? { sucursal_id: id } : undefined);
@@ -90,10 +90,10 @@ export default function SucursalDetail() {
       <div className="bg-white rounded-lg shadow">
         <div className="border-b border-gray-200">
           <div className="flex gap-0">
-            {['reportes', 'gestiones', 'stock'].map((tab) => (
+            {(['reportes', 'gestiones', 'stock'] as SucursalDetailTab[]).map((tab) => (
               <button
                 key={tab}
-                onClick={() => setActiveTab(tab as typeof activeTab)}
+                onClick={() => setActiveTab(tab)}
                 className={`px-6 py-4 font-medium border-b-2 transition ${
                   activeTab === tab
                     ? 'border-blue-600 text-blue-600'

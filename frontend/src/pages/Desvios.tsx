@@ -3,7 +3,7 @@ import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { useDesvios } from '../hooks/useDesvios';
 import type { Gestion, GestionState, Severidad } from '../types';
-import { formatDate, gestionStateColor, gestionStateLabel, severidadColor } from '../lib/utils';
+import { formatDate, gestionStateColor, gestionStateLabel, severidadColor, getWhatsappUrl } from '../lib/utils';
 
 const severidades: Severidad[] = ['Alta', 'Media', 'Baja'];
 const estados: GestionState[] = ['Abierta', 'En_proceso', 'Resuelta', 'Vencida', 'Cerrada'];
@@ -15,21 +15,6 @@ function getShortDescription(text: string): string {
 
 function getDisplayDate(gestion: Gestion): string {
   return gestion.created_at || gestion.updated_at || gestion.plazo_fecha;
-}
-
-function getWhatsappUrl(gestion: Gestion): string | null {
-  const phone = gestion.tel_responsable.replace(/\D/g, '');
-  if (!phone) return null;
-
-  const message = [
-    `Hola ${gestion.responsable || ''}`.trim(),
-    `Te contactamos por un desvio registrado en ${gestion.sucursal}.`,
-    `Detalle: ${gestion.desvio}`,
-    `Severidad: ${gestion.severidad}`,
-    `Vencimiento: ${formatDate(gestion.plazo_fecha)}`,
-  ].join('\n');
-
-  return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
 }
 
 export default function Desvios() {

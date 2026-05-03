@@ -8,7 +8,7 @@ interface AppLayoutProps {
 }
 
 export function AppLayout({ children, title, showAdmin = true }: AppLayoutProps) {
-  const { user, role } = useAuth();
+  const { user, role, profile } = useAuth();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
@@ -57,6 +57,22 @@ export function AppLayout({ children, title, showAdmin = true }: AppLayoutProps)
                     </Link>
                     <Link to="/sucursales" className="text-gray-600 hover:text-gray-900 hover:underline">
                       Sucursales
+                    </Link>
+                  </>
+                )}
+                {role === 'sucursal' && (
+                  <>
+                    <Link to="/dashboard" className="text-gray-600 hover:text-gray-900 hover:underline">
+                      Resumen
+                    </Link>
+                    <Link to="/desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
+                      Desvíos
+                    </Link>
+                    <Link
+                      to={profile?.id_sucursal ? `/sucursales/${profile.id_sucursal}` : '/sucursales'}
+                      className="text-gray-600 hover:text-gray-900 hover:underline"
+                    >
+                      Mi sucursal
                     </Link>
                   </>
                 )}

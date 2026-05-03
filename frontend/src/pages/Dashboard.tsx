@@ -4,7 +4,8 @@ import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { KPICard } from '../components/KPICard';
 import { useDashboardStats } from '../hooks/useDashboardStats';
-import type { SucursalSupervision } from '../types';
+import { useAuth } from '../hooks/useAuth';
+import type { DashboardView, SucursalSupervision } from '../types';
 import {
   Bar,
   BarChart,
@@ -39,9 +40,19 @@ function formatTime(date: Date | null): string {
   return date.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
+const ZONES_PER_PAGE = 10;
+
 export default function Dashboard() {
   const [refreshSeconds, setRefreshSeconds] = useState(0);
-  const { stats, loading, refreshing, error, lastUpdated, refresh } = useDashboardStats(refreshSeconds * 1000);
+  const [vista, setVista] = useState<DashboardView>('general');
+  const [zonePageIndex, setZonePageIndex] = useState(0);
+  const { role, profile } = useAuth();
+  const scopedSucursal = role === 'sucursal' ? profile?.id_sucursal ?? null : null;
+  const { stats, loading, refreshing, error, lastUpdated, refresh } = useDashboardStats(
+    refreshSeconds * 1000,
+    scopedSucursal,
+  );
+  const mostrarVistaZona = role === 'admin';
 
   const gestionStateData = stats
     ? [
@@ -62,14 +73,28 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <AppLayout title="Dashboard">
+      <AppLayout title={role === 'sucursal' ? 'Resumen' : 'Dashboard'}>
         <FeedbackState title="Cargando supervision..." />
       </AppLayout>
     );
   }
 
+  if (role === 'sucursal' && !scopedSucursal) {
+    return (
+      <AppLayout title="Resumen">
+        <FeedbackState
+          title="No hay sucursal asignada a tu usuario."
+          description="Pedí al administrador que cargue tu sucursal y rol Responsable en la sección Administración."
+          tone="error"
+        />
+      </AppLayout>
+    );
+  }
+
+  const layoutTitle = role === 'sucursal' ? 'Resumen de mi sucursal' : 'Dashboard de calidad';
+
   return (
-    <AppLayout title="Dashboard">
+    <AppLayout title={layoutTitle}>
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-sm text-gray-600">Ultima actualizacion: {formatTime(lastUpdated)}</p>
@@ -102,15 +127,146 @@ export default function Dashboard() {
 
       {stats && (
         <>
-          <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
-            <KPICard title="Total Desvios" value={stats.total_desvios} color="blue" />
-            <KPICard title="Abiertos" value={stats.gestiones_abiertas} color="yellow" />
-            <KPICard title="Vencidos" value={stats.gestiones_vencidas} color="red" />
+          {mostrarVistaZona && (
+            <div className="mb-6 inline-flex rounded-lg border border-gray-200 bg-white p-1 shadow-sm">
+              <button
+                type="button"
+                onClick={() => {
+                  setVista('general');
+                  setZonePageIndex(0);
+                }}
+                className={`rounded-md px-4 py-2 text-sm font-semibold transition ${
+                  vista === 'general' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                Vista general
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setVista('zona');
+                  setZonePageIndex(0);
+                }}
+                className={`rounded-md px-4 py-2 text-sm font-semibold transition ${
+                  vista === 'zona' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                Por zona
+              </button>
+            </div>
+          )}
+
+          <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+            <KPICard title="Total desvíos" value={stats.total_desvios} color="blue" />
+            <KPICard title="Gestión abierta/en curso" value={stats.gestiones_abiertas} color="yellow" />
+            <KPICard title="Vencidos (todos)" value={stats.gestiones_vencidas} color="red" />
+            <KPICard title="Críticos altas activos" value={stats.criticos_activos} color="red" />
+            <KPICard title="Críticos altas vencidos" value={stats.criticos_vencidos} color="red" />
             <KPICard title="Resueltos" value={stats.gestiones_resueltas} color="green" />
             <KPICard title="Cerrados" value={stats.gestiones_cerradas} color="green" />
-            <KPICard title="Tasa Cierre" value={`${stats.tasa_cierre.toFixed(1)}%`} color="blue" />
+            <KPICard title="Tasa cierre" value={`${stats.tasa_cierre.toFixed(1)}%`} color="blue" />
           </div>
 
+          {vista === 'zona' && mostrarVistaZona && (
+            <div className="mb-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
+              <section className="rounded-lg bg-white p-6 shadow">
+                <h2 className="mb-4 text-lg font-semibold">Desempeño por zona</h2>
+                {stats.por_zona.length === 0 ? (
+                  <FeedbackState title="Sin datos por zona." />
+                ) : (
+                  <ResponsiveContainer width="100%" height={320}>
+                    <BarChart data={stats.por_zona}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="zona" tick={{ fontSize: 11 }} interval={0} angle={-18} height={64} />
+                      <YAxis allowDecimals={false} domain={[0, 100]} />
+                      <Tooltip />
+                      <Bar dataKey="puntaje_promedio" name="Puntaje prom." fill="#059669" radius={[8, 8, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </section>
+
+              <section className="rounded-lg bg-white p-6 shadow">
+                <h2 className="mb-4 text-lg font-semibold">Urgencia por zona</h2>
+                {stats.por_zona.length === 0 ? (
+                  <FeedbackState title="Sin datos por zona." />
+                ) : (
+                  <ResponsiveContainer width="100%" height={320}>
+                    <BarChart data={stats.por_zona}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="zona" tick={{ fontSize: 11 }} interval={0} angle={-18} height={64} />
+                      <YAxis allowDecimals={false} />
+                      <Tooltip />
+                      <Bar dataKey="criticos_activos" name="Críticos activos" fill="#dc2626" radius={[8, 8, 0, 0]} />
+                      <Bar dataKey="vencidos" name="Vencidos" fill="#f59e0b" radius={[8, 8, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </section>
+
+              <section className="rounded-lg bg-white p-6 shadow lg:col-span-2">
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="text-lg font-semibold">Tabla por zona</h2>
+                  <span className="text-xs text-gray-500">
+                    Página {zonePageIndex + 1} de {Math.ceil(stats.por_zona.length / ZONES_PER_PAGE) || 1}
+                  </span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[720px]">
+                    <thead className="border-b bg-gray-100">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-sm font-semibold">Zona</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold">Sucursales</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold">Desvíos</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold">Abiertos</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold">Vencidos</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold">Críticos</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold">Puntaje prom.</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stats.por_zona
+                        .slice(zonePageIndex * ZONES_PER_PAGE, (zonePageIndex + 1) * ZONES_PER_PAGE)
+                        .map((row) => (
+                          <tr key={row.zona} className="border-b hover:bg-gray-50">
+                            <td className="px-4 py-3 text-sm font-medium text-gray-900">{row.zona}</td>
+                            <td className="px-4 py-3 text-right text-sm">{row.sucursales}</td>
+                            <td className="px-4 py-3 text-right text-sm">{row.total_desvios}</td>
+                            <td className="px-4 py-3 text-right text-sm">{row.abiertos}</td>
+                            <td className="px-4 py-3 text-right text-sm text-amber-800">{row.vencidos}</td>
+                            <td className="px-4 py-3 text-right text-sm font-semibold text-red-700">{row.criticos_activos}</td>
+                            <td className="px-4 py-3 text-right text-sm font-semibold text-emerald-700">{row.puntaje_promedio}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+                {Math.ceil(stats.por_zona.length / ZONES_PER_PAGE) > 1 && (
+                  <div className="mt-4 flex items-center justify-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setZonePageIndex(Math.max(0, zonePageIndex - 1))}
+                      disabled={zonePageIndex === 0}
+                      className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      ← Anterior
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setZonePageIndex(Math.min(Math.ceil(stats.por_zona.length / ZONES_PER_PAGE) - 1, zonePageIndex + 1))}
+                      disabled={zonePageIndex >= Math.ceil(stats.por_zona.length / ZONES_PER_PAGE) - 1}
+                      className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Siguiente →
+                    </button>
+                  </div>
+                )}
+              </section>
+            </div>
+          )}
+
+          {vista === 'general' && (
+          <>
           <div className="mb-8 grid grid-cols-1 gap-6 xl:grid-cols-3">
             <section className="rounded-lg bg-white p-6 shadow xl:col-span-2">
               <div className="mb-4 flex items-center justify-between">
@@ -127,28 +283,38 @@ export default function Dashboard() {
                     <thead className="border-b bg-gray-100">
                       <tr>
                         <th className="px-4 py-3 text-left text-sm font-semibold">Sucursal</th>
+                        {role === 'admin' && (
+                          <th className="px-4 py-3 text-left text-sm font-semibold">Zona</th>
+                        )}
                         <th className="px-4 py-3 text-left text-sm font-semibold">Estado</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold">Puntaje</th>
                         <th className="px-4 py-3 text-right text-sm font-semibold">Abiertos</th>
                         <th className="px-4 py-3 text-right text-sm font-semibold">Vencidos</th>
-                        <th className="px-4 py-3 text-right text-sm font-semibold">Altas</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold">Críticos</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold">Altas (hist.)</th>
                         <th className="px-4 py-3 text-right text-sm font-semibold">Total</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {stats.sucursales_estado.slice(0, 10).map((sucursal) => (
+                      {stats.sucursales_estado.map((sucursal) => (
                         <tr key={sucursal.id_sucursal || sucursal.sucursal} className="border-b hover:bg-gray-50">
                           <td className="px-4 py-4 text-sm font-medium text-gray-900">
                             <Link to={`/sucursales/${sucursal.id_sucursal}`} className="hover:text-blue-700">
                               {sucursal.sucursal}
                             </Link>
                           </td>
+                          {role === 'admin' && (
+                            <td className="px-4 py-4 text-sm text-gray-600">{sucursal.zona}</td>
+                          )}
                           <td className="px-4 py-4 text-sm">
                             <span className={`rounded border px-3 py-1 text-xs font-semibold ${getSemaforoStyles(sucursal.semaforo)}`}>
                               {getSemaforoLabel(sucursal.semaforo)}
                             </span>
                           </td>
+                          <td className="px-4 py-4 text-right text-sm font-semibold text-emerald-800">{sucursal.puntaje}</td>
                           <td className="px-4 py-4 text-right text-sm">{sucursal.abiertos}</td>
                           <td className="px-4 py-4 text-right text-sm font-semibold text-red-700">{sucursal.vencidos}</td>
+                          <td className="px-4 py-4 text-right text-sm font-semibold text-red-800">{sucursal.criticos_activos}</td>
                           <td className="px-4 py-4 text-right text-sm">{sucursal.altas}</td>
                           <td className="px-4 py-4 text-right text-sm">{sucursal.total}</td>
                         </tr>
@@ -177,6 +343,7 @@ export default function Dashboard() {
                           <div className="font-semibold text-gray-900">{sucursal.sucursal}</div>
                         </div>
                         <div className="text-right text-sm">
+                          <div className="font-semibold text-red-700">{sucursal.criticos_activos} críticos</div>
                           <div className="font-semibold text-red-700">{sucursal.vencidos} vencidos</div>
                           <div className="text-gray-600">{sucursal.abiertos} abiertos</div>
                         </div>
@@ -234,6 +401,8 @@ export default function Dashboard() {
               </LineChart>
             </ResponsiveContainer>
           </section>
+          </>
+          )}
         </>
       )}
     </AppLayout>

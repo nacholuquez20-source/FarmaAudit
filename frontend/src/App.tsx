@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
 import { FeedbackState } from './components/FeedbackState';
+import type { Role } from './types';
 
 const Login = lazy(() => import('./pages/Login'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -11,7 +12,16 @@ const Sucursales = lazy(() => import('./pages/Sucursales'));
 const SucursalDetail = lazy(() => import('./pages/SucursalDetail'));
 const Admin = lazy(() => import('./pages/Admin'));
 
-function ProtectedRoute({ children, adminOnly = false }: { children: React.ReactNode; adminOnly?: boolean }) {
+function ProtectedRoute({
+  children,
+  adminOnly = false,
+  allowRoles,
+}: {
+  children: React.ReactNode;
+  adminOnly?: boolean;
+  /** Si se define, solo estos roles pueden ver la ruta (p. ej. dashboard para admin/sucursal). */
+  allowRoles?: Role[];
+}) {
   const { user, role, loading } = useAuth();
 
   if (loading) {
@@ -27,7 +37,14 @@ function ProtectedRoute({ children, adminOnly = false }: { children: React.React
   }
 
   if (adminOnly && role !== 'admin') {
-    return <Navigate to="/sucursales" replace />;
+    if (role === 'auditor') return <Navigate to="/desvios" replace />;
+    if (role === 'sucursal') return <Navigate to="/dashboard" replace />;
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  if (allowRoles?.length && role && !allowRoles.includes(role)) {
+    if (role === 'auditor') return <Navigate to="/desvios" replace />;
+    return <Navigate to="/dashboard" replace />;
   }
 
   return <>{children}</>;
@@ -43,7 +60,7 @@ export default function App() {
           <Route
             path="/dashboard"
             element={
-              <ProtectedRoute adminOnly>
+              <ProtectedRoute allowRoles={['admin', 'sucursal']}>
                 <Dashboard />
               </ProtectedRoute>
             }

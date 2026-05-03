@@ -3,8 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { useSucursales } from '../hooks/useSucursales';
+import { useAuth } from '../hooks/useAuth';
 
 export default function Sucursales() {
+  const { role, profile } = useAuth();
   const { sucursales, loading, error } = useSucursales();
   const [searchText, setSearchText] = useState('');
   const navigate = useNavigate();
@@ -16,6 +18,11 @@ export default function Sucursales() {
       sucursal.zona.toLowerCase().includes(searchText.toLowerCase())
   );
 
+  const lista =
+    role === 'sucursal' && profile?.id_sucursal
+      ? filteredSucursales.filter((s) => s.id === profile.id_sucursal)
+      : filteredSucursales;
+
   if (loading) {
     return (
       <AppLayout title="Sucursales">
@@ -25,13 +32,22 @@ export default function Sucursales() {
   }
 
   return (
-    <AppLayout title="Sucursales">
+    <AppLayout title={role === 'sucursal' ? 'Mi sucursal' : 'Sucursales'}>
+      {role === 'sucursal' && !profile?.id_sucursal && (
+        <div className="mb-4">
+          <FeedbackState
+            title="Tu usuario no tiene sucursal asignada."
+            description="Pedí al administrador que vincule tu perfil en Administración."
+            tone="error"
+          />
+        </div>
+      )}
       {error && <div className="mb-4"><FeedbackState title={error} tone="error" /></div>}
 
       <div className="mb-6">
         <input
           type="text"
-          placeholder="Buscar farmacias..."
+          placeholder={role === 'sucursal' ? 'Buscar en tu sucursal...' : 'Buscar perfumerías...'}
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
           className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -49,7 +65,7 @@ export default function Sucursales() {
             </tr>
           </thead>
           <tbody>
-            {filteredSucursales.map((sucursal) => (
+            {lista.map((sucursal) => (
               <tr
                 key={sucursal.id}
                 onClick={() => navigate(`/sucursales/${sucursal.id}`)}
@@ -65,7 +81,7 @@ export default function Sucursales() {
         </table>
       </div>
 
-      {filteredSucursales.length === 0 && (
+      {lista.length === 0 && (
         <div className="mt-4">
           <FeedbackState title="No se encontraron farmacias" />
         </div>

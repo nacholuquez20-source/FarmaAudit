@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { getDashboardStats } from '../lib/api';
 import type { DashboardStats } from '../types';
 
-export function useDashboardStats(refreshMs = 0) {
+export function useDashboardStats(refreshMs = 0, sucursalId?: string | null) {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -17,7 +17,7 @@ export function useDashboardStats(refreshMs = 0) {
         setLoading(true);
       }
       setError(null);
-      const data = await getDashboardStats();
+      const data = await getDashboardStats(sucursalId);
       setStats(data);
       setLastUpdated(new Date());
     } catch (err) {
@@ -26,7 +26,7 @@ export function useDashboardStats(refreshMs = 0) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [sucursalId]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {

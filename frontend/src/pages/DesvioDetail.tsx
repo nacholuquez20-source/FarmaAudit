@@ -5,23 +5,7 @@ import { FeedbackState } from '../components/FeedbackState';
 import { useAuth } from '../hooks/useAuth';
 import { useDesvioDetail } from '../hooks/useDesvioDetail';
 import type { Gestion } from '../types';
-import { formatDate, formatDateTime, gestionStateColor, gestionStateLabel, severidadColor } from '../lib/utils';
-
-function getWhatsappUrl(gestion: Gestion): string | null {
-  const phone = gestion.tel_responsable.replace(/\D/g, '');
-  if (!phone) return null;
-
-  const message = [
-    `Hola ${gestion.responsable || ''}`.trim(),
-    `Te contactamos por un desvio registrado en ${gestion.sucursal}.`,
-    `Detalle: ${gestion.desvio}`,
-    `Plan de accion: ${gestion.plan_accion || 'Pendiente de definir'}`,
-    `Severidad: ${gestion.severidad}`,
-    `Vencimiento: ${formatDate(gestion.plazo_fecha)}`,
-  ].join('\n');
-
-  return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
-}
+import { formatDate, formatDateTime, gestionStateColor, gestionStateLabel, severidadColor, getWhatsappUrl } from '../lib/utils';
 
 function getDueState(gestion: Gestion): { label: string; className: string } {
   if (gestion.estado === 'Cerrada') {

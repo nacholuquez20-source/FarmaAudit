@@ -88,9 +88,10 @@ create table if not exists webhook_dedup (
 -- 7. Profiles table (for auth)
 create table if not exists profiles (
   id uuid references auth.users(id) on delete cascade primary key,
-  role text not null check (role in ('admin', 'auditor')),
+  role text not null check (role in ('admin', 'auditor', 'sucursal')),
   nombre text,
   telefono text,
+  id_sucursal text references sucursales(id),
   created_at timestamp with time zone default now(),
   updated_at timestamp with time zone default now()
 );
@@ -104,6 +105,7 @@ create index if not exists idx_auditores_telefono on auditores(telefono);
 create index if not exists idx_control_stock_sucursal on control_stock(sucursal_id);
 create index if not exists idx_webhook_dedup_claimed_at on webhook_dedup(claimed_at);
 create index if not exists idx_profiles_telefono on profiles(telefono);
+create index if not exists idx_profiles_id_sucursal on profiles(id_sucursal);
 
 -- ============ ROW LEVEL SECURITY (RLS) ============
 
@@ -126,11 +128,36 @@ create policy "reportes_admin_read" on reportes for select using (
 create policy "reportes_auditor_read" on reportes for select using (
   exists (select 1 from profiles where id = auth.uid() and role = 'auditor' and telefono = reportes.auditor)
 );
+create policy "reportes_sucursal_read" on reportes for select using (
+  exists (
+    select 1 from profiles p
+    where p.id = auth.uid() and p.role = 'sucursal'
+    and p.id_sucursal is not null
+    and reportes.id_sucursal = p.id_sucursal
+  )
+);
 
--- Gestion: Admins can see/update all, auditors can see all (but only admins update)
-create policy "gestion_read" on gestion for select using (true);
+-- Gestion: admins y auditores ven todo; responsable solo su sucursal
+create policy "gestion_select_scope" on gestion for select using (
+  exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+  or exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'auditor')
+  or exists (
+    select 1 from profiles p
+    where p.id = auth.uid() and p.role = 'sucursal'
+    and p.id_sucursal is not null
+    and gestion.id_sucursal = p.id_sucursal
+  )
+);
 create policy "gestion_update_admin" on gestion for update using (
   exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+);
+create policy "gestion_update_sucursal" on gestion for update using (
+  exists (
+    select 1 from profiles p
+    where p.id = auth.uid() and p.role = 'sucursal'
+    and p.id_sucursal is not null
+    and gestion.id_sucursal = p.id_sucursal
+  )
 );
 
 -- Auditores: Only admins can see and update
@@ -152,6 +179,9 @@ create policy "control_stock_auditor_read" on control_stock for select using (
 -- Profiles: Users can read own profile, admins can read all
 create policy "profiles_own_read" on profiles for select using (auth.uid() = id);
 create policy "profiles_admin_read" on profiles for select using (
+  exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+);
+create policy "profiles_admin_update" on profiles for update using (
   exists (select 1 from profiles where id = auth.uid() and role = 'admin')
 );
 

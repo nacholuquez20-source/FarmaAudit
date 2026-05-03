@@ -9,18 +9,26 @@ export function useAuth() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
+
     const getSession = async () => {
       setLoading(true);
       const {
         data: { session },
       } = await supabase.auth.getSession();
+
+      if (cancelled) return;
       setUser(session?.user || null);
 
       if (session?.user) {
         const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-        setProfile(data);
+        if (!cancelled) {
+          setProfile(data);
+        }
       }
-      setLoading(false);
+      if (!cancelled) {
+        setLoading(false);
+      }
     };
 
     getSession();
@@ -28,16 +36,25 @@ export function useAuth() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (cancelled) return;
+
       setUser(session?.user || null);
       if (session?.user) {
         const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-        setProfile(data);
+        if (!cancelled) {
+          setProfile(data);
+        }
       } else {
-        setProfile(null);
+        if (!cancelled) {
+          setProfile(null);
+        }
       }
     });
 
-    return () => subscription?.unsubscribe();
+    return () => {
+      cancelled = true;
+      subscription?.unsubscribe();
+    };
   }, []);
 
   const role: Role | null = profile?.role || null;

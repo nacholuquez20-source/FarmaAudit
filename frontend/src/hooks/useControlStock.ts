@@ -1,18 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-
-export interface ControlStockItem {
-  id: string;
-  auditoria_id: string | null;
-  sucursal_id: string;
-  fecha: string;
-  auditor: string;
-  nombre_item: string;
-  stock_fisico: number;
-  stock_sistema: number;
-  diferencia: number;
-  alerta: string;
-}
+import type { ControlStockItem } from '../types';
 
 export function useControlStock(sucursal_id?: string) {
   const [items, setItems] = useState<ControlStockItem[]>([]);
