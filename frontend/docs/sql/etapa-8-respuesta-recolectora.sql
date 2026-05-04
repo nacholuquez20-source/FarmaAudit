@@ -144,3 +144,11 @@ USING (
     (SELECT role FROM profiles WHERE id = auth.uid()) = 'admin'
   )
 );
+
+-- Correccion de texto en checklist existente. setup_sheets.py solo afecta seeds nuevos;
+-- esta sentencia actualiza la fila ya cargada en Supabase.
+UPDATE checklist_perfumeria
+SET pregunta = '¿Ofrece probadores a clientes?'
+WHERE bloque_id = 'ATENCION'
+  AND punto_orden = 2
+  AND pregunta = '¿Ofrece probadas a clientes?';

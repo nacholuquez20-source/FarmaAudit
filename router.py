@@ -481,7 +481,7 @@ class ConversationRouter:
         return_state: ConversationState,
         meta_client: MetaClient,
     ) -> bool:
-        """Start multi-message collection; return False to keep legacy flow."""
+        """Start multi-message collection; return True when the message was handled."""
         if getattr(payload, "from_collector", False):
             return False
         if payload.tipo == "text" and (payload.contenido or "").strip().upper() in {"PAUSAR", "SALTAR", "SKIP"}:
@@ -511,8 +511,13 @@ class ConversationRouter:
             await meta_client.send_text(payload.telefono, "Registrado. Podes enviar mas texto, fotos o audios. Escribi LISTO cuando termines.")
             return True
         except Exception as e:
-            logger.warning(f"Collector unavailable, falling back to legacy flow: {e}")
-            return False
+            logger.error(f"Collector unavailable; refusing to advance block with legacy flow: {e}", exc_info=True)
+            await meta_client.send_text(
+                payload.telefono,
+                "No pude iniciar el registro multi-mensaje, entonces no voy a avanzar de bloque. "
+                "Avisale al administrador que ejecute la migracion etapa 8 en Supabase y reintenta.",
+            )
+            return True
 
     async def _append_respuesta_message(
         self,

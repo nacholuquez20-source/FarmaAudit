@@ -1,7 +1,17 @@
 import json
+import asyncio
 from datetime import date
 
-from models import Gestion, GestionState, RespuestaPregunta, RespuestaPreguntaEstado, Severidad
+from models import (
+    ConversationState,
+    Gestion,
+    GestionState,
+    RespuestaPregunta,
+    RespuestaPreguntaEstado,
+    SesionAuditoria,
+    Severidad,
+    WhatsAppPayload,
+)
 from router import ConversationRouter
 from supabase_manager import SupabaseManager
 
@@ -25,6 +35,19 @@ class _FakeClient:
 
     def table(self, name):
         return _FakeTable(self.calls, name)
+
+
+class _FailingCollectorSheets:
+    def create_respuesta_pregunta(self, respuesta):
+        raise RuntimeError("missing respuesta_pregunta")
+
+
+class _FakeMetaClient:
+    def __init__(self):
+        self.messages = []
+
+    async def send_text(self, phone, text):
+        self.messages.append((phone, text))
 
 
 def test_respuesta_pregunta_deserializes_messages():
@@ -112,3 +135,27 @@ def test_respuesta_summary_counts_media_and_text():
     assert "Mensajes de texto: 1" in summary
     assert "1 audio(s)" in summary
     assert "1 foto(s)" in summary
+
+
+def test_collector_failure_does_not_fall_back_to_legacy():
+    router = ConversationRouter.__new__(ConversationRouter)
+    router.sheets = _FailingCollectorSheets()
+    meta = _FakeMetaClient()
+
+    handled = asyncio.run(router._try_start_respuesta_collection(
+        WhatsAppPayload(telefono="5491111111111", tipo="text", contenido="respuesta"),
+        SesionAuditoria(
+            id_sesion="ses-1",
+            telefono_auditor="5491111111111",
+            sucursal_id="suc-1",
+            estado=ConversationState.EN_BLOQUE_PERFUMERIA.value,
+            timestamp_inicio="2026-05-04T12:00:00+00:00",
+            timestamp_ultimo_punto="2026-05-04T12:00:00+00:00",
+        ),
+        "ATENCION",
+        ConversationState.EN_BLOQUE_PERFUMERIA,
+        meta,
+    ))
+
+    assert handled is True
+    assert "no voy a avanzar de bloque" in meta.messages[0][1]
