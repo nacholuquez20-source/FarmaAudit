@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
 import { FeedbackState } from './components/FeedbackState';
@@ -24,11 +24,34 @@ function ProtectedRoute({
   allowRoles?: Role[];
 }) {
   const { user, role, loading } = useAuth();
+  const [showLoadingError, setShowLoadingError] = useState(false);
+
+  useEffect(() => {
+    if (loading) {
+      const timer = setTimeout(() => setShowLoadingError(true), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [loading]);
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <FeedbackState title="Cargando sesion..." />
+      <div className="flex items-center justify-center h-screen bg-gray-50">
+        <div className="text-center">
+          <FeedbackState title="Verificando sesión..." />
+          {showLoadingError && (
+            <div className="mt-4">
+              <p className="text-sm text-gray-600 mb-4">
+                Esto está tomando más de lo esperado. Intenta refrescar la página.
+              </p>
+              <button
+                onClick={() => window.location.reload()}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+              >
+                Refrescar página
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     );
   }

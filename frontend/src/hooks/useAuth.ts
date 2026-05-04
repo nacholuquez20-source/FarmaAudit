@@ -27,23 +27,59 @@ export function useAuth() {
 
   useEffect(() => {
     let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
     const getSession = async () => {
       setLoading(true);
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
 
-      if (cancelled) return;
-
-      if (session?.user) {
-        setUser(session.user);
-        const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+      timeoutId = setTimeout(() => {
         if (!cancelled) {
-          setProfile(data);
+          console.warn('Session loading timeout - falling back to guest/dev mode');
+          if (import.meta.env.DEV) {
+            setUser(DEV_USER);
+            setProfile(DEV_PROFILE);
+          } else {
+            setUser(null);
+            setProfile(null);
+          }
+          setLoading(false);
         }
-      } else {
-        // In dev mode, use fake user for local testing. In production, user is null (redirects to login).
+      }, 3000);
+
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (cancelled) return;
+        if (timeoutId) clearTimeout(timeoutId);
+
+        if (session?.user) {
+          setUser(session.user);
+          try {
+            const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+            if (!cancelled) {
+              setProfile(data);
+            }
+          } catch (err) {
+            console.error('Failed to load profile:', err);
+            if (!cancelled) {
+              setProfile(null);
+            }
+          }
+        } else {
+          if (import.meta.env.DEV) {
+            setUser(DEV_USER);
+            setProfile(DEV_PROFILE);
+          } else {
+            setUser(null);
+            setProfile(null);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to get session:', err);
+        if (cancelled) return;
+        if (timeoutId) clearTimeout(timeoutId);
         if (import.meta.env.DEV) {
           setUser(DEV_USER);
           setProfile(DEV_PROFILE);
@@ -51,10 +87,13 @@ export function useAuth() {
           setUser(null);
           setProfile(null);
         }
-      }
-
-      if (!cancelled) {
-        setLoading(false);
+      } finally {
+        if (!cancelled && timeoutId) {
+          clearTimeout(timeoutId);
+        }
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     };
 
@@ -65,14 +104,31 @@ export function useAuth() {
     } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (cancelled) return;
 
-      if (session?.user) {
-        setUser(session.user);
-        const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-        if (!cancelled) {
-          setProfile(data);
+      try {
+        if (session?.user) {
+          setUser(session.user);
+          try {
+            const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+            if (!cancelled) {
+              setProfile(data);
+            }
+          } catch (err) {
+            console.error('Failed to load profile on auth change:', err);
+            if (!cancelled) {
+              setProfile(null);
+            }
+          }
+        } else {
+          if (import.meta.env.DEV) {
+            setUser(DEV_USER);
+            setProfile(DEV_PROFILE);
+          } else {
+            setUser(null);
+            setProfile(null);
+          }
         }
-      } else {
-        // In dev mode, use fake user for local testing. In production, user is null (redirects to login).
+      } catch (err) {
+        console.error('Error in auth state change handler:', err);
         if (import.meta.env.DEV) {
           setUser(DEV_USER);
           setProfile(DEV_PROFILE);
@@ -85,6 +141,7 @@ export function useAuth() {
 
     return () => {
       cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
       subscription?.unsubscribe();
     };
   }, []);
