@@ -15,6 +15,7 @@ export const supabase = createClient(supabaseUrl || '', supabaseKey || '', {
     autoRefreshToken: true,
     detectSessionInUrl: true,
     storageKey: 'farma-audit-auth',
+    lock: async (_name, _acquireTimeout, fn) => fn(),
   },
 });
 
