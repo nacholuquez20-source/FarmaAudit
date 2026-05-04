@@ -68,6 +68,12 @@ function compareDesvios(a: Gestion, b: Gestion): number {
   return getComparableDate(a.plazo_fecha) - getComparableDate(b.plazo_fecha);
 }
 
+interface SucursalResumen {
+  nombre: string;
+  desviosActivos: number;
+  proximoVencimiento: string | null;
+}
+
 export function useDesvios() {
   const { role, profile } = useAuth();
   const scopedSucursalId = role === 'sucursal' ? profile?.id_sucursal ?? undefined : undefined;
@@ -102,6 +108,40 @@ export function useDesvios() {
       .sort(compareDesvios);
   }, [allDesvios, filters]);
 
+  const sucursalesResumen = useMemo<SucursalResumen[]>(() => {
+    const activos = allDesvios.filter((g) => g.estado === 'Abierta' || g.estado === 'En_proceso' || g.estado === 'Vencida');
+    const byNombre = new Map<string, Desvio[]>();
+
+    activos.forEach((desvio) => {
+      if (!byNombre.has(desvio.sucursal)) {
+        byNombre.set(desvio.sucursal, []);
+      }
+      byNombre.get(desvio.sucursal)!.push(desvio);
+    });
+
+    const resumen = Array.from(byNombre.entries()).map(([nombre, desvios]) => {
+      const fechas = desvios
+        .map((d) => d.plazo_fecha)
+        .filter(Boolean)
+        .map((f) => new Date(f).getTime())
+        .filter((t) => !Number.isNaN(t));
+      const proximoVencimiento = fechas.length > 0 ? new Date(Math.min(...fechas)).toISOString().split('T')[0] : null;
+
+      return {
+        nombre,
+        desviosActivos: desvios.length,
+        proximoVencimiento,
+      };
+    });
+
+    return resumen.sort((a, b) => {
+      if (!a.proximoVencimiento && !b.proximoVencimiento) return 0;
+      if (!a.proximoVencimiento) return 1;
+      if (!b.proximoVencimiento) return -1;
+      return a.proximoVencimiento.localeCompare(b.proximoVencimiento);
+    });
+  }, [allDesvios]);
+
   const resetFilters = () => setFilters(initialFilters);
 
   return {
@@ -113,6 +153,7 @@ export function useDesvios() {
     setFilters,
     resetFilters,
     sucursales,
+    sucursalesResumen,
     isOverdue,
   };
 }
