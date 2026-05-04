@@ -379,6 +379,7 @@ class RespuestaPreguntaAuditLog:
 
 RESPUESTA_CONFIG = {
     "timeout_sin_actividad_segundos": 120,
+    "auto_complete_enabled": False,
     "timeout_auto_complete_segundos": 150,
     "timeout_max_segundos": 300,
     "mensaje_max_por_respuesta": 20,

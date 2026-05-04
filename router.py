@@ -612,6 +612,53 @@ class ConversationRouter:
                 return {"es_valida": False, "razon": f"Hubo un problema con un medio: {msg.get('error_mensaje')}."}
         return {"es_valida": True}
 
+    @staticmethod
+    def _format_respuesta_collection_summary(
+        mensajes: list,
+        respuesta_consolidada: str,
+    ) -> str:
+        """Build a short WhatsApp summary before advancing to the next block."""
+        text_count = 0
+        image_count = 0
+        audio_count = 0
+        other_media_count = 0
+
+        for msg in mensajes:
+            tipo = str(msg.get("tipo", "text"))
+            contenido = str(msg.get("contenido", "")).strip()
+            if tipo == "text" and contenido and not contenido.startswith("["):
+                text_count += 1
+            for media in msg.get("media_ids", []) or []:
+                media_tipo = str(media.get("tipo") or tipo)
+                if media_tipo == "image":
+                    image_count += 1
+                elif media_tipo == "audio":
+                    audio_count += 1
+                else:
+                    other_media_count += 1
+
+        resumen_texto = respuesta_consolidada.strip()
+        if len(resumen_texto) > 500:
+            resumen_texto = f"{resumen_texto[:497]}..."
+
+        adjuntos = []
+        if image_count:
+            adjuntos.append(f"{image_count} foto(s)")
+        if audio_count:
+            adjuntos.append(f"{audio_count} audio(s)")
+        if other_media_count:
+            adjuntos.append(f"{other_media_count} adjunto(s)")
+
+        lines = [
+            "Resumen de lo registrado:",
+            f"- Mensajes de texto: {text_count}",
+            f"- Adjuntos: {', '.join(adjuntos) if adjuntos else 'sin adjuntos'}",
+        ]
+        if resumen_texto:
+            lines.extend(["", resumen_texto])
+        lines.extend(["", "Continuamos con el siguiente bloque."])
+        return "\n".join(lines)
+
     async def _complete_respuesta_collection(
         self,
         respuesta_activa: RespuestaPregunta,
@@ -649,6 +696,12 @@ class ConversationRouter:
             timestamp_ultimo_mensaje=datetime.now(timezone.utc).isoformat(),
         )
         self.sheets.create_respuesta_audit_log(fresh.id, "completada", {"auto_complete": auto_complete, "mensajes_count": len(mensajes), "media_count": len(media_urls)})
+
+        if not auto_complete:
+            await meta_client.send_text(
+                payload.telefono,
+                self._format_respuesta_collection_summary(mensajes, respuesta_consolidada),
+            )
 
         context = self._safe_json_loads(conv.ultimo_mensaje)
         return_state = context.get("return_state", ConversationState.EN_BLOQUE.value)

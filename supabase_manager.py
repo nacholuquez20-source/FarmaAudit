@@ -275,14 +275,27 @@ class SupabaseManager:
             if id_respuesta_actual is not None:
                 update_data["id_respuesta_actual"] = id_respuesta_actual or None
 
-            if existing:
-                # Update existing
-                self.client.table("conversaciones").update(update_data).eq(
-                    "telefono", existing.get("telefono")
-                ).execute()
-            else:
-                # Insert new
-                self.client.table("conversaciones").insert(update_data).execute()
+            def persist(data: Dict[str, Any]) -> None:
+                if existing:
+                    self.client.table("conversaciones").update(data).eq(
+                        "telefono", existing.get("telefono")
+                    ).execute()
+                else:
+                    self.client.table("conversaciones").insert(data).execute()
+
+            try:
+                persist(update_data)
+            except Exception as write_error:
+                if id_respuesta_actual is not None and "id_respuesta_actual" in str(write_error):
+                    fallback_data = dict(update_data)
+                    fallback_data.pop("id_respuesta_actual", None)
+                    persist(fallback_data)
+                    logger.warning(
+                        "conversaciones.id_respuesta_actual is unavailable; "
+                        "collector state was saved without the optional pointer."
+                    )
+                else:
+                    raise
 
             logger.info(f"Updated conversation for {telefono}: {estado.value}")
         except Exception as e:

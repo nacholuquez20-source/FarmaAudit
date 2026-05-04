@@ -481,7 +481,10 @@ async def check_incomplete_respuestas_timeout():
                 )
                 continue
 
-            if inactive_seconds >= RESPUESTA_CONFIG["timeout_auto_complete_segundos"]:
+            if (
+                RESPUESTA_CONFIG.get("auto_complete_enabled", False)
+                and inactive_seconds >= RESPUESTA_CONFIG["timeout_auto_complete_segundos"]
+            ):
                 conv = sheets.get_conversacion(respuesta.telefono_auditor)
                 payload = WhatsAppPayload(
                     telefono=respuesta.telefono_auditor,

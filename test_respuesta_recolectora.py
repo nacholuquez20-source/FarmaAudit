@@ -97,3 +97,18 @@ def test_validate_respuesta_requires_photo_for_gondola():
 
     assert result["es_valida"] is False
     assert "foto" in result["razon"].lower()
+
+
+def test_respuesta_summary_counts_media_and_text():
+    summary = ConversationRouter._format_respuesta_collection_summary(
+        mensajes=[
+            {"tipo": "text", "contenido": "Gondola con faltantes", "media_ids": []},
+            {"tipo": "audio", "contenido": "[Audio recibido]", "media_ids": [{"tipo": "audio", "url": "signed"}]},
+            {"tipo": "image", "contenido": "[Foto recibida]", "media_ids": [{"tipo": "image", "url": "signed"}]},
+        ],
+        respuesta_consolidada="Gondola con faltantes",
+    )
+
+    assert "Mensajes de texto: 1" in summary
+    assert "1 audio(s)" in summary
+    assert "1 foto(s)" in summary
