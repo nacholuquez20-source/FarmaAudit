@@ -25,6 +25,8 @@ class ConversationState(str, Enum):
     DESVIO_LIBRE = "desvio_libre"
     COMPROMISOS = "compromisos"
     AUDITORIA_PAUSADA = "auditoria_pausada"
+    ENCARGADO_SELECCIONANDO_DESVIO = "encargado_seleccionando_desvio"
+    ENCARGADO_ESPERANDO_RESPUESTA = "encargado_esperando_respuesta"
 
 
 class Severidad(str, Enum):
@@ -274,6 +276,8 @@ class WhatsAppPayload:
     tipo: str  # "text", "audio", "image"
     contenido: Optional[str] = None
     media_url: Optional[str] = None
+    media_id: Optional[str] = None
+    mime_type: Optional[str] = None
     timestamp: Optional[datetime] = field(default_factory=datetime.utcnow)
 
 

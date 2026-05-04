@@ -8,9 +8,11 @@ import uuid
 from collections import OrderedDict
 
 from fastapi import FastAPI, Request, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import pytz
+from pydantic import BaseModel
 from supabase import create_client, Client
 
 from config import get_settings
@@ -30,6 +32,21 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="AuditBot", version="1.0.0")
 settings = get_settings()
 scheduler = AsyncIOScheduler()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
+
+
+class EncargadoNotificationRequest(BaseModel):
+    id_gestion: str
+    telefono_encargado: str
+    descripcion_desvio: str
+    sucursal: str | None = None
 
 # Lazy initialization - these will be created on demand
 router = None
@@ -221,6 +238,34 @@ async def health_check():
     }
 
 
+@app.post("/api/send-encargado-notification")
+async def send_encargado_notification(payload: EncargadoNotificationRequest):
+    """Send a WhatsApp notification to the branch manager for one deviation."""
+    telefono = "".join(ch for ch in payload.telefono_encargado if ch.isdigit())
+    if not telefono:
+        raise HTTPException(status_code=400, detail="telefono_encargado is required")
+
+    gestion = get_sheets().get_gestion_by_id(payload.id_gestion)
+    sucursal = payload.sucursal or (gestion or {}).get("sucursal") or "tu sucursal"
+    descripcion = payload.descripcion_desvio or (gestion or {}).get("desvio") or "desvio pendiente"
+    if len(descripcion) > 420:
+        descripcion = f"{descripcion[:417]}..."
+
+    message = (
+        f"FarmaAudit: tenes un desvio pendiente para corregir en {sucursal}.\n\n"
+        f"ID: {payload.id_gestion}\n"
+        f"Detalle: {descripcion}\n\n"
+        "Responde este WhatsApp para ver tus desvios pendientes, seleccionar uno y enviar la correccion."
+    )
+
+    meta_client = MetaClient()
+    sent = await meta_client.send_text(telefono, message)
+    if not sent:
+        raise HTTPException(status_code=502, detail="No se pudo enviar el WhatsApp")
+
+    return {"status": "ok"}
+
+
 # @app.get("/sync-now")
 # async def sync_now():
 #     """Manual sync endpoint for testing."""
@@ -292,12 +337,15 @@ async def webhook(request: Request):
         tipo = msg.get("type", "text")
         contenido = None
         media_url = None
+        media_id = None
+        mime_type = None
 
         if tipo == "text":
             contenido = msg.get("text", {}).get("body", "")
         elif tipo == "audio":
             audio = msg.get("audio", {})
             media_id = audio.get("id")
+            mime_type = audio.get("mime_type")
             if media_id:
                 # TODO: Download audio from Meta API using media_id
                 # media_url = await _get_meta_media_url(media_id)
@@ -305,6 +353,7 @@ async def webhook(request: Request):
         elif tipo == "image":
             image = msg.get("image", {})
             media_id = image.get("id")
+            mime_type = image.get("mime_type")
             contenido = image.get("caption", "")
             if media_id:
                 # TODO: Download image from Meta API using media_id
@@ -316,6 +365,8 @@ async def webhook(request: Request):
             tipo=tipo,
             contenido=contenido,
             media_url=media_url,
+            media_id=media_id,
+            mime_type=mime_type,
         )
 
         logger.info(f"[{correlation_id}] Received message from {payload.telefono} (type: {payload.tipo}, msg_id: {message_id})")

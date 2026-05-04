@@ -2,6 +2,7 @@
 
 import json
 import logging
+import uuid
 from typing import List, Optional, Any, Dict
 from datetime import datetime, timedelta, timezone
 
@@ -428,6 +429,137 @@ class SupabaseManager:
         except Exception as e:
             logger.error(f"Failed to create gestion: {e}")
             raise
+
+    def get_encargado_by_phone(self, telefono: str) -> Optional[Dict[str, Any]]:
+        """Find a branch manager by profiles.telefono or sucursales.tel_responsable."""
+        telefono_norm = self._normalize_phone(telefono)
+        if not telefono_norm:
+            return None
+
+        try:
+            response = self.client.table("profiles").select("id, role, nombre, telefono, id_sucursal").execute()
+            for row in response.data or []:
+                if row.get("role") != "sucursal":
+                    continue
+                if self._normalize_phone(row.get("telefono", "")) == telefono_norm and row.get("id_sucursal"):
+                    sucursal = self.get_sucursal(str(row.get("id_sucursal")))
+                    return {
+                        "source": "profiles",
+                        "user_id": row.get("id"),
+                        "nombre": row.get("nombre") or (sucursal.nombre if sucursal else "Encargado"),
+                        "telefono": telefono_norm,
+                        "id_sucursal": row.get("id_sucursal"),
+                        "sucursal": sucursal.nombre if sucursal else row.get("id_sucursal"),
+                    }
+        except Exception as e:
+            logger.warning(f"Could not lookup encargado in profiles: {e}")
+
+        try:
+            for sucursal in self.get_all_sucursales():
+                if self._normalize_phone(sucursal.tel_responsable) == telefono_norm:
+                    return {
+                        "source": "sucursales",
+                        "user_id": None,
+                        "nombre": sucursal.responsable or "Encargado",
+                        "telefono": telefono_norm,
+                        "id_sucursal": sucursal.id,
+                        "sucursal": sucursal.nombre,
+                    }
+        except Exception as e:
+            logger.warning(f"Could not lookup encargado in sucursales: {e}")
+
+        return None
+
+    def get_gestiones_pendientes_sucursal(self, id_sucursal: str) -> List[Dict[str, Any]]:
+        """Get open deviations for a branch manager portal/chat flow."""
+        try:
+            response = (
+                self.client.table("gestion")
+                .select("*")
+                .eq("id_sucursal", id_sucursal)
+                .in_("estado", ["Abierta", "En_proceso", "Vencida"])
+                .order("plazo_fecha")
+                .execute()
+            )
+            return response.data or []
+        except Exception as e:
+            logger.error(f"Failed to get pending gestiones for {id_sucursal}: {e}")
+            return []
+
+    def get_gestion_by_id(self, id_gestion: str) -> Optional[Dict[str, Any]]:
+        """Get one gestion by ID."""
+        try:
+            response = self.client.table("gestion").select("*").eq("id_gestion", id_gestion).execute()
+            data = response.data or []
+            return data[0] if data else None
+        except Exception as e:
+            logger.error(f"Failed to get gestion {id_gestion}: {e}")
+            return None
+
+    def upload_desvio_evidencia(self, id_gestion: str, content: bytes, mime_type: str) -> str:
+        """Upload evidence bytes to the private desvio-evidencias bucket."""
+        ext_by_mime = {
+            "image/jpeg": "jpg",
+            "image/png": "png",
+            "image/webp": "webp",
+            "application/pdf": "pdf",
+        }
+        ext = ext_by_mime.get(mime_type, "jpg")
+        path = f"gestion/{id_gestion}/whatsapp-{uuid.uuid4().hex}.{ext}"
+        self.client.storage.from_("desvio-evidencias").upload(
+            path,
+            content,
+            {"content-type": mime_type, "upsert": "false"},
+        )
+        return path
+
+    def create_signed_evidencia_url(self, path: str, expires_seconds: int = 86400) -> str:
+        """Create a signed URL for a Storage evidence object."""
+        try:
+            response = self.client.storage.from_("desvio-evidencias").create_signed_url(path, expires_seconds)
+            if isinstance(response, dict):
+                return response.get("signedURL") or response.get("signedUrl") or ""
+            return getattr(response, "signed_url", "") or getattr(response, "signedURL", "")
+        except Exception as e:
+            logger.warning(f"Failed to create signed URL for {path}: {e}")
+            return ""
+
+    def save_encargado_evento(
+        self,
+        id_gestion: str,
+        tipo: str,
+        contenido: str,
+        metadata: Dict[str, Any],
+        actor_nombre: str = "Encargado",
+    ) -> None:
+        """Save a branch manager message/evidence in desvio_eventos."""
+        self.client.table("desvio_eventos").insert({
+            "id_gestion": id_gestion,
+            "tipo": tipo,
+            "comentario": contenido,
+            "actor_id": None,
+            "actor_nombre": actor_nombre,
+            "metadata": metadata,
+        }).execute()
+
+    def create_notification_for_auditor(self, id_gestion: str, auditor_id: str) -> None:
+        """Create one in-app notification for an auditor/admin user."""
+        self.client.table("desvio_notificaciones").insert({
+            "id_gestion": id_gestion,
+            "user_id": auditor_id,
+            "tipo": "encargado_respondio",
+        }).execute()
+
+    def create_notifications_for_auditors(self, id_gestion: str) -> None:
+        """Notify all auditor/admin users that a manager responded."""
+        try:
+            response = self.client.table("profiles").select("id, role").in_("role", ["admin", "auditor"]).execute()
+            for row in response.data or []:
+                user_id = row.get("id")
+                if user_id:
+                    self.create_notification_for_auditor(id_gestion, str(user_id))
+        except Exception as e:
+            logger.warning(f"Failed to create auditor notifications for {id_gestion}: {e}")
 
     # ========== Checklists ==========
 

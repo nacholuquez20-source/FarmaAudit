@@ -1,7 +1,7 @@
 """Meta WhatsApp Cloud API client for AuditBot."""
 
 import logging
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 import httpx
 
 from config import get_settings
@@ -96,6 +96,29 @@ class MetaClient:
         if message.file_url:
             return await self.send_file(message.phone, message.file_url, message.caption)
         return await self.send_text(message.phone, message.text)
+
+    async def download_media_with_metadata(self, media_id: str) -> Tuple[bytes, str]:
+        """Download media bytes and MIME type from Meta CDN."""
+        metadata_url = f"{self.BASE_URL}/{media_id}"
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+
+        async with httpx.AsyncClient() as client:
+            metadata_response = await client.get(metadata_url, headers=headers, timeout=30)
+            metadata_response.raise_for_status()
+            metadata = metadata_response.json()
+            media_url = metadata.get("url")
+            mime_type = metadata.get("mime_type") or "application/octet-stream"
+            if not media_url:
+                raise ValueError(f"Meta media URL missing for media_id={media_id}")
+
+            media_response = await client.get(media_url, headers=headers, timeout=60)
+            media_response.raise_for_status()
+            return media_response.content, mime_type
+
+    async def download_media(self, media_id: str) -> bytes:
+        """Download media bytes from Meta CDN."""
+        content, _ = await self.download_media_with_metadata(media_id)
+        return content
 
     async def send_punto(
         self, phone: str, numero: int, total: int, area: str, descripcion: str

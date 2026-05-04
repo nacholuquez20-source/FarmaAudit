@@ -25,6 +25,10 @@ function handleApiError(error: { message?: string }): string {
   return 'Error al obtener datos. Intente de nuevo.';
 }
 
+function getBotApiUrl(): string {
+  return String(import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+}
+
 export async function getSucursales(): Promise<Sucursal[]> {
   const { data, error } = await supabase
     .from('sucursales')
@@ -165,6 +169,33 @@ export async function updateGestion(id: string, estado: GestionState, cerrado_po
 
   if (error) throw new Error(handleApiError(error));
   return data;
+}
+
+export async function notificarEncargado(input: {
+  idGestion: string;
+  telefonoEncargado: string;
+  descripcionDesvio: string;
+  sucursal?: string;
+}): Promise<void> {
+  const apiUrl = getBotApiUrl();
+  if (!apiUrl) {
+    throw new Error('Falta configurar VITE_API_URL con la URL del bot.');
+  }
+
+  const response = await fetch(`${apiUrl}/api/send-encargado-notification`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id_gestion: input.idGestion,
+      telefono_encargado: input.telefonoEncargado,
+      descripcion_desvio: input.descripcionDesvio,
+      sucursal: input.sucursal,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error('No se pudo notificar al encargado por WhatsApp.');
+  }
 }
 
 export async function uploadEvidencia(

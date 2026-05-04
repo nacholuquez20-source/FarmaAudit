@@ -8,6 +8,7 @@ import { FeedbackState } from '../components/FeedbackState';
 import { useAuth } from '../hooks/useAuth';
 import { useDesvioDetail } from '../hooks/useDesvioDetail';
 import type { Gestion } from '../types';
+import { notificarEncargado } from '../lib/api';
 import { formatDate, formatDateTime, gestionStateColor, gestionStateLabel, severidadColor, getWhatsappUrl } from '../lib/utils';
 
 function getDueState(gestion: Gestion): { label: string; className: string } {
@@ -31,6 +32,7 @@ export default function DesvioDetail() {
   const [actionError, setActionError] = useState('');
   const [actionMessage, setActionMessage] = useState('');
   const [contacting, setContacting] = useState(false);
+  const [notifying, setNotifying] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [resolutionComment, setResolutionComment] = useState('');
   const [evidenceText, setEvidenceText] = useState('');
@@ -76,6 +78,41 @@ export default function DesvioDetail() {
     } finally {
       window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
       setContacting(false);
+    }
+  };
+
+  const handleNotifyEncargado = async () => {
+    if (!gestion) return;
+
+    setNotifying(true);
+    setActionError('');
+    setActionMessage('');
+
+    try {
+      await notificarEncargado({
+        idGestion: gestion.id_gestion,
+        telefonoEncargado: gestion.tel_responsable,
+        descripcionDesvio: gestion.desvio,
+        sucursal: gestion.sucursal,
+      });
+      try {
+        await addTimelineEvent({
+          id_gestion: gestion.id_gestion,
+          tipo: 'contacto',
+          comentario: `Encargado notificado por WhatsApp desde el bot.`,
+          metadata: {
+            canal: 'whatsapp_bot',
+            telefono: gestion.tel_responsable,
+          },
+        });
+      } catch (timelineError) {
+        console.warn('WhatsApp notification sent, but timeline event failed:', timelineError);
+      }
+      setActionMessage('Encargado notificado por WhatsApp.');
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'No se pudo notificar al encargado.');
+    } finally {
+      setNotifying(false);
     }
   };
 
@@ -224,6 +261,14 @@ export default function DesvioDetail() {
               >
                 Ver sucursal
               </Link>
+              <button
+                type="button"
+                onClick={handleNotifyEncargado}
+                disabled={!gestion.tel_responsable || notifying || gestion.estado === 'Cerrada'}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300 disabled:text-gray-600"
+              >
+                {notifying ? 'Notificando...' : 'Notificar encargado'}
+              </button>
               <button
                 type="button"
                 onClick={handleContact}

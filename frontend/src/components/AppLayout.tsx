@@ -120,7 +120,9 @@ export function AppLayout({ children, title, showAdmin = true }: AppLayoutProps)
                               className="block w-full border-b border-gray-100 px-4 py-3 text-left text-sm hover:bg-gray-50"
                             >
                               <div className="font-medium text-gray-900">
-                                {notificacion.tipo === 'mensaje_nuevo' ? 'Nueva actividad en desvio' : 'Notificacion de desvio'}
+                                {notificacion.tipo === 'mensaje_nuevo' || notificacion.tipo === 'encargado_respondio'
+                                  ? 'Nueva actividad en desvio'
+                                  : 'Notificacion de desvio'}
                               </div>
                               <div className="text-xs text-gray-500">{notificacion.id_gestion}</div>
                             </button>
