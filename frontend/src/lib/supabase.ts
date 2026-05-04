@@ -9,7 +9,14 @@ if (!supabaseUrl || !supabaseKey) {
   // Still create client so errors bubble up properly
 }
 
-export const supabase = createClient(supabaseUrl || '', supabaseKey || '');
+export const supabase = createClient(supabaseUrl || '', supabaseKey || '', {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+    storageKey: 'farma-audit-auth',
+  },
+});
 
 // Expose config status for debugging
 export const supabaseConfig = {

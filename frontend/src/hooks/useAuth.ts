@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
-import { supabase, supabaseConfig } from '../lib/supabase';
-import type { UserProfile, Role } from '../types';
+import { supabase } from '../lib/supabase';
+import type { Role, UserProfile } from '../types';
 
 const DEV_USER = {
   id: 'dev-user-123',
@@ -20,6 +20,33 @@ const DEV_PROFILE: UserProfile = {
   id_sucursal: null,
 };
 
+function normalizeProfile(profile: Partial<UserProfile> | null): UserProfile | null {
+  if (!profile?.id || !profile.role) return null;
+  return {
+    id: profile.id,
+    role: profile.role,
+    nombre: profile.nombre ?? null,
+    telefono: profile.telefono ?? null,
+    id_sucursal: profile.id_sucursal ?? null,
+  };
+}
+
+async function loadProfile(userId: string): Promise<UserProfile | null> {
+  const selectWithSucursal = 'id, role, nombre, telefono, id_sucursal';
+  const { data, error } = await supabase.from('profiles').select(selectWithSucursal).eq('id', userId).maybeSingle();
+
+  if (!error) return normalizeProfile(data);
+
+  const message = error.message.toLowerCase();
+  if (message.includes('id_sucursal')) {
+    const fallback = await supabase.from('profiles').select('id, role, nombre, telefono').eq('id', userId).maybeSingle();
+    if (fallback.error) throw fallback.error;
+    return normalizeProfile(fallback.data);
+  }
+
+  throw error;
+}
+
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -27,76 +54,9 @@ export function useAuth() {
 
   useEffect(() => {
     let cancelled = false;
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
-    const getSession = async () => {
-      setLoading(true);
-
-      // Debug: Log if credentials are available
-      console.log('[useAuth] Starting getSession', {
-        hasUrl: supabaseConfig.hasUrl,
-        hasKey: supabaseConfig.hasKey,
-        isDev: import.meta.env.DEV,
-      });
-
-      timeoutId = setTimeout(() => {
-        if (!cancelled) {
-          console.warn('[useAuth] Session loading timeout after 3s - falling back', {
-            hasUrl: supabaseConfig.hasUrl,
-            hasKey: supabaseConfig.hasKey,
-          });
-          if (import.meta.env.DEV) {
-            setUser(DEV_USER);
-            setProfile(DEV_PROFILE);
-          } else {
-            setUser(null);
-            setProfile(null);
-          }
-          setLoading(false);
-        }
-      }, 3000);
-
-      try {
-        console.log('[useAuth] Calling supabase.auth.getSession()...');
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-
-        console.log('[useAuth] getSession completed', { hasSession: !!session?.user });
-        if (cancelled) return;
-        if (timeoutId) clearTimeout(timeoutId);
-
-        if (session?.user) {
-          console.log('[useAuth] User found:', session.user.id);
-          setUser(session.user);
-          try {
-            console.log('[useAuth] Loading profile for user:', session.user.id);
-            const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-            console.log('[useAuth] Profile loaded:', data?.role);
-            if (!cancelled) {
-              setProfile(data);
-            }
-          } catch (err) {
-            console.error('[useAuth] Failed to load profile:', err);
-            if (!cancelled) {
-              setProfile(null);
-            }
-          }
-        } else {
-          console.log('[useAuth] No session found');
-          if (import.meta.env.DEV) {
-            console.log('[useAuth] Using DEV user');
-            setUser(DEV_USER);
-            setProfile(DEV_PROFILE);
-          } else {
-            setUser(null);
-            setProfile(null);
-          }
-        }
-      } catch (err) {
-        console.error('[useAuth] Error in getSession:', err);
-        if (cancelled) return;
-        if (timeoutId) clearTimeout(timeoutId);
+    const applySession = async (sessionUser: User | null) => {
+      if (!sessionUser) {
         if (import.meta.env.DEV) {
           setUser(DEV_USER);
           setProfile(DEV_PROFILE);
@@ -104,14 +64,37 @@ export function useAuth() {
           setUser(null);
           setProfile(null);
         }
+        return;
+      }
+
+      setUser(sessionUser);
+      try {
+        const loadedProfile = await loadProfile(sessionUser.id);
+        if (!cancelled) setProfile(loadedProfile);
+      } catch (err) {
+        console.error('Failed to load profile:', err);
+        if (!cancelled) setProfile(null);
+      }
+    };
+
+    const getSession = async () => {
+      setLoading(true);
+      try {
+        const {
+          data: { session },
+          error,
+        } = await supabase.auth.getSession();
+
+        if (error) throw error;
+        if (!cancelled) await applySession(session?.user ?? null);
+      } catch (err) {
+        console.error('Error loading session:', err);
+        if (!cancelled && import.meta.env.DEV) {
+          setUser(DEV_USER);
+          setProfile(DEV_PROFILE);
+        }
       } finally {
-        if (!cancelled && timeoutId) {
-          clearTimeout(timeoutId);
-        }
-        if (!cancelled) {
-          console.log('[useAuth] Setting loading=false');
-          setLoading(false);
-        }
+        if (!cancelled) setLoading(false);
       }
     };
 
@@ -119,48 +102,15 @@ export function useAuth() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (cancelled) return;
-
-      try {
-        if (session?.user) {
-          setUser(session.user);
-          try {
-            const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-            if (!cancelled) {
-              setProfile(data);
-            }
-          } catch (err) {
-            console.error('Failed to load profile on auth change:', err);
-            if (!cancelled) {
-              setProfile(null);
-            }
-          }
-        } else {
-          if (import.meta.env.DEV) {
-            setUser(DEV_USER);
-            setProfile(DEV_PROFILE);
-          } else {
-            setUser(null);
-            setProfile(null);
-          }
-        }
-      } catch (err) {
-        console.error('Error in auth state change handler:', err);
-        if (import.meta.env.DEV) {
-          setUser(DEV_USER);
-          setProfile(DEV_PROFILE);
-        } else {
-          setUser(null);
-          setProfile(null);
-        }
-      }
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (cancelled || event === 'INITIAL_SESSION') return;
+      await applySession(session?.user ?? null);
+      if (!cancelled) setLoading(false);
     });
 
     return () => {
       cancelled = true;
-      if (timeoutId) clearTimeout(timeoutId);
-      subscription?.unsubscribe();
+      subscription.unsubscribe();
     };
   }, []);
 
