@@ -48,19 +48,12 @@ function normalizeProfile(profile: Partial<UserProfile> | null): UserProfile | n
 async function loadProfile(userId: string): Promise<UserProfile | null> {
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, role, nombre, telefono, id_sucursal')
+    .select('id, role, nombre, telefono')
     .eq('id', userId)
     .maybeSingle();
 
-  if (!error) return normalizeProfile(data);
-
-  if (error.message.toLowerCase().includes('id_sucursal')) {
-    const fallback = await supabase.from('profiles').select('id, role, nombre, telefono').eq('id', userId).maybeSingle();
-    if (fallback.error) throw fallback.error;
-    return normalizeProfile(fallback.data);
-  }
-
-  throw error;
+  if (error) throw error;
+  return normalizeProfile(data);
 }
 
 async function loadProfileWithTimeout(userId: string): Promise<UserProfile | null> {
