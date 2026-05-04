@@ -175,7 +175,7 @@ def setup_checklist_perfumeria(sheet):
 
         # BLOQUE 7: ATENCIÓN AL CLIENTE
         ["ATENCION", "ATENCIÓN AL CLIENTE", 1, "si_no", "¿Personal disponible para asesorar?", 5, "TRUE"],
-        ["ATENCION", "ATENCIÓN AL CLIENTE", 2, "si_no", "¿Ofrece probadas a clientes?", 4, "FALSE"],
+        ["ATENCION", "ATENCIÓN AL CLIENTE", 2, "si_no", "¿Ofrece probadores a clientes?", 4, "FALSE"],
         ["ATENCION", "ATENCIÓN AL CLIENTE", 3, "si_no", "¿Trato profesional y amable?", 5, "TRUE"],
 
         # BLOQUE 8: OBSERVACIONES EXTRAS
