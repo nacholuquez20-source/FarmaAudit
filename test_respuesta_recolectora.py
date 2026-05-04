@@ -73,6 +73,22 @@ def test_respuesta_pregunta_deserializes_messages():
     assert mensajes[1].media_ids[0]["url"].endswith("foto.jpg")
 
 
+def test_respuesta_pregunta_accepts_supabase_user_id_column():
+    respuesta = RespuestaPregunta(**{
+        "id": "resp-1",
+        "id_sesion": "ses-1",
+        "telefono_auditor": "5491111111111",
+        "user_id_auditor": None,
+        "pregunta_numero": 1,
+        "bloque_id": "ATENCION",
+        "estado": "recolectando",
+        "timestamp_inicio": "2026-05-04T12:00:00+00:00",
+        "timestamp_ultimo_mensaje": "2026-05-04T12:00:10+00:00",
+    })
+
+    assert respuesta.user_id_auditor is None
+
+
 def test_create_gestion_writes_to_frontend_table():
     manager = object.__new__(SupabaseManager)
     manager.client = _FakeClient()

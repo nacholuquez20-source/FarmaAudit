@@ -336,6 +336,7 @@ class RespuestaPregunta:
     estado: RespuestaPreguntaEstado | str
     timestamp_inicio: str
     timestamp_ultimo_mensaje: str
+    user_id_auditor: Optional[str] = None
     timeout_segundos: int = 120
     confirmado_por_auditor: bool = False
     timeout_prompt_enviado: bool = False
