@@ -1,7 +1,7 @@
-import { lazy, Suspense, useState, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { useAuth } from './hooks/useAuth';
+import { lazy, Suspense, useEffect, useState } from 'react';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { FeedbackState } from './components/FeedbackState';
+import { useAuth } from './hooks/useAuth';
 import type { Role } from './types';
 
 const Login = lazy(() => import('./pages/Login'));
@@ -13,6 +13,80 @@ const Sucursales = lazy(() => import('./pages/Sucursales'));
 const SucursalDetail = lazy(() => import('./pages/SucursalDetail'));
 const Admin = lazy(() => import('./pages/Admin'));
 
+function LoadingGate({ title }: { title: string }) {
+  const [showRetry, setShowRetry] = useState(false);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setShowRetry(true), 2000);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  return (
+    <div className="flex h-screen items-center justify-center bg-gray-50">
+      <div className="max-w-md text-center">
+        <FeedbackState title={title} />
+        {showRetry && (
+          <div className="mt-4 space-y-3">
+            <p className="text-sm text-gray-600">Esto esta tomando mas de lo esperado.</p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="flex-1 rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
+              >
+                Refrescar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  window.localStorage.removeItem('farma-audit-auth');
+                  window.location.href = '/login';
+                }}
+                className="flex-1 rounded-lg bg-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-400"
+              >
+                Ir a login
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ProfileError({ message }: { message: string | null }) {
+  return (
+    <div className="flex h-screen items-center justify-center bg-gray-50">
+      <div className="max-w-md text-center">
+        <FeedbackState
+          title="No se pudo cargar tu perfil."
+          description={message || 'Tu usuario no tiene un perfil asociado en Supabase.'}
+          tone="error"
+        />
+        <div className="mt-4 flex gap-2">
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="flex-1 rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
+          >
+            Reintentar
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              window.localStorage.removeItem('farma-audit-auth');
+              window.location.href = '/login';
+            }}
+            className="flex-1 rounded-lg bg-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-400"
+          >
+            Volver al login
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ProtectedRoute({
   children,
   adminOnly = false,
@@ -20,56 +94,14 @@ function ProtectedRoute({
 }: {
   children: React.ReactNode;
   adminOnly?: boolean;
-  /** Si se define, solo estos roles pueden ver la ruta (p. ej. dashboard para admin/sucursal). */
   allowRoles?: Role[];
 }) {
-  const { user, role, loading } = useAuth();
-  const [showLoadingError, setShowLoadingError] = useState(false);
+  const { user, role, loading, profileLoading, profileError } = useAuth();
 
-  useEffect(() => {
-    if (loading) {
-      const timer = setTimeout(() => setShowLoadingError(true), 2000);
-      return () => clearTimeout(timer);
-    }
-  }, [loading]);
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-gray-50">
-        <div className="text-center max-w-md">
-          <FeedbackState title="Verificando sesión..." />
-          {showLoadingError && (
-            <div className="mt-4 space-y-3">
-              <div className="text-sm text-gray-600">
-                <p className="mb-2">Esto está tomando más de lo esperado.</p>
-                <p className="text-xs text-gray-500 bg-gray-100 p-2 rounded mb-2">
-                  💡 Verifica que las variables de entorno <code>VITE_SUPABASE_URL</code> y <code>VITE_SUPABASE_ANON_KEY</code> estén configuradas en Vercel Settings.
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => window.location.reload()}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
-                >
-                  Refrescar
-                </button>
-                <button
-                  onClick={() => window.location.href = '/login'}
-                  className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 text-sm"
-                >
-                  Ir a Login
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return <Navigate to="/login" replace />;
-  }
+  if (loading) return <LoadingGate title="Verificando sesion..." />;
+  if (!user) return <Navigate to="/login" replace />;
+  if (profileLoading) return <LoadingGate title="Cargando perfil..." />;
+  if (!role) return <ProfileError message={profileError} />;
 
   if (adminOnly && role !== 'admin') {
     if (role === 'auditor') return <Navigate to="/desvios" replace />;
@@ -77,7 +109,7 @@ function ProtectedRoute({
     return <Navigate to="/dashboard" replace />;
   }
 
-  if (allowRoles?.length && role && !allowRoles.includes(role)) {
+  if (allowRoles?.length && !allowRoles.includes(role)) {
     if (role === 'auditor') return <Navigate to="/desvios" replace />;
     return <Navigate to="/dashboard" replace />;
   }

@@ -9,6 +9,8 @@ interface AuthState {
   profile: UserProfile | null;
   role: Role | null;
   loading: boolean;
+  profileLoading: boolean;
+  profileError: string | null;
 }
 
 const DEV_USER = {
@@ -30,6 +32,7 @@ const DEV_PROFILE: UserProfile = {
 
 const AuthContext = createContext<AuthState | null>(null);
 const PROFILE_LOAD_TIMEOUT_MS = 5000;
+const AUTH_STORAGE_KEY = 'farma-audit-auth';
 
 function normalizeProfile(profile: Partial<UserProfile> | null): UserProfile | null {
   if (!profile?.id || !profile.role) return null;
@@ -69,10 +72,24 @@ async function loadProfileWithTimeout(userId: string): Promise<UserProfile | nul
   ]);
 }
 
+function readCachedSessionUser(): User | null {
+  try {
+    const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { user?: User; expires_at?: number };
+    if (parsed.expires_at && parsed.expires_at * 1000 < Date.now()) return null;
+    return parsed.user ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
   const initializedRef = useRef(false);
 
   useEffect(() => {
@@ -89,23 +106,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(null);
           setProfile(null);
         }
+        setProfileLoading(false);
+        setProfileError(null);
         return;
       }
 
       setUser(sessionUser);
+      setProfileLoading(true);
+      setProfileError(null);
       try {
         const loadedProfile = await loadProfileWithTimeout(sessionUser.id);
-        if (!cancelled) setProfile(loadedProfile);
+        if (!cancelled) {
+          setProfile(loadedProfile);
+          if (!loadedProfile) setProfileError('No se pudo cargar el perfil del usuario.');
+        }
       } catch (err) {
         console.error('[AuthProvider] Failed to load profile:', err);
-        if (!cancelled) setProfile(null);
+        if (!cancelled) {
+          setProfile(null);
+          setProfileError(err instanceof Error ? err.message : 'No se pudo cargar el perfil del usuario.');
+        }
+      } finally {
+        if (!cancelled) setProfileLoading(false);
       }
     };
 
     const finishInit = async (sessionUser: User | null) => {
       if (initializedRef.current || cancelled) return;
       initializedRef.current = true;
-      await applyUser(sessionUser);
+      void applyUser(sessionUser);
       if (!cancelled) setLoading(false);
     };
 
@@ -136,7 +165,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const failSafe = window.setTimeout(() => {
       if (!initializedRef.current) {
-        finishInit(null);
+        finishInit(readCachedSessionUser());
       }
     }, 8000);
 
@@ -147,7 +176,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  return createElement(AuthContext.Provider, { value: { user, profile, role: profile?.role || null, loading } }, children);
+  return createElement(
+    AuthContext.Provider,
+    { value: { user, profile, role: profile?.role || null, loading, profileLoading, profileError } },
+    children,
+  );
 }
 
 export function useAuth() {
