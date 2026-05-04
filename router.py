@@ -508,7 +508,10 @@ class ConversationRouter:
                 id_respuesta_actual=respuesta.id,
             )
             await self._append_respuesta_message(payload, respuesta, meta_client)
-            await meta_client.send_text(payload.telefono, "Registrado. Podes enviar mas texto, fotos o audios. Escribi LISTO cuando termines.")
+            await meta_client.send_text(
+                payload.telefono,
+                "Recibido. Podes sumar mas fotos, audios o texto. Escribi LISTO recien cuando termines este bloque.",
+            )
             return True
         except Exception as e:
             logger.error(f"Collector unavailable; refusing to advance block with legacy flow: {e}", exc_info=True)
@@ -603,7 +606,10 @@ class ConversationRouter:
             return "max_mensajes_alcanzado"
 
         await self._append_respuesta_message(payload, respuesta_activa, meta_client)
-        await meta_client.send_text(payload.telefono, "Registrado. Envia mas o escribi LISTO para continuar.")
+        await meta_client.send_text(
+            payload.telefono,
+            "Recibido. Sigo guardando en este mismo bloque. Escribi LISTO cuando ya no quieras agregar nada mas.",
+        )
         return "respuesta_mensaje_agregado"
 
     def _validate_respuesta_completitud(
