@@ -1,9 +1,13 @@
 """Data models for AuditBot."""
 
+import json
+import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 from enum import Enum
+
+logger = logging.getLogger(__name__)
 
 
 class ConversationState(str, Enum):
@@ -25,6 +29,7 @@ class ConversationState(str, Enum):
     DESVIO_LIBRE = "desvio_libre"
     COMPROMISOS = "compromisos"
     AUDITORIA_PAUSADA = "auditoria_pausada"
+    RECOLECTANDO_RESPUESTA = "recolectando_respuesta"
     ENCARGADO_SELECCIONANDO_DESVIO = "encargado_seleccionando_desvio"
     ENCARGADO_ESPERANDO_RESPUESTA = "encargado_esperando_respuesta"
 
@@ -289,3 +294,100 @@ class WhatsAppMessage:
     text: str
     caption: Optional[str] = None
     file_url: Optional[str] = None
+
+
+class RespuestaPreguntaEstado(str, Enum):
+    """State for multi-message response collection."""
+
+    RECOLECTANDO = "recolectando"
+    COMPLETADA = "completada"
+    DESCARTADA = "descartada"
+
+
+class TipoMensajeRespuesta(str, Enum):
+    """Message type inside a collected response."""
+
+    TEXTO = "text"
+    IMAGEN = "image"
+    AUDIO = "audio"
+
+
+@dataclass
+class MensajeEnRespuesta:
+    """One WhatsApp message collected for one audit question."""
+
+    tipo: str
+    contenido: str
+    media_ids: List[dict] = field(default_factory=list)
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    estado_procesamiento: str = "pendiente"
+    error_mensaje: Optional[str] = None
+
+
+@dataclass
+class RespuestaPregunta:
+    """Multi-message response collector for a single audit question/block."""
+
+    id: str
+    id_sesion: str
+    telefono_auditor: str
+    pregunta_numero: int
+    bloque_id: str
+    estado: RespuestaPreguntaEstado | str
+    timestamp_inicio: str
+    timestamp_ultimo_mensaje: str
+    timeout_segundos: int = 120
+    confirmado_por_auditor: bool = False
+    timeout_prompt_enviado: bool = False
+    mensajes_json: str = "[]"
+    media_ids_json: str = "[]"
+    respuesta_consolidada: Optional[str] = None
+    desvios_json: Optional[str] = None
+    razon_descarte: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+    def get_mensajes(self) -> List[MensajeEnRespuesta]:
+        """Deserialize collected messages."""
+        try:
+            raw = json.loads(self.mensajes_json) if self.mensajes_json else []
+            return [MensajeEnRespuesta(**msg) for msg in raw]
+        except Exception as e:
+            logger.error(f"Error deserializing mensajes_json: {e}")
+            return []
+
+    def get_media_ids(self) -> List[dict]:
+        """Deserialize collected media metadata."""
+        try:
+            raw = json.loads(self.media_ids_json) if self.media_ids_json else []
+            return raw if isinstance(raw, list) else []
+        except Exception as e:
+            logger.error(f"Error deserializing media_ids_json: {e}")
+            return []
+
+
+@dataclass
+class RespuestaPreguntaAuditLog:
+    """Audit trail event for a collected response."""
+
+    id: str
+    id_respuesta: str
+    evento: str
+    detalles_json: str
+    timestamp: str
+
+
+RESPUESTA_CONFIG = {
+    "timeout_sin_actividad_segundos": 120,
+    "timeout_auto_complete_segundos": 150,
+    "timeout_max_segundos": 300,
+    "mensaje_max_por_respuesta": 20,
+    "respuesta_max_caracteres": 5000,
+}
+
+RESPUESTA_VALIDACION = {
+    "PRES": {"min_texto": 10, "requiere_foto": False, "requiere_audio": False},
+    "GOND": {"min_texto": 15, "requiere_foto": True, "requiere_audio": False},
+    "STOCK": {"min_texto": 5, "requiere_foto": False, "requiere_audio": False},
+    "TEMP": {"min_texto": 8, "requiere_foto": True, "requiere_audio": False},
+}

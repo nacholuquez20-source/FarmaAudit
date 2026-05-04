@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from supabase import create_client, Client
 
 from config import get_settings
-from models import WhatsAppPayload, ConversationState
+from models import WhatsAppPayload, ConversationState, RESPUESTA_CONFIG
 from router import ConversationRouter
 from meta_client import MetaClient
 from supabase_manager import SupabaseManager
@@ -199,6 +199,13 @@ async def startup_event():
         minutes=settings.timeout_check_interval,
         id="audit_timeout_check",
         max_instances=1,  # Prevent concurrent executions
+    )
+    scheduler.add_job(
+        check_incomplete_respuestas_timeout,
+        "interval",
+        seconds=30,
+        id="respuesta_timeout_check",
+        max_instances=1,
     )
     scheduler.add_job(
         daily_summary_job,
@@ -421,6 +428,97 @@ async def check_expired_confirmations():
             logger.info(f"Cleaned up {len(expired)} expired confirmations")
     except Exception as e:
         logger.error(f"Error in timeout check job: {e}")
+
+
+def _parse_utc_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+async def check_incomplete_respuestas_timeout():
+    """Background job: prompt, auto-complete or discard incomplete collected responses."""
+    try:
+        sheets = get_sheets()
+        meta_client = MetaClient()
+        route = get_router()
+        respuestas = sheets.get_respuestas_incompletas_timeout(
+            RESPUESTA_CONFIG["timeout_sin_actividad_segundos"]
+        )
+        now = datetime.now(timezone.utc)
+
+        for respuesta in respuestas:
+            last_message = _parse_utc_timestamp(respuesta.timestamp_ultimo_mensaje)
+            if not last_message:
+                continue
+
+            inactive_seconds = (now - last_message).total_seconds()
+            if inactive_seconds >= RESPUESTA_CONFIG["timeout_max_segundos"]:
+                sheets.update_respuesta_pregunta(
+                    respuesta.id,
+                    estado="descartada",
+                    razon_descarte="timeout_max",
+                )
+                sheets.create_respuesta_audit_log(
+                    respuesta.id,
+                    "descartada_timeout",
+                    {"segundos": inactive_seconds},
+                )
+                sheets.update_conversacion(
+                    telefono=respuesta.telefono_auditor,
+                    estado=ConversationState.IDLE,
+                    id_respuesta_actual="",
+                )
+                await meta_client.send_text(
+                    respuesta.telefono_auditor,
+                    "Timeout: tu respuesta fue descartada por inactividad. Escribi INICIO para retomar.",
+                )
+                continue
+
+            if inactive_seconds >= RESPUESTA_CONFIG["timeout_auto_complete_segundos"]:
+                conv = sheets.get_conversacion(respuesta.telefono_auditor)
+                payload = WhatsAppPayload(
+                    telefono=respuesta.telefono_auditor,
+                    tipo="text",
+                    contenido="LISTO",
+                )
+                if conv:
+                    await meta_client.send_text(
+                        respuesta.telefono_auditor,
+                        "Auto-completando tu respuesta por inactividad...",
+                    )
+                    await route._complete_respuesta_collection(  # noqa: SLF001 - internal orchestration for scheduler
+                        respuesta,
+                        conv,
+                        payload,
+                        meta_client,
+                        auto_complete=True,
+                        force=True,
+                    )
+                continue
+
+            if not respuesta.timeout_prompt_enviado:
+                await meta_client.send_text(
+                    respuesta.telefono_auditor,
+                    "Ya terminaste de enviar tu respuesta? Escribi LISTO para continuar, o segui enviando mensajes.",
+                )
+                sheets.update_respuesta_pregunta(
+                    respuesta.id,
+                    timeout_prompt_enviado=True,
+                )
+                sheets.create_respuesta_audit_log(
+                    respuesta.id,
+                    "timeout_prompt_enviado",
+                    {"segundos": inactive_seconds},
+                )
+    except Exception as e:
+        logger.error(f"Error in check_incomplete_respuestas_timeout: {e}", exc_info=True)
 
 
 async def check_expired_audit_sessions():

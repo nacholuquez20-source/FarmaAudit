@@ -12,7 +12,7 @@ from models import (
     Auditor, Sucursal, AreaSubitem, Conversacion, Pendiente, Reporte,
     Gestion, ConversationState, Severidad, GestionState, ChecklistPunto,
     SesionAuditoria, ItemBloque, ResultadoItem, StockItem, DesvioLibre,
-    ChecklistPerfumeriaPunto
+    ChecklistPerfumeriaPunto, RespuestaPregunta, RespuestaPreguntaAuditLog
 )
 
 logger = logging.getLogger(__name__)
@@ -250,6 +250,7 @@ class SupabaseManager:
         estado: ConversationState,
         id_pendiente: Optional[str] = None,
         ultimo_mensaje: str = "",
+        id_respuesta_actual: Optional[str] = None,
     ) -> None:
         """Update conversation state."""
         try:
@@ -271,6 +272,8 @@ class SupabaseManager:
                 "ultimo_mensaje": ultimo_mensaje,
                 "timestamp": timestamp_now,
             }
+            if id_respuesta_actual is not None:
+                update_data["id_respuesta_actual"] = id_respuesta_actual or None
 
             if existing:
                 # Update existing
@@ -974,3 +977,155 @@ class SupabaseManager:
         except Exception as e:
             logger.error(f"Failed to save desvio libre: {e}")
             raise
+
+    # ========== Respuesta Pregunta Recolectora ==========
+
+    def create_respuesta_pregunta(self, respuesta: RespuestaPregunta) -> RespuestaPregunta:
+        """Create a new multi-message response collector."""
+        try:
+            estado = respuesta.estado.value if hasattr(respuesta.estado, "value") else str(respuesta.estado)
+            data = {
+                "id": respuesta.id,
+                "id_sesion": respuesta.id_sesion,
+                "telefono_auditor": respuesta.telefono_auditor,
+                "pregunta_numero": respuesta.pregunta_numero,
+                "bloque_id": respuesta.bloque_id,
+                "estado": estado,
+                "timestamp_inicio": respuesta.timestamp_inicio,
+                "timestamp_ultimo_mensaje": respuesta.timestamp_ultimo_mensaje,
+                "timeout_segundos": respuesta.timeout_segundos,
+                "confirmado_por_auditor": respuesta.confirmado_por_auditor,
+                "timeout_prompt_enviado": respuesta.timeout_prompt_enviado,
+                "mensajes_json": respuesta.mensajes_json,
+                "media_ids_json": respuesta.media_ids_json,
+            }
+            result = self.client.table("respuesta_pregunta").insert(data).execute()
+            return RespuestaPregunta(**result.data[0])
+        except Exception as e:
+            logger.error(f"Error creating respuesta_pregunta: {e}")
+            raise
+
+    def get_respuesta_pregunta(self, id_respuesta: str) -> Optional[RespuestaPregunta]:
+        """Get a response collector by ID."""
+        try:
+            result = self.client.table("respuesta_pregunta").select("*").eq("id", id_respuesta).execute()
+            if result.data:
+                return RespuestaPregunta(**result.data[0])
+            return None
+        except Exception as e:
+            logger.error(f"Error getting respuesta_pregunta {id_respuesta}: {e}")
+            return None
+
+    def get_respuesta_pregunta_activa(self, telefono: str) -> Optional[RespuestaPregunta]:
+        """Get the active response collector for an auditor phone."""
+        try:
+            result = (
+                self.client.table("respuesta_pregunta")
+                .select("*")
+                .eq("telefono_auditor", telefono)
+                .eq("estado", "recolectando")
+                .order("timestamp_inicio", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if result.data:
+                return RespuestaPregunta(**result.data[0])
+            return None
+        except Exception as e:
+            logger.error(f"Error getting respuesta_pregunta_activa for {telefono}: {e}")
+            return None
+
+    def update_respuesta_pregunta(self, id_respuesta: str, **kwargs: Any) -> Optional[RespuestaPregunta]:
+        """Update a response collector."""
+        try:
+            kwargs["updated_at"] = datetime.now(timezone.utc).isoformat()
+            result = (
+                self.client.table("respuesta_pregunta")
+                .update(kwargs)
+                .eq("id", id_respuesta)
+                .execute()
+            )
+            if result.data:
+                return RespuestaPregunta(**result.data[0])
+            return None
+        except Exception as e:
+            logger.error(f"Error updating respuesta_pregunta {id_respuesta}: {e}")
+            raise
+
+    def get_respuestas_incompletas_timeout(self, timeout_segundos: int) -> List[RespuestaPregunta]:
+        """Get active response collectors older than the inactivity timeout."""
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(seconds=timeout_segundos)).isoformat()
+            result = (
+                self.client.table("respuesta_pregunta")
+                .select("*")
+                .eq("estado", "recolectando")
+                .lt("timestamp_ultimo_mensaje", cutoff)
+                .order("timestamp_ultimo_mensaje", desc=False)
+                .execute()
+            )
+            return [RespuestaPregunta(**row) for row in result.data] if result.data else []
+        except Exception as e:
+            logger.error(f"Error getting respuestas_incompletas_timeout: {e}")
+            return []
+
+    def create_respuesta_audit_log(self, id_respuesta: str, evento: str, detalles: Dict[str, Any]) -> bool:
+        """Append one audit event for a response collector."""
+        try:
+            self.client.table("respuesta_pregunta_audit_log").insert({
+                "id": str(uuid.uuid4()),
+                "id_respuesta": id_respuesta,
+                "evento": evento,
+                "detalles_json": json.dumps(detalles, ensure_ascii=False),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error creating respuesta audit log: {e}")
+            return False
+
+    def get_respuesta_audit_trail(self, id_respuesta: str) -> List[RespuestaPreguntaAuditLog]:
+        """Get the audit trail for one response collector."""
+        try:
+            result = (
+                self.client.table("respuesta_pregunta_audit_log")
+                .select("*")
+                .eq("id_respuesta", id_respuesta)
+                .order("timestamp", desc=False)
+                .execute()
+            )
+            return [RespuestaPreguntaAuditLog(**row) for row in result.data] if result.data else []
+        except Exception as e:
+            logger.error(f"Error getting audit trail for {id_respuesta}: {e}")
+            return []
+
+    def upload_auditoria_respuesta_media(self, id_sesion: str, id_respuesta: str, content: bytes, mime_type: str) -> str:
+        """Upload collected audit response media to Storage."""
+        ext_by_mime = {
+            "image/jpeg": "jpg",
+            "image/png": "png",
+            "image/webp": "webp",
+            "audio/mpeg": "mp3",
+            "audio/ogg": "ogg",
+            "audio/mp4": "m4a",
+            "application/pdf": "pdf",
+        }
+        ext = ext_by_mime.get(mime_type, "bin")
+        path = f"auditoria/{id_sesion}/{id_respuesta}/{uuid.uuid4().hex}.{ext}"
+        self.client.storage.from_("auditoria-respuestas").upload(
+            path,
+            content,
+            {"content-type": mime_type, "upsert": "false"},
+        )
+        return path
+
+    def create_signed_auditoria_respuesta_url(self, path: str, expires_seconds: int = 86400) -> str:
+        """Create signed URL for collected audit response media."""
+        try:
+            response = self.client.storage.from_("auditoria-respuestas").create_signed_url(path, expires_seconds)
+            if isinstance(response, dict):
+                return response.get("signedURL") or response.get("signedUrl") or ""
+            return getattr(response, "signed_url", "") or getattr(response, "signedURL", "")
+        except Exception as e:
+            logger.warning(f"Failed to create signed audit response URL for {path}: {e}")
+            return ""

@@ -22,7 +22,9 @@ from models import (
 
     ParserResponse, Reporte, Gestion, Severidad, ChecklistPunto, SesionAuditoria, PuntoEvalResult,
 
-    ItemBloque, ResultadoItem, StockItem, DesvioLibre, ChecklistPerfumeriaPunto, TipoRespuesta
+    ItemBloque, ResultadoItem, StockItem, DesvioLibre, ChecklistPerfumeriaPunto, TipoRespuesta,
+
+    MensajeEnRespuesta, RespuestaPregunta, RespuestaPreguntaEstado, RESPUESTA_CONFIG, RESPUESTA_VALIDACION
 
 )
 
@@ -212,6 +214,10 @@ class ConversationRouter:
             elif conv.estado_actual == ConversationState.CONFIRMANDO_BLOQUE:
 
                 return await self._handle_confirmando_bloque(payload, conv, meta_client)
+
+            elif conv.estado_actual == ConversationState.RECOLECTANDO_RESPUESTA:
+
+                return await self._handle_recolectando_respuesta(payload, conv, meta_client)
 
             elif conv.estado_actual == ConversationState.STOCK_LOOP:
 
@@ -445,6 +451,233 @@ class ConversationRouter:
             logger.error(f"Error saving encargado response for {id_gestion}: {e}", exc_info=True)
             await meta_client.send_text(payload.telefono, "No pude guardar la respuesta. Intenta nuevamente.")
             return "encargado_respuesta_error"
+
+    def _build_respuesta_collection(
+        self,
+        payload: WhatsAppPayload,
+        media_items: List[dict],
+        estado_procesamiento: str,
+        error_mensaje: Optional[str] = None,
+    ) -> MensajeEnRespuesta:
+        contenido = payload.contenido or ""
+        if payload.tipo == "audio" and not contenido:
+            contenido = "[Audio recibido]"
+        if payload.tipo == "image" and not contenido:
+            contenido = "[Foto recibida]"
+        return MensajeEnRespuesta(
+            tipo=payload.tipo,
+            contenido=contenido,
+            media_ids=media_items,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            estado_procesamiento=estado_procesamiento,
+            error_mensaje=error_mensaje,
+        )
+
+    async def _try_start_respuesta_collection(
+        self,
+        payload: WhatsAppPayload,
+        sesion: SesionAuditoria,
+        bloque_id: str,
+        return_state: ConversationState,
+        meta_client: MetaClient,
+    ) -> bool:
+        """Start multi-message collection; return False to keep legacy flow."""
+        if getattr(payload, "from_collector", False):
+            return False
+        if payload.tipo == "text" and (payload.contenido or "").strip().upper() in {"PAUSAR", "SALTAR", "SKIP"}:
+            return False
+
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            respuesta = self.sheets.create_respuesta_pregunta(RespuestaPregunta(
+                id=str(uuid.uuid4()),
+                id_sesion=sesion.id_sesion,
+                telefono_auditor=payload.telefono,
+                pregunta_numero=sesion.punto_actual + 1,
+                bloque_id=bloque_id,
+                estado=RespuestaPreguntaEstado.RECOLECTANDO,
+                timestamp_inicio=now,
+                timestamp_ultimo_mensaje=now,
+                timeout_segundos=RESPUESTA_CONFIG["timeout_sin_actividad_segundos"],
+            ))
+            self.sheets.update_conversacion(
+                telefono=payload.telefono,
+                estado=ConversationState.RECOLECTANDO_RESPUESTA,
+                id_pendiente=sesion.id_sesion,
+                ultimo_mensaje=json.dumps({"return_state": return_state.value, "bloque_id": bloque_id}),
+                id_respuesta_actual=respuesta.id,
+            )
+            await self._append_respuesta_message(payload, respuesta, meta_client)
+            await meta_client.send_text(payload.telefono, "Registrado. Podes enviar mas texto, fotos o audios. Escribi LISTO cuando termines.")
+            return True
+        except Exception as e:
+            logger.warning(f"Collector unavailable, falling back to legacy flow: {e}")
+            return False
+
+    async def _append_respuesta_message(
+        self,
+        payload: WhatsAppPayload,
+        respuesta_activa: RespuestaPregunta,
+        meta_client: MetaClient,
+    ) -> MensajeEnRespuesta:
+        media_items: List[dict] = []
+        estado = "exitoso"
+        error_mensaje = None
+
+        try:
+            if payload.media_id and payload.tipo in {"image", "audio"}:
+                content, mime_type = await meta_client.download_media_with_metadata(payload.media_id)
+                path = self.sheets.upload_auditoria_respuesta_media(respuesta_activa.id_sesion, respuesta_activa.id, content, mime_type)
+                signed_url = self.sheets.create_signed_auditoria_respuesta_url(path)
+                media_items.append({
+                    "tipo": payload.tipo,
+                    "url": signed_url,
+                    "path": path,
+                    "mime_type": mime_type,
+                    "media_id": payload.media_id,
+                })
+                self.sheets.create_respuesta_audit_log(respuesta_activa.id, f"{payload.tipo}_subido", {"media_id": payload.media_id, "path": path})
+            elif payload.media_url and payload.tipo in {"image", "audio"}:
+                media_items.append({"tipo": payload.tipo, "url": payload.media_url, "mime_type": payload.mime_type or ""})
+        except Exception as e:
+            estado = "error"
+            error_mensaje = str(e)
+            logger.error(f"Error processing response media: {e}", exc_info=True)
+
+        nuevo_mensaje = self._build_respuesta_collection(payload, media_items, estado, error_mensaje)
+        mensajes = [vars(msg) for msg in respuesta_activa.get_mensajes()]
+        mensajes.append(vars(nuevo_mensaje))
+        media_ids = respuesta_activa.get_media_ids() + media_items
+
+        self.sheets.update_respuesta_pregunta(
+            respuesta_activa.id,
+            mensajes_json=json.dumps(mensajes, ensure_ascii=False),
+            media_ids_json=json.dumps(media_ids, ensure_ascii=False),
+            timestamp_ultimo_mensaje=datetime.now(timezone.utc).isoformat(),
+            timeout_prompt_enviado=False,
+        )
+        self.sheets.create_respuesta_audit_log(respuesta_activa.id, "mensaje_agregado", {"tipo": payload.tipo, "estado": estado})
+        if estado == "error":
+            await meta_client.send_text(payload.telefono, "No pude guardar ese medio. Podes reenviarlo o escribir LISTO.")
+        return nuevo_mensaje
+
+    async def _handle_recolectando_respuesta(
+        self,
+        payload: WhatsAppPayload,
+        conv: Conversacion,
+        meta_client: MetaClient,
+    ) -> str:
+        respuesta_activa = self.sheets.get_respuesta_pregunta_activa(payload.telefono)
+        if not respuesta_activa:
+            self.sheets.update_conversacion(payload.telefono, ConversationState.EN_BLOQUE, id_pendiente=conv.id_pendiente)
+            await meta_client.send_text(payload.telefono, "No encontre una respuesta activa. Reintentemos con la pregunta actual.")
+            return "respuesta_activa_missing"
+
+        cleaned = (payload.contenido or "").strip().upper()
+        if cleaned in {"LISTO", "SIGUIENTE", "TERMINAR", "DONE", "FINISH"}:
+            return await self._complete_respuesta_collection(
+                respuesta_activa,
+                conv,
+                payload,
+                meta_client,
+                auto_complete=False,
+                force=respuesta_activa.razon_descarte == "validacion_fallida",
+            )
+
+        if len(respuesta_activa.get_mensajes()) >= RESPUESTA_CONFIG["mensaje_max_por_respuesta"]:
+            await meta_client.send_text(payload.telefono, "Llegaste al maximo de mensajes para esta respuesta. Escribi LISTO para continuar.")
+            return "max_mensajes_alcanzado"
+
+        await self._append_respuesta_message(payload, respuesta_activa, meta_client)
+        await meta_client.send_text(payload.telefono, "Registrado. Envia mas o escribi LISTO para continuar.")
+        return "respuesta_mensaje_agregado"
+
+    def _validate_respuesta_completitud(
+        self,
+        bloque_id: str,
+        respuesta_consolidada: str,
+        media_urls: list,
+        mensajes: list,
+        force: bool = False,
+    ) -> dict:
+        regla = RESPUESTA_VALIDACION.get(bloque_id, {"min_texto": 5, "requiere_foto": False, "requiere_audio": False})
+        if force:
+            return {"es_valida": True}
+        if len(respuesta_consolidada.strip()) < regla["min_texto"]:
+            return {"es_valida": False, "razon": f"Tu respuesta es muy corta. Minimo {regla['min_texto']} caracteres."}
+        if regla["requiere_foto"] and not media_urls:
+            return {"es_valida": False, "razon": "Este punto requiere una foto. Envia una imagen y despues escribi LISTO."}
+        for msg in mensajes:
+            if msg.get("estado_procesamiento") == "error":
+                return {"es_valida": False, "razon": f"Hubo un problema con un medio: {msg.get('error_mensaje')}."}
+        return {"es_valida": True}
+
+    async def _complete_respuesta_collection(
+        self,
+        respuesta_activa: RespuestaPregunta,
+        conv: Conversacion,
+        payload: WhatsAppPayload,
+        meta_client: MetaClient,
+        auto_complete: bool,
+        force: bool = False,
+    ) -> str:
+        fresh = self.sheets.get_respuesta_pregunta(respuesta_activa.id) or respuesta_activa
+        mensajes = [vars(msg) for msg in fresh.get_mensajes()]
+        textos = [
+            str(msg.get("contenido", "")).strip()
+            for msg in mensajes
+            if str(msg.get("contenido", "")).strip() and not str(msg.get("contenido", "")).startswith("[")
+        ]
+        media_urls = [media.get("url") for msg in mensajes for media in msg.get("media_ids", []) if media.get("url")]
+        respuesta_consolidada = "\n".join(textos).strip()
+        if not respuesta_consolidada and media_urls:
+            respuesta_consolidada = "Respuesta enviada con evidencia multimedia."
+        respuesta_consolidada = respuesta_consolidada[:RESPUESTA_CONFIG["respuesta_max_caracteres"]]
+
+        validacion = self._validate_respuesta_completitud(fresh.bloque_id, respuesta_consolidada, media_urls, mensajes, force=force)
+        if not validacion["es_valida"]:
+            self.sheets.create_respuesta_audit_log(fresh.id, "validacion_fallida", {"razon": validacion["razon"]})
+            await meta_client.send_text(payload.telefono, f"{validacion['razon']}\n\nAgrega mas datos o escribi LISTO otra vez para continuar igual.")
+            self.sheets.update_respuesta_pregunta(fresh.id, timeout_prompt_enviado=False, razon_descarte="validacion_fallida")
+            return "respuesta_validation_failed"
+
+        self.sheets.update_respuesta_pregunta(
+            fresh.id,
+            estado="completada",
+            respuesta_consolidada=respuesta_consolidada,
+            confirmado_por_auditor=not auto_complete,
+            timestamp_ultimo_mensaje=datetime.now(timezone.utc).isoformat(),
+        )
+        self.sheets.create_respuesta_audit_log(fresh.id, "completada", {"auto_complete": auto_complete, "mensajes_count": len(mensajes), "media_count": len(media_urls)})
+
+        context = self._safe_json_loads(conv.ultimo_mensaje)
+        return_state = context.get("return_state", ConversationState.EN_BLOQUE.value)
+        sesion = self.sheets.get_sesion(fresh.id_sesion)
+        if not sesion:
+            await meta_client.send_text(payload.telefono, "Respuesta registrada, pero no encontre la sesion para avanzar.")
+            return "respuesta_completada_sin_sesion"
+
+        self.sheets.update_conversacion(
+            telefono=payload.telefono,
+            estado=ConversationState(return_state),
+            id_pendiente=sesion.id_sesion,
+            id_respuesta_actual="",
+        )
+
+        synthetic_payload = WhatsAppPayload(telefono=payload.telefono, tipo="text", contenido=respuesta_consolidada)
+        setattr(synthetic_payload, "from_collector", True)
+
+        if return_state == ConversationState.EN_BLOQUE_PERFUMERIA.value:
+            bloques_perfumeria = self.sheets.get_checklist_perfumeria()
+            bloques_ordenados = sorted(bloques_perfumeria.keys())
+            puntos_bloque = bloques_perfumeria.get(fresh.bloque_id, [])
+            return await self._handle_perfumeria_respuesta_abierta(synthetic_payload, fresh.bloque_id, puntos_bloque, sesion, bloques_ordenados, meta_client)
+
+        return await self._handle_en_bloque(
+            synthetic_payload,
+            Conversacion(telefono=payload.telefono, estado_actual=ConversationState.EN_BLOQUE, id_pendiente=sesion.id_sesion),
+            meta_client,
+        )
 
 
 
@@ -1134,13 +1367,14 @@ class ConversationRouter:
                 f"✅ Comenzando auditoría de perfumería en {sucursal.nombre}\n\nResponde las siguientes preguntas."
             )
 
-            # Get updated conversation
-            conv_updated = self.sheets.get_conversacion(payload.telefono)
-            if conv_updated:
-                # Trigger first question by calling _handle_en_bloque_perfumeria
-                return await self._handle_en_bloque_perfumeria(payload, conv_updated, meta_client)
-            else:
-                return "sesion_created"
+            puntos_bloque = bloques_perfumeria.get(primer_bloque, [])
+            bloque_nombre = puntos_bloque[0].bloque_nombre if puntos_bloque else primer_bloque
+            pregunta = self._build_tema_pregunta(primer_bloque, bloque_nombre, puntos_bloque)
+            await meta_client.send_text(
+                payload.telefono,
+                f"{pregunta}\n\nPodes enviar multiples mensajes. Escribi LISTO cuando termines.",
+            )
+            return "sesion_created"
 
         except Exception as e:
             logger.error(f"Error handling sucursal selection: {e}")
@@ -1937,6 +2171,15 @@ EDITAR → Hacer cambios""",
             if not puntos_bloque:
                 logger.warning(f"No puntos found for bloque {bloque_actual_id}")
                 return "bloque_not_found"
+
+            if await self._try_start_respuesta_collection(
+                payload,
+                sesion,
+                bloque_actual_id,
+                ConversationState.EN_BLOQUE_PERFUMERIA,
+                meta_client,
+            ):
+                return "respuesta_collection_started"
 
             # Handle response (text/photo)
             return await self._handle_perfumeria_respuesta_abierta(
@@ -3358,6 +3601,15 @@ EJEMPLO SI HAY DESVIOS:
 
 
             items = bloques[bloque_id]
+
+            if await self._try_start_respuesta_collection(
+                payload,
+                sesion,
+                bloque_id,
+                ConversationState.EN_BLOQUE,
+                meta_client,
+            ):
+                return "respuesta_collection_started"
 
 
 
