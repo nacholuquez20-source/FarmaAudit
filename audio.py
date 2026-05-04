@@ -26,10 +26,33 @@ class AudioTranscriber:
                 response.raise_for_status()
                 audio_data = response.content
 
-            # Send to Whisper API
+            transcript = await self.transcribe_bytes(audio_data, "audio/ogg")
+            logger.info(f"Transcribed audio from {audio_url}: {len(transcript)} chars")
+            return transcript
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP error transcribing audio: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to transcribe audio from {audio_url}: {e}")
+            raise
+
+    async def transcribe_bytes(self, audio_data: bytes, mime_type: str = "audio/ogg") -> str:
+        """Transcribe audio bytes with Whisper."""
+        try:
+            extension_by_mime = {
+                "audio/mpeg": "mp3",
+                "audio/ogg": "ogg",
+                "audio/mp4": "m4a",
+                "audio/aac": "aac",
+                "audio/amr": "amr",
+                "audio/webm": "webm",
+                "audio/wav": "wav",
+            }
+            extension = extension_by_mime.get(mime_type, "ogg")
+
             async with httpx.AsyncClient() as client:
                 files = {
-                    "file": ("audio.ogg", audio_data, "audio/ogg"),
+                    "file": (f"audio.{extension}", audio_data, mime_type),
                     "model": (None, "whisper-1"),
                     "language": (None, "es"),
                 }
@@ -44,13 +67,13 @@ class AudioTranscriber:
                 result = response.json()
                 transcript = result.get("text", "")
 
-                logger.info(f"Transcribed audio from {audio_url}: {len(transcript)} chars")
+                logger.info(f"Transcribed audio bytes: {len(transcript)} chars")
                 return transcript
         except httpx.HTTPError as e:
-            logger.error(f"HTTP error transcribing audio: {e}")
+            logger.error(f"HTTP error transcribing audio bytes: {e}")
             raise
         except Exception as e:
-            logger.error(f"Failed to transcribe audio from {audio_url}: {e}")
+            logger.error(f"Failed to transcribe audio bytes: {e}")
             raise
 
 

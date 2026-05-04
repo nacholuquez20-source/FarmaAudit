@@ -542,6 +542,15 @@ class ConversationRouter:
                     "media_id": payload.media_id,
                 })
                 self.sheets.create_respuesta_audit_log(respuesta_activa.id, f"{payload.tipo}_subido", {"media_id": payload.media_id, "path": path})
+                if payload.tipo == "audio":
+                    transcript = await self.transcriber.transcribe_bytes(content, mime_type)
+                    if transcript:
+                        payload.contenido = transcript
+                        self.sheets.create_respuesta_audit_log(
+                            respuesta_activa.id,
+                            "audio_transcripto",
+                            {"media_id": payload.media_id, "chars": len(transcript)},
+                        )
             elif payload.media_url and payload.tipo in {"image", "audio"}:
                 media_items.append({"tipo": payload.tipo, "url": payload.media_url, "mime_type": payload.mime_type or ""})
         except Exception as e:
