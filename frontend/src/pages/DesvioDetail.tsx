@@ -1,6 +1,9 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { AppLayout } from '../components/AppLayout';
+import { ChatMensajes } from '../components/ChatMensajes';
+import { EvidenciaGaleria } from '../components/EvidenciaGaleria';
+import { EvidenciaUploader } from '../components/EvidenciaUploader';
 import { FeedbackState } from '../components/FeedbackState';
 import { useAuth } from '../hooks/useAuth';
 import { useDesvioDetail } from '../hooks/useDesvioDetail';
@@ -23,8 +26,8 @@ function getDueState(gestion: Gestion): { label: string; className: string } {
 export default function DesvioDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { user, profile } = useAuth();
-  const { gestion, reporte, eventos, loading, error, eventsReady, addEvento, updateEstado } = useDesvioDetail(id);
+  const { user, profile, role } = useAuth();
+  const { gestion, reporte, eventos, loading, error, eventsReady, reload, addEvento, updateEstado } = useDesvioDetail(id);
   const [actionError, setActionError] = useState('');
   const [actionMessage, setActionMessage] = useState('');
   const [contacting, setContacting] = useState(false);
@@ -40,6 +43,8 @@ export default function DesvioDetail() {
   );
 
   const actorName = profile?.nombre || user?.email || null;
+  const canManageEstado = role === 'admin' || role === 'auditor';
+  const backPath = role === 'sucursal' ? '/mis-desvios' : '/desvios';
 
   const addTimelineEvent = async (event: Omit<Parameters<typeof addEvento>[0], 'actor_id' | 'actor_nombre'>) => {
     return addEvento({
@@ -205,26 +210,30 @@ export default function DesvioDetail() {
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <button
           type="button"
-          onClick={() => navigate('/desvios')}
+          onClick={() => navigate(backPath)}
           className="self-start text-sm font-medium text-blue-600 hover:text-blue-800"
         >
           Volver a desvios
         </button>
         <div className="flex gap-2">
-          <Link
-            to={`/sucursales/${gestion.id_sucursal}`}
-            className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
-          >
-            Ver sucursal
-          </Link>
-          <button
-            type="button"
-            onClick={handleContact}
-            disabled={!whatsappUrl || contacting}
-            className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:bg-gray-300 disabled:text-gray-600"
-          >
-            {contacting ? 'Contactando...' : 'Contactar responsable'}
-          </button>
+          {canManageEstado && (
+            <>
+              <Link
+                to={`/sucursales/${gestion.id_sucursal}`}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
+              >
+                Ver sucursal
+              </Link>
+              <button
+                type="button"
+                onClick={handleContact}
+                disabled={!whatsappUrl || contacting}
+                className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:bg-gray-300 disabled:text-gray-600"
+              >
+                {contacting ? 'Contactando...' : 'Contactar responsable'}
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -304,6 +313,7 @@ export default function DesvioDetail() {
           </div>
         </aside>
 
+        {canManageEstado && (
         <section className="rounded-lg bg-white p-6 shadow lg:col-span-3">
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
@@ -376,6 +386,19 @@ export default function DesvioDetail() {
             </div>
           </form>
         </section>
+        )}
+
+        <div className="lg:col-span-2">
+          <ChatMensajes idGestion={gestion.id_gestion} eventos={eventos} onSent={reload} />
+        </div>
+
+        <div>
+          <EvidenciaUploader idGestion={gestion.id_gestion} onUploaded={reload} />
+        </div>
+
+        <div className="lg:col-span-3">
+          <EvidenciaGaleria eventos={eventos} />
+        </div>
 
         <section className="rounded-lg bg-white p-6 shadow lg:col-span-2">
           <h2 className="mb-4 text-lg font-semibold text-gray-900">Timeline</h2>

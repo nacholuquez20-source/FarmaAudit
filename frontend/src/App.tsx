@@ -9,6 +9,7 @@ const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Desvios = lazy(() => import('./pages/Desvios'));
 const DesvioDetail = lazy(() => import('./pages/DesvioDetail'));
+const MisDesvios = lazy(() => import('./pages/MisDesvios'));
 const Sucursales = lazy(() => import('./pages/Sucursales'));
 const SucursalDetail = lazy(() => import('./pages/SucursalDetail'));
 const Admin = lazy(() => import('./pages/Admin'));
@@ -147,6 +148,24 @@ export default function App() {
             path="/desvios/:id"
             element={
               <ProtectedRoute>
+                <DesvioDetail />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/mis-desvios"
+            element={
+              <ProtectedRoute allowRoles={['sucursal']}>
+                <MisDesvios />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/mis-desvios/:id"
+            element={
+              <ProtectedRoute allowRoles={['sucursal']}>
                 <DesvioDetail />
               </ProtectedRoute>
             }

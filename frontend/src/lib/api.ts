@@ -13,6 +13,9 @@ import type {
   CreateDesvioEventoInput,
   UserProfile,
   BranchAgg,
+  DesvioOrigen,
+  Notificacion,
+  NotificacionTipo,
 } from '../types';
 
 function handleApiError(error: { message?: string }): string {
@@ -162,6 +165,142 @@ export async function updateGestion(id: string, estado: GestionState, cerrado_po
 
   if (error) throw new Error(handleApiError(error));
   return data;
+}
+
+export async function uploadEvidencia(
+  idGestion: string,
+  file: File,
+  origen: DesvioOrigen,
+): Promise<{ path: string; signedUrl: string }> {
+  const fallbackExt = file.type === 'application/pdf' ? 'pdf' : 'jpg';
+  const ext = file.name.split('.').pop()?.toLowerCase() || fallbackExt;
+  const path = `gestion/${idGestion}/${origen}-${crypto.randomUUID()}.${ext}`;
+
+  const { error } = await supabase.storage
+    .from('desvio-evidencias')
+    .upload(path, file, { contentType: file.type, upsert: false });
+
+  if (error) throw new Error(handleApiError(error));
+
+  const { data: signed, error: signedError } = await supabase.storage
+    .from('desvio-evidencias')
+    .createSignedUrl(path, 60 * 60 * 24);
+
+  if (signedError) throw new Error(handleApiError(signedError));
+  return { path, signedUrl: signed?.signedUrl ?? '' };
+}
+
+export async function getSignedUrl(path: string): Promise<string> {
+  const { data, error } = await supabase.storage
+    .from('desvio-evidencias')
+    .createSignedUrl(path, 60 * 60 * 24);
+
+  if (error) throw new Error(handleApiError(error));
+  return data?.signedUrl ?? '';
+}
+
+export async function enviarMensajeInterno(input: {
+  idGestion: string;
+  comentario: string;
+  origen: DesvioOrigen;
+  actorId: string;
+  actorNombre: string;
+}): Promise<DesvioEvento> {
+  return createDesvioEvento({
+    id_gestion: input.idGestion,
+    tipo: 'mensaje',
+    comentario: input.comentario,
+    actor_id: input.actorId,
+    actor_nombre: input.actorNombre,
+    metadata: {
+      origen: input.origen,
+      leido_por_auditor: input.origen === 'auditor',
+      leido_por_sucursal: input.origen === 'sucursal',
+    },
+  });
+}
+
+export async function getNotificaciones(): Promise<Notificacion[]> {
+  const { data, error } = await supabase
+    .from('desvio_notificaciones')
+    .select('*')
+    .eq('leida', false)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    if (error.code === '42P01' || error.code === 'PGRST205') return [];
+    throw new Error(handleApiError(error));
+  }
+
+  return (data ?? []) as Notificacion[];
+}
+
+export async function marcarNotificacionLeida(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('desvio_notificaciones')
+    .update({ leida: true })
+    .eq('id', id);
+
+  if (error) throw new Error(handleApiError(error));
+}
+
+async function getNotificationRecipients(idGestion: string, origen: DesvioOrigen): Promise<string[]> {
+  const gestion = await getGestionById(idGestion);
+  if (!gestion) return [];
+
+  const { data: authData } = await supabase.auth.getUser();
+  const currentUserId = authData.user?.id ?? null;
+
+  if (origen === 'sucursal') {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id')
+      .in('role', ['admin', 'auditor']);
+
+    if (error) return [];
+    return (data ?? [])
+      .map((row) => String(row.id))
+      .filter((id) => id !== currentUserId);
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('role', 'sucursal')
+      .eq('id_sucursal', gestion.id_sucursal);
+
+    if (error) return [];
+    return (data ?? [])
+      .map((row) => String(row.id))
+      .filter((id) => id !== currentUserId);
+  } catch {
+    return [];
+  }
+}
+
+export async function crearNotificacionesDesvio(input: {
+  idGestion: string;
+  origen: DesvioOrigen;
+  tipo: NotificacionTipo;
+}): Promise<void> {
+  const recipients = await getNotificationRecipients(input.idGestion, input.origen);
+  if (recipients.length === 0) return;
+
+  const { error } = await supabase
+    .from('desvio_notificaciones')
+    .insert(
+      recipients.map((userId) => ({
+        id_gestion: input.idGestion,
+        user_id: userId,
+        tipo: input.tipo,
+      })),
+    );
+
+  if (error) {
+    if (error.code === '42P01' || error.code === 'PGRST205') return;
+    throw new Error(handleApiError(error));
+  }
 }
 
 export async function getAuditores(): Promise<Auditor[]> {

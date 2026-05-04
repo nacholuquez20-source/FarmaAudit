@@ -1,7 +1,9 @@
 export type Role = 'admin' | 'auditor' | 'sucursal';
 export type Severidad = 'Alta' | 'Media' | 'Baja';
 export type GestionState = 'Abierta' | 'En_proceso' | 'Resuelta' | 'Cerrada' | 'Vencida';
-export type DesvioEventoTipo = 'creacion' | 'contacto' | 'respuesta' | 'cierre' | 'nota' | 'evidencia';
+export type DesvioEventoTipo = 'creacion' | 'contacto' | 'respuesta' | 'cierre' | 'nota' | 'evidencia' | 'mensaje';
+export type DesvioOrigen = 'auditor' | 'sucursal';
+export type NotificacionTipo = 'mensaje_nuevo' | 'estado_cambio' | 'vencimiento_proximo';
 export type AdminTabKey = 'auditores' | 'usuarios';
 export type DashboardView = 'general' | 'zona';
 export type SucursalDetailTab = 'reportes' | 'gestiones' | 'stock';
@@ -97,6 +99,29 @@ export interface CreateDesvioEventoInput {
   actor_id?: string | null;
   actor_nombre?: string | null;
   metadata?: Record<string, unknown>;
+}
+
+export interface EvidenciaStorageMetadata {
+  foto_path: string;
+  foto_url_signed?: string;
+  mime_type: string;
+  size_bytes: number;
+  origen: DesvioOrigen;
+}
+
+export interface MensajeInternoMetadata {
+  origen: DesvioOrigen;
+  leido_por_auditor?: boolean;
+  leido_por_sucursal?: boolean;
+}
+
+export interface Notificacion {
+  id: string;
+  id_gestion: string;
+  user_id: string;
+  tipo: NotificacionTipo;
+  leida: boolean;
+  created_at: string;
 }
 
 export interface Auditor {

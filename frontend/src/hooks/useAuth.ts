@@ -53,7 +53,20 @@ async function loadProfile(userId: string): Promise<UserProfile | null> {
     .maybeSingle();
 
   if (error) throw error;
-  return normalizeProfile(data);
+  const baseProfile = normalizeProfile(data);
+  if (!baseProfile || baseProfile.role !== 'sucursal') return baseProfile;
+
+  const { data: sucursalData, error: sucursalError } = await supabase
+    .from('profiles')
+    .select('id_sucursal')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (sucursalError) return baseProfile;
+  return {
+    ...baseProfile,
+    id_sucursal: typeof sucursalData?.id_sucursal === 'string' ? sucursalData.id_sucursal : null,
+  };
 }
 
 async function loadProfileWithTimeout(userId: string): Promise<UserProfile | null> {
