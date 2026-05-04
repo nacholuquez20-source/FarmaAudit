@@ -36,19 +36,30 @@ function ProtectedRoute({
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen bg-gray-50">
-        <div className="text-center">
+        <div className="text-center max-w-md">
           <FeedbackState title="Verificando sesión..." />
           {showLoadingError && (
-            <div className="mt-4">
-              <p className="text-sm text-gray-600 mb-4">
-                Esto está tomando más de lo esperado. Intenta refrescar la página.
-              </p>
-              <button
-                onClick={() => window.location.reload()}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
-              >
-                Refrescar página
-              </button>
+            <div className="mt-4 space-y-3">
+              <div className="text-sm text-gray-600">
+                <p className="mb-2">Esto está tomando más de lo esperado.</p>
+                <p className="text-xs text-gray-500 bg-gray-100 p-2 rounded mb-2">
+                  💡 Verifica que las variables de entorno <code>VITE_SUPABASE_URL</code> y <code>VITE_SUPABASE_ANON_KEY</code> estén configuradas en Vercel Settings.
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => window.location.reload()}
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                >
+                  Refrescar
+                </button>
+                <button
+                  onClick={() => window.location.href = '/login'}
+                  className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 text-sm"
+                >
+                  Ir a Login
+                </button>
+              </div>
             </div>
           )}
         </div>
