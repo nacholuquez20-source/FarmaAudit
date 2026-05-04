@@ -1,7 +1,30 @@
 import json
+from datetime import date
 
-from models import RespuestaPregunta, RespuestaPreguntaEstado
+from models import Gestion, GestionState, RespuestaPregunta, RespuestaPreguntaEstado, Severidad
 from router import ConversationRouter
+from supabase_manager import SupabaseManager
+
+
+class _FakeTable:
+    def __init__(self, calls, name):
+        self.calls = calls
+        self.name = name
+
+    def insert(self, payload):
+        self.calls.append((self.name, payload))
+        return self
+
+    def execute(self):
+        return None
+
+
+class _FakeClient:
+    def __init__(self):
+        self.calls = []
+
+    def table(self, name):
+        return _FakeTable(self.calls, name)
 
 
 def test_respuesta_pregunta_deserializes_messages():
@@ -25,6 +48,27 @@ def test_respuesta_pregunta_deserializes_messages():
     assert len(mensajes) == 2
     assert mensajes[0].tipo == "text"
     assert mensajes[1].media_ids[0]["url"].endswith("foto.jpg")
+
+
+def test_create_gestion_writes_to_frontend_table():
+    manager = object.__new__(SupabaseManager)
+    manager.client = _FakeClient()
+
+    manager.create_gestion(Gestion(
+        id_gestion="",
+        id_reporte="rep-1",
+        id_sucursal="suc-1",
+        sucursal="Sucursal Centro",
+        desvio="Vidriera desordenada",
+        severidad=Severidad.MEDIA,
+        responsable="Encargado",
+        tel_responsable="5491111111111",
+        plazo_fecha=date(2026, 5, 11),
+        plan_accion="",
+        estado=GestionState.ABIERTA,
+    ))
+
+    assert manager.client.calls[0][0] == "gestion"
 
 
 def test_validate_respuesta_rejects_short_text():

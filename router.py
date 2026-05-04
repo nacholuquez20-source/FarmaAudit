@@ -2272,9 +2272,21 @@ EDITAR → Hacer cambios""",
                     bloque_nombre, contexto_puntos, respuesta
                 )
 
-                # Add deviations to hallazgos
+                auditor = self.sheets.get_auditor(payload.telefono)
+                auditor_nombre = auditor.nombre if auditor else "Auditor"
+
+                # Persist each extracted deviation in the same tables used by the web UI.
                 hallazgos = json.loads(sesion.hallazgos_json) if sesion.hallazgos_json else []
                 for desvio in desvios:
+                    persisted = self.sheets.save_perfumeria_desvio(
+                        auditoria_id=sesion.id_sesion,
+                        sucursal_id=sesion.sucursal_id,
+                        auditor_nombre=auditor_nombre,
+                        bloque_nombre=bloque_nombre,
+                        descripcion=str(desvio.get("desvio", "")),
+                        severidad=str(desvio.get("severidad", "Media")),
+                    )
+                    desvio.update(persisted)
                     hallazgos.append(desvio)
 
                 # Move to next block

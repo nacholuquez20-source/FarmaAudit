@@ -411,7 +411,7 @@ class SupabaseManager:
             import uuid
             gestion.id_gestion = str(uuid.uuid4())[:12]
 
-            self.client.table("gestiones").insert({
+            self.client.table("gestion").insert({
                 "id_gestion": gestion.id_gestion,
                 "id_reporte": gestion.id_reporte,
                 "id_sucursal": gestion.id_sucursal,
@@ -431,6 +431,70 @@ class SupabaseManager:
             return gestion.id_gestion
         except Exception as e:
             logger.error(f"Failed to create gestion: {e}")
+            raise
+
+    def save_perfumeria_desvio(
+        self,
+        auditoria_id: str,
+        sucursal_id: str,
+        auditor_nombre: str,
+        bloque_nombre: str,
+        descripcion: str,
+        severidad: str,
+    ) -> Dict[str, str]:
+        """Create Reporte + Gestion for an extracted perfumery finding."""
+        try:
+            from datetime import date
+
+            descripcion_limpia = (descripcion or "").strip()
+            if not descripcion_limpia:
+                raise ValueError("descripcion is required")
+
+            try:
+                severidad_enum = Severidad(severidad or "Media")
+            except ValueError:
+                severidad_enum = Severidad.MEDIA
+
+            sucursal = self.get_sucursal(sucursal_id)
+            sucursal_nombre = sucursal.nombre if sucursal else sucursal_id
+            hoy = date.today().isoformat()
+            hora = datetime.utcnow().strftime("%H:%M")
+
+            reporte = Reporte(
+                id="",
+                fecha=hoy,
+                hora=hora,
+                cuadrilla="",
+                auditor=auditor_nombre,
+                id_sucursal=sucursal_id,
+                sucursal=sucursal_nombre,
+                area=f"Perfumeria - {bloque_nombre}",
+                subitem="",
+                descripcion=descripcion_limpia,
+                severidad=severidad_enum,
+                creado_por_audio=False,
+            )
+            reporte_id = self.create_reporte(reporte)
+
+            plazo = date.today() + timedelta(days=7)
+            gestion = Gestion(
+                id_gestion="",
+                id_reporte=reporte_id,
+                id_sucursal=sucursal_id,
+                sucursal=sucursal_nombre,
+                desvio=descripcion_limpia,
+                severidad=severidad_enum,
+                responsable=sucursal.responsable if sucursal else "",
+                tel_responsable=sucursal.tel_responsable if sucursal else "",
+                plazo_fecha=plazo,
+                plan_accion="[Por definir por el responsable]",
+                estado=GestionState.ABIERTA,
+            )
+            gestion_id = self.create_gestion(gestion)
+            logger.info(f"Created perfumeria desvio reporte={reporte_id} gestion={gestion_id} sesion={auditoria_id}")
+            return {"id_reporte": reporte_id, "id_gestion": gestion_id}
+        except Exception as e:
+            logger.error(f"Failed to save perfumeria desvio for sesion {auditoria_id}: {e}")
             raise
 
     def get_encargado_by_phone(self, telefono: str) -> Optional[Dict[str, Any]]:
