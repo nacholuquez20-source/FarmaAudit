@@ -14,11 +14,11 @@ interface EditableColumn {
 }
 
 const EDITABLE_COLUMNS: EditableColumn[] = [
-  { field: 'nombre', label: 'Nombre', className: 'min-w-[220px]' },
-  { field: 'direccion', label: 'Direccion', className: 'min-w-[260px]' },
-  { field: 'zona', label: 'Zona', className: 'min-w-[150px]' },
-  { field: 'responsable', label: 'Responsable', className: 'min-w-[200px]' },
-  { field: 'tel_responsable', label: 'Telefono', className: 'min-w-[170px]' },
+  { field: 'nombre', label: 'Nombre', className: 'min-w-[190px]' },
+  { field: 'direccion', label: 'Direccion', className: 'min-w-[220px]' },
+  { field: 'zona', label: 'Zona', className: 'min-w-[120px]' },
+  { field: 'responsable', label: 'Responsable', className: 'min-w-[170px]' },
+  { field: 'tel_responsable', label: 'Telefono', className: 'min-w-[150px]' },
 ];
 
 const SAVE_DELAY_MS = 700;
@@ -143,6 +143,11 @@ export default function Sucursales() {
     }, SAVE_DELAY_MS);
   };
 
+  const getRowActiveStatus = (sucursal: Sucursal): AutosaveStatus | undefined => {
+    const rowStatuses = EDITABLE_COLUMNS.map((column) => saveStatus[getCellKey(sucursal.id, column.field)]);
+    return rowStatuses.find((status) => status && status !== 'idle');
+  };
+
   if (loading) {
     return (
       <AppLayout title="Sucursales">
@@ -181,12 +186,11 @@ export default function Sucursales() {
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-lg bg-white shadow">
+      <div className="hidden overflow-hidden rounded-lg bg-white shadow xl:block">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1120px]">
+          <table className="w-full min-w-[980px] table-fixed">
             <thead className="border-b bg-gray-100">
               <tr>
-                <th className="px-4 py-3 text-left text-sm font-semibold">ID</th>
                 {EDITABLE_COLUMNS.map((column) => (
                   <th key={column.field} className={`px-4 py-3 text-left text-sm font-semibold ${column.className || ''}`}>
                     {column.label}
@@ -198,8 +202,7 @@ export default function Sucursales() {
             </thead>
             <tbody>
               {filteredSucursales.map((sucursal) => {
-                const rowStatuses = EDITABLE_COLUMNS.map((column) => saveStatus[getCellKey(sucursal.id, column.field)]);
-                const activeStatus = rowStatuses.find((status) => status && status !== 'idle');
+                const activeStatus = getRowActiveStatus(sucursal);
                 return (
                   <tr
                     key={sucursal.id}
@@ -207,7 +210,6 @@ export default function Sucursales() {
                       rowFlash[sucursal.id] ? 'bg-emerald-50' : 'hover:bg-gray-50'
                     }`}
                   >
-                    <td className="px-4 py-3 align-top font-mono text-xs text-gray-500">{sucursal.id}</td>
                     {EDITABLE_COLUMNS.map((column) => {
                       const cellKey = getCellKey(sucursal.id, column.field);
                       const status = saveStatus[cellKey];
@@ -258,6 +260,76 @@ export default function Sucursales() {
             </tbody>
           </table>
         </div>
+      </div>
+
+      <div className="grid gap-4 xl:hidden">
+        {filteredSucursales.map((sucursal) => {
+          const activeStatus = getRowActiveStatus(sucursal);
+          return (
+            <section
+              key={sucursal.id}
+              className={`rounded-lg border border-gray-200 bg-white p-4 shadow-sm transition-colors duration-500 ${
+                rowFlash[sucursal.id] ? 'bg-emerald-50' : ''
+              }`}
+            >
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-semibold text-gray-900">{sucursal.nombre || 'Sucursal sin nombre'}</h2>
+                  <p className="text-sm text-gray-500">{sucursal.zona || 'Sin zona'}</p>
+                </div>
+                <span
+                  className={`inline-flex min-w-[88px] justify-center rounded-full border px-3 py-1 text-xs font-semibold transition ${getStatusClasses(
+                    activeStatus,
+                  )}`}
+                >
+                  {getStatusLabel(activeStatus) || 'Listo'}
+                </span>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                {EDITABLE_COLUMNS.map((column) => {
+                  const cellKey = getCellKey(sucursal.id, column.field);
+                  const status = saveStatus[cellKey];
+                  const hasError = status === 'error';
+                  return (
+                    <label key={column.field} className={column.field === 'direccion' ? 'sm:col-span-2' : ''}>
+                      <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        {column.label}
+                      </span>
+                      <input
+                        type="text"
+                        value={sucursal[column.field]}
+                        onChange={(event) => handleFieldChange(sucursal.id, column.field, event.target.value)}
+                        disabled={!canEdit}
+                        title={saveErrors[cellKey] || column.label}
+                        className={`w-full rounded-md border px-3 py-2 text-sm transition focus:border-transparent focus:ring-2 disabled:bg-gray-50 disabled:text-gray-600 ${
+                          hasError
+                            ? 'border-red-300 bg-red-50 focus:ring-red-500'
+                            : status === 'saved'
+                              ? 'border-emerald-300 bg-emerald-50 focus:ring-emerald-500'
+                              : status === 'saving' || status === 'pending'
+                                ? 'border-blue-300 bg-blue-50 focus:ring-blue-500'
+                                : 'border-gray-300 bg-white focus:ring-blue-500'
+                        }`}
+                      />
+                      {hasError && <p className="mt-1 text-xs text-red-700">{saveErrors[cellKey]}</p>}
+                    </label>
+                  );
+                })}
+              </div>
+
+              <div className="mt-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => navigate(`/sucursales/${sucursal.id}`)}
+                  className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-100"
+                >
+                  Ver detalle
+                </button>
+              </div>
+            </section>
+          );
+        })}
       </div>
 
       {filteredSucursales.length === 0 && (
