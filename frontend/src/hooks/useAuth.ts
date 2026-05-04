@@ -48,7 +48,7 @@ function normalizeProfile(profile: Partial<UserProfile> | null): UserProfile | n
 async function loadProfile(userId: string): Promise<UserProfile | null> {
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, role, nombre, telefono')
+    .select('id, role, nombre, telefono, id_sucursal')
     .eq('id', userId)
     .maybeSingle();
 
