@@ -32,9 +32,19 @@ export function useAuth() {
     const getSession = async () => {
       setLoading(true);
 
+      // Debug: Log if credentials are available
+      console.log('[useAuth] Starting getSession', {
+        hasUrl: supabaseConfig.hasUrl,
+        hasKey: supabaseConfig.hasKey,
+        isDev: import.meta.env.DEV,
+      });
+
       timeoutId = setTimeout(() => {
         if (!cancelled) {
-          console.warn('Session loading timeout - falling back to guest/dev mode');
+          console.warn('[useAuth] Session loading timeout after 3s - falling back', {
+            hasUrl: supabaseConfig.hasUrl,
+            hasKey: supabaseConfig.hasKey,
+          });
           if (import.meta.env.DEV) {
             setUser(DEV_USER);
             setProfile(DEV_PROFILE);
@@ -47,28 +57,35 @@ export function useAuth() {
       }, 3000);
 
       try {
+        console.log('[useAuth] Calling supabase.auth.getSession()...');
         const {
           data: { session },
         } = await supabase.auth.getSession();
 
+        console.log('[useAuth] getSession completed', { hasSession: !!session?.user });
         if (cancelled) return;
         if (timeoutId) clearTimeout(timeoutId);
 
         if (session?.user) {
+          console.log('[useAuth] User found:', session.user.id);
           setUser(session.user);
           try {
+            console.log('[useAuth] Loading profile for user:', session.user.id);
             const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+            console.log('[useAuth] Profile loaded:', data?.role);
             if (!cancelled) {
               setProfile(data);
             }
           } catch (err) {
-            console.error('Failed to load profile:', err);
+            console.error('[useAuth] Failed to load profile:', err);
             if (!cancelled) {
               setProfile(null);
             }
           }
         } else {
+          console.log('[useAuth] No session found');
           if (import.meta.env.DEV) {
+            console.log('[useAuth] Using DEV user');
             setUser(DEV_USER);
             setProfile(DEV_PROFILE);
           } else {
@@ -77,7 +94,7 @@ export function useAuth() {
           }
         }
       } catch (err) {
-        console.error('Failed to get session:', err);
+        console.error('[useAuth] Error in getSession:', err);
         if (cancelled) return;
         if (timeoutId) clearTimeout(timeoutId);
         if (import.meta.env.DEV) {
@@ -92,6 +109,7 @@ export function useAuth() {
           clearTimeout(timeoutId);
         }
         if (!cancelled) {
+          console.log('[useAuth] Setting loading=false');
           setLoading(false);
         }
       }
