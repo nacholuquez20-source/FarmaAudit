@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import type {
   Sucursal,
+  SucursalUpdate,
   Reporte,
   Gestion,
   Auditor,
@@ -36,6 +37,18 @@ export async function getSucursal(id: string): Promise<Sucursal> {
     .select('*')
     .eq('id', id)
     .single();
+  if (error) throw new Error(handleApiError(error));
+  return data;
+}
+
+export async function updateSucursal(id: string, patch: SucursalUpdate): Promise<Sucursal> {
+  const { data, error } = await supabase
+    .from('sucursales')
+    .update(patch)
+    .eq('id', id)
+    .select('*')
+    .single();
+
   if (error) throw new Error(handleApiError(error));
   return data;
 }

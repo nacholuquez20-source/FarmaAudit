@@ -1,27 +1,146 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { useSucursales } from '../hooks/useSucursales';
 import { useAuth } from '../hooks/useAuth';
+import { updateSucursal } from '../lib/api';
+import type { AutosaveStatus, Sucursal, SucursalEditableField, SucursalUpdate } from '../types';
+
+interface EditableColumn {
+  field: SucursalEditableField;
+  label: string;
+  className?: string;
+}
+
+const EDITABLE_COLUMNS: EditableColumn[] = [
+  { field: 'nombre', label: 'Nombre', className: 'min-w-[220px]' },
+  { field: 'direccion', label: 'Direccion', className: 'min-w-[260px]' },
+  { field: 'zona', label: 'Zona', className: 'min-w-[150px]' },
+  { field: 'responsable', label: 'Responsable', className: 'min-w-[200px]' },
+  { field: 'tel_responsable', label: 'Telefono', className: 'min-w-[170px]' },
+];
+
+const SAVE_DELAY_MS = 700;
+
+function getCellKey(id: string, field: SucursalEditableField): string {
+  return `${id}:${field}`;
+}
+
+function normalizeSucursal(sucursal: Sucursal): Sucursal {
+  return {
+    ...sucursal,
+    nombre: sucursal.nombre || '',
+    direccion: sucursal.direccion || '',
+    zona: sucursal.zona || '',
+    responsable: sucursal.responsable || '',
+    tel_responsable: sucursal.tel_responsable || '',
+  };
+}
+
+function getStatusLabel(status: AutosaveStatus | undefined): string {
+  if (status === 'pending') return 'Pendiente';
+  if (status === 'saving') return 'Guardando';
+  if (status === 'saved') return 'Guardado';
+  if (status === 'error') return 'Error';
+  return '';
+}
+
+function getStatusClasses(status: AutosaveStatus | undefined): string {
+  if (status === 'pending') return 'border-amber-300 bg-amber-50 text-amber-800';
+  if (status === 'saving') return 'border-blue-300 bg-blue-50 text-blue-800';
+  if (status === 'saved') return 'border-emerald-300 bg-emerald-50 text-emerald-800';
+  if (status === 'error') return 'border-red-300 bg-red-50 text-red-800';
+  return 'border-transparent bg-transparent text-transparent';
+}
 
 export default function Sucursales() {
   const { role, profile } = useAuth();
   const { sucursales, loading, error } = useSucursales();
+  const [rows, setRows] = useState<Sucursal[]>([]);
   const [searchText, setSearchText] = useState('');
+  const [saveStatus, setSaveStatus] = useState<Record<string, AutosaveStatus>>({});
+  const [rowFlash, setRowFlash] = useState<Record<string, boolean>>({});
+  const [saveErrors, setSaveErrors] = useState<Record<string, string>>({});
+  const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const navigate = useNavigate();
+  const canEdit = role === 'admin';
 
-  const filteredSucursales = sucursales.filter(
-    (sucursal) =>
-      sucursal.nombre.toLowerCase().includes(searchText.toLowerCase()) ||
-      sucursal.responsable.toLowerCase().includes(searchText.toLowerCase()) ||
-      sucursal.zona.toLowerCase().includes(searchText.toLowerCase())
-  );
+  useEffect(() => {
+    setRows(sucursales.map(normalizeSucursal));
+  }, [sucursales]);
 
-  const lista =
-    role === 'sucursal' && profile?.id_sucursal
-      ? filteredSucursales.filter((s) => s.id === profile.id_sucursal)
-      : filteredSucursales;
+  useEffect(() => {
+    return () => {
+      Object.values(timersRef.current).forEach(clearTimeout);
+    };
+  }, []);
+
+  const filteredSucursales = useMemo(() => {
+    const normalizedSearch = searchText.trim().toLowerCase();
+    const visibleRows =
+      role === 'sucursal' && profile?.id_sucursal
+        ? rows.filter((sucursal) => sucursal.id === profile.id_sucursal)
+        : rows;
+
+    if (!normalizedSearch) return visibleRows;
+
+    return visibleRows.filter((sucursal) =>
+      [
+        sucursal.id,
+        sucursal.nombre,
+        sucursal.direccion,
+        sucursal.responsable,
+        sucursal.tel_responsable,
+        sucursal.zona,
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(normalizedSearch),
+    );
+  }, [profile?.id_sucursal, role, rows, searchText]);
+
+  const persistField = async (id: string, field: SucursalEditableField, value: string) => {
+    const cellKey = getCellKey(id, field);
+    setSaveStatus((current) => ({ ...current, [cellKey]: 'saving' }));
+    setSaveErrors((current) => {
+      const next = { ...current };
+      delete next[cellKey];
+      return next;
+    });
+
+    try {
+      const updated = await updateSucursal(id, { [field]: value } as SucursalUpdate);
+      const normalized = normalizeSucursal(updated);
+      setRows((current) => current.map((row) => (row.id === id ? normalized : row)));
+      setSaveStatus((current) => ({ ...current, [cellKey]: 'saved' }));
+      setRowFlash((current) => ({ ...current, [id]: true }));
+
+      window.setTimeout(() => {
+        setSaveStatus((current) => ({ ...current, [cellKey]: 'idle' }));
+      }, 1600);
+      window.setTimeout(() => {
+        setRowFlash((current) => ({ ...current, [id]: false }));
+      }, 900);
+    } catch (err) {
+      setSaveStatus((current) => ({ ...current, [cellKey]: 'error' }));
+      setSaveErrors((current) => ({
+        ...current,
+        [cellKey]: err instanceof Error ? err.message : 'No se pudo guardar el cambio',
+      }));
+    }
+  };
+
+  const handleFieldChange = (id: string, field: SucursalEditableField, value: string) => {
+    const cellKey = getCellKey(id, field);
+    setRows((current) => current.map((row) => (row.id === id ? { ...row, [field]: value } : row)));
+    setSaveStatus((current) => ({ ...current, [cellKey]: 'pending' }));
+
+    if (timersRef.current[cellKey]) clearTimeout(timersRef.current[cellKey]);
+    timersRef.current[cellKey] = setTimeout(() => {
+      persistField(id, field, value.trim());
+    }, SAVE_DELAY_MS);
+  };
 
   if (loading) {
     return (
@@ -37,51 +156,110 @@ export default function Sucursales() {
         <div className="mb-4">
           <FeedbackState
             title="Tu usuario no tiene sucursal asignada."
-            description="Pedí al administrador que vincule tu perfil en Administración."
+            description="Pedi al administrador que vincule tu perfil en Administracion."
             tone="error"
           />
         </div>
       )}
-      {error && <div className="mb-4"><FeedbackState title={error} tone="error" /></div>}
+      {error && (
+        <div className="mb-4">
+          <FeedbackState title={error} tone="error" />
+        </div>
+      )}
 
-      <div className="mb-6">
+      <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <input
           type="text"
-          placeholder={role === 'sucursal' ? 'Buscar en tu sucursal...' : 'Buscar perfumerías...'}
+          placeholder={role === 'sucursal' ? 'Buscar en tu sucursal...' : 'Buscar por nombre, zona, telefono o direccion...'}
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
-          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500 lg:max-w-xl"
         />
+        <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-2 text-sm text-blue-800">
+          {canEdit ? 'Edicion activa: los cambios se guardan automaticamente.' : 'Solo lectura.'}
+        </div>
       </div>
 
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <table className="w-full">
-          <thead className="bg-gray-100 border-b">
-            <tr>
-              <th className="text-left px-6 py-3 font-semibold">Nombre</th>
-              <th className="text-left px-6 py-3 font-semibold">Zona</th>
-              <th className="text-left px-6 py-3 font-semibold">Responsable</th>
-              <th className="text-left px-6 py-3 font-semibold">Telefono</th>
-            </tr>
-          </thead>
-          <tbody>
-            {lista.map((sucursal) => (
-              <tr
-                key={sucursal.id}
-                onClick={() => navigate(`/sucursales/${sucursal.id}`)}
-                className="border-b hover:bg-gray-50 cursor-pointer transition"
-              >
-                <td className="px-6 py-4 font-medium">{sucursal.nombre}</td>
-                <td className="px-6 py-4 text-gray-600">{sucursal.zona}</td>
-                <td className="px-6 py-4 text-gray-600">{sucursal.responsable}</td>
-                <td className="px-6 py-4 text-gray-600">{sucursal.tel_responsable}</td>
+      <div className="overflow-hidden rounded-lg bg-white shadow">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1120px]">
+            <thead className="border-b bg-gray-100">
+              <tr>
+                <th className="px-4 py-3 text-left text-sm font-semibold">ID</th>
+                {EDITABLE_COLUMNS.map((column) => (
+                  <th key={column.field} className={`px-4 py-3 text-left text-sm font-semibold ${column.className || ''}`}>
+                    {column.label}
+                  </th>
+                ))}
+                <th className="px-4 py-3 text-left text-sm font-semibold">Estado</th>
+                <th className="px-4 py-3 text-right text-sm font-semibold">Detalle</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {filteredSucursales.map((sucursal) => {
+                const rowStatuses = EDITABLE_COLUMNS.map((column) => saveStatus[getCellKey(sucursal.id, column.field)]);
+                const activeStatus = rowStatuses.find((status) => status && status !== 'idle');
+                return (
+                  <tr
+                    key={sucursal.id}
+                    className={`border-b transition-colors duration-500 ${
+                      rowFlash[sucursal.id] ? 'bg-emerald-50' : 'hover:bg-gray-50'
+                    }`}
+                  >
+                    <td className="px-4 py-3 align-top font-mono text-xs text-gray-500">{sucursal.id}</td>
+                    {EDITABLE_COLUMNS.map((column) => {
+                      const cellKey = getCellKey(sucursal.id, column.field);
+                      const status = saveStatus[cellKey];
+                      const hasError = status === 'error';
+                      return (
+                        <td key={column.field} className="px-4 py-3 align-top">
+                          <input
+                            type="text"
+                            value={sucursal[column.field]}
+                            onChange={(event) => handleFieldChange(sucursal.id, column.field, event.target.value)}
+                            disabled={!canEdit}
+                            title={saveErrors[cellKey] || column.label}
+                            className={`w-full rounded-md border px-3 py-2 text-sm transition focus:border-transparent focus:ring-2 disabled:bg-gray-50 disabled:text-gray-600 ${
+                              hasError
+                                ? 'border-red-300 bg-red-50 focus:ring-red-500'
+                                : status === 'saved'
+                                  ? 'border-emerald-300 bg-emerald-50 focus:ring-emerald-500'
+                                  : status === 'saving' || status === 'pending'
+                                    ? 'border-blue-300 bg-blue-50 focus:ring-blue-500'
+                                    : 'border-gray-300 bg-white focus:ring-blue-500'
+                            }`}
+                          />
+                          {hasError && <p className="mt-1 text-xs text-red-700">{saveErrors[cellKey]}</p>}
+                        </td>
+                      );
+                    })}
+                    <td className="px-4 py-3 align-top">
+                      <span
+                        className={`inline-flex min-w-[88px] justify-center rounded-full border px-3 py-1 text-xs font-semibold transition ${getStatusClasses(
+                          activeStatus,
+                        )}`}
+                      >
+                        {getStatusLabel(activeStatus) || 'Listo'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right align-top">
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/sucursales/${sucursal.id}`)}
+                        className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-100"
+                      >
+                        Ver
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      {lista.length === 0 && (
+      {filteredSucursales.length === 0 && (
         <div className="mt-4">
           <FeedbackState title="No se encontraron farmacias" />
         </div>

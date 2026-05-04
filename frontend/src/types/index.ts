@@ -5,6 +5,8 @@ export type DesvioEventoTipo = 'creacion' | 'contacto' | 'respuesta' | 'cierre' 
 export type AdminTabKey = 'auditores' | 'usuarios';
 export type DashboardView = 'general' | 'zona';
 export type SucursalDetailTab = 'reportes' | 'gestiones' | 'stock';
+export type SucursalEditableField = 'nombre' | 'direccion' | 'zona' | 'responsable' | 'tel_responsable';
+export type AutosaveStatus = 'idle' | 'pending' | 'saving' | 'saved' | 'error';
 
 export interface Sucursal {
   id: string;
@@ -13,6 +15,14 @@ export interface Sucursal {
   responsable: string;
   tel_responsable: string;
   zona: string;
+}
+
+export interface SucursalUpdate {
+  nombre?: string;
+  direccion?: string;
+  responsable?: string;
+  tel_responsable?: string;
+  zona?: string;
 }
 
 export interface Reporte {

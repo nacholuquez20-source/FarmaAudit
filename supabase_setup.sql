@@ -120,6 +120,11 @@ alter table profiles enable row level security;
 
 -- Sucursales: Admins can see all, auditors can see all (farms are public data)
 create policy "sucursales_read" on sucursales for select using (true);
+create policy "sucursales_admin_update" on sucursales for update using (
+  exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+) with check (
+  exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+);
 
 -- Reportes: Admins can see all, auditors can only see their own (by auditor name)
 create policy "reportes_admin_read" on reportes for select using (
