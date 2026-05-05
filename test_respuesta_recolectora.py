@@ -175,3 +175,23 @@ def test_collector_failure_does_not_fall_back_to_legacy():
 
     assert handled is True
     assert "no voy a avanzar de bloque" in meta.messages[0][1]
+
+
+def test_perfumeria_fallback_detects_clear_deviation():
+    desvio = ConversationRouter._build_perfumeria_fallback_desvio(
+        "GONDOLAS",
+        "Las gondolas estan desordenadas con poca variedad de productos",
+    )
+
+    assert desvio is not None
+    assert desvio["severidad"] == "Baja"
+    assert "desordenadas" in desvio["desvio"]
+
+
+def test_perfumeria_fallback_ignores_ok_response():
+    desvio = ConversationRouter._build_perfumeria_fallback_desvio(
+        "ATENCION",
+        "todo ok, esta correcto",
+    )
+
+    assert desvio is None

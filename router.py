@@ -2344,6 +2344,15 @@ EDITAR → Hacer cambios""",
                 desvios = await self._extract_perfumeria_deviations(
                     bloque_nombre, contexto_puntos, respuesta
                 )
+                if not desvios:
+                    fallback_desvio = self._build_perfumeria_fallback_desvio(bloque_nombre, respuesta)
+                    if fallback_desvio:
+                        desvios = [fallback_desvio]
+                        logger.info(
+                            "Created perfumeria fallback desvio for bloque=%s sesion=%s",
+                            bloque_id,
+                            sesion.id_sesion,
+                        )
 
                 auditor = self.sheets.get_auditor(payload.telefono)
                 auditor_nombre = auditor.nombre if auditor else "Auditor"
@@ -2406,6 +2415,50 @@ EDITAR → Hacer cambios""",
                 "❌ Error procesando tu respuesta.",
             )
             return "error"
+
+    @staticmethod
+    def _build_perfumeria_fallback_desvio(bloque_nombre: str, respuesta_auditor: str) -> Optional[Dict[str, str]]:
+        """Create a conservative fallback finding when the text clearly describes a problem."""
+        respuesta = (respuesta_auditor or "").strip()
+        normalized = respuesta.lower()
+        if len(normalized) < 4:
+            return None
+
+        negative_markers = [
+            "falta", "faltan", "faltante", "faltantes", "no hay", "sin stock",
+            "sin probador", "sin probadores", "desorden", "desordenada", "desordenadas",
+            "sucio", "sucia", "suciedad", "mancha", "manchas", "limpieza",
+            "roto", "rota", "vencido", "vencida", "caducado", "caducada",
+            "demora", "espera", "excesivo", "excesiva", "incumple", "no cumple",
+            "inadecuada", "inadecuado", "insuficiente", "problema", "problemas",
+            "deficiencia", "deficiente", "incorrecto", "incorrecta", "mal ",
+            "poca variedad", "poco stock", "bajo stock", "vacio", "vacío",
+            "ausencia", "no funciona", "desvio", "desvío",
+        ]
+        positive_markers = [
+            "todo ok", "todo correcto", "todo bien", "esta ok", "está ok",
+            "esta correcto", "está correcto", "esta correcta", "está correcta",
+            "sin problemas", "sin desvio", "sin desvío", "no hay desvio", "no hay desvío",
+        ]
+
+        has_negative = any(marker in normalized for marker in negative_markers)
+        has_positive = any(marker in normalized for marker in positive_markers)
+        if not has_negative or (has_positive and not has_negative):
+            return None
+
+        severity = "Media"
+        if any(marker in normalized for marker in ["vencido", "vencida", "no funciona", "incumple", "no cumple", "sin stock"]):
+            severity = "Alta"
+        elif any(marker in normalized for marker in ["limpieza", "mancha", "desorden", "poca variedad"]):
+            severity = "Baja"
+
+        return {
+            "bloque": bloque_nombre,
+            "desvio": respuesta,
+            "severidad": severity,
+            "timestamp": ConversationRouter._utc_now_iso(),
+            "origen": "fallback",
+        }
 
     async def _extract_perfumeria_deviations(
         self,
