@@ -2,241 +2,27 @@ import { useEffect, useMemo, useState } from 'react';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { getGestion, getDesvioEventos, updateGestion, enviarMensajeInterno } from '../lib/api';
-import { formatDateTime, severidadColor } from '../lib/utils';
+import { formatDate, formatDateTime, severidadColor, gestionStateColor, gestionStateLabel } from '../lib/utils';
 import type { Gestion, DesvioEvento, GestionState } from '../types';
 import { toast } from 'sonner';
 
-const ESTADO_LABELS: Record<GestionState, string> = {
-  'Abierta': 'Abierta',
-  'En_proceso': 'En Proceso',
-  'Resuelta': 'Resuelta',
-  'Cerrada': 'Cerrada',
-  'Vencida': 'Vencida',
-};
-
-const ESTADO_COLORS: Record<GestionState, string> = {
-  'Abierta': 'bg-blue-50 border-blue-200 text-blue-900',
-  'En_proceso': 'bg-amber-50 border-amber-200 text-amber-900',
-  'Resuelta': 'bg-green-50 border-green-200 text-green-900',
-  'Cerrada': 'bg-gray-50 border-gray-200 text-gray-900',
-  'Vencida': 'bg-red-50 border-red-200 text-red-900',
-};
-
 interface DesvioCard extends Gestion {
   eventos: DesvioEvento[];
-  ultimeRespuesta?: DesvioEvento;
 }
 
-function TimelineIndicator({ estado }: { estado: GestionState }) {
-  const steps: GestionState[] = ['Abierta', 'En_proceso', 'Resuelta', 'Cerrada'];
-  const currentIndex = steps.indexOf(estado);
-
-  return (
-    <div className="flex items-center gap-2">
-      {steps.map((step, idx) => {
-        const isActive = idx <= currentIndex;
-        const isCurrent = idx === currentIndex;
-        const colors = {
-          'Abierta': 'bg-blue-200',
-          'En_proceso': 'bg-amber-200',
-          'Resuelta': 'bg-green-200',
-          'Cerrada': 'bg-gray-300',
-          'Vencida': 'bg-red-300',
-        };
-
-        return (
-          <div key={step} className="flex items-center">
-            <div
-              className={`h-3 w-3 rounded-full transition ${
-                isCurrent ? 'ring-2 ring-offset-2 ring-current' : ''
-              } ${isActive ? colors[step] : 'bg-gray-200'}`}
-            />
-            {idx < steps.length - 1 && (
-              <div className={`h-0.5 w-8 ${isActive ? 'bg-gray-300' : 'bg-gray-200'}`} />
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function DesvioCardComponent({ desvio, onRefresh }: { desvio: DesvioCard; onRefresh: () => void }) {
-  const [expanded, setExpanded] = useState(false);
-  const [comentario, setComentario] = useState('');
-  const [sending, setSending] = useState(false);
-  const [updating, setUpdating] = useState(false);
-
-  const handleComment = async () => {
-    if (!comentario.trim()) return;
-
-    setSending(true);
-    try {
-      await enviarMensajeInterno({
-        idGestion: desvio.id_gestion,
-        comentario,
-        origen: 'auditor',
-        actorId: '',
-        actorNombre: '',
-      });
-      toast.success('Comentario enviado');
-      setComentario('');
-      void onRefresh();
-    } catch (err) {
-      toast.error('Error al enviar comentario');
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const handleStateChange = async (newEstado: GestionState) => {
-    setUpdating(true);
-    try {
-      await updateGestion(desvio.id_gestion, newEstado);
-      toast.success(`Desvio marcado como ${ESTADO_LABELS[newEstado]}`);
-      void onRefresh();
-    } catch (err) {
-      toast.error('Error al actualizar estado');
-    } finally {
-      setUpdating(false);
-    }
-  };
-
-  const diasEnProceso = desvio.created_at
-    ? Math.floor((Date.now() - new Date(desvio.created_at).getTime()) / (1000 * 60 * 60 * 24))
-    : 0;
-
-  const esVencida = desvio.estado === 'Vencida';
-
-  return (
-    <article
-      className={`rounded-lg border-2 p-6 transition ${
-        esVencida
-          ? 'border-red-300 bg-red-50'
-          : ESTADO_COLORS[desvio.estado].replace('border-', 'border-2 ')
-      }`}
-    >
-      {/* Header */}
-      <div className="mb-4 flex items-start justify-between gap-4">
-        <div className="flex-1">
-          <div className="mb-2 flex items-center gap-2">
-            <span className={`inline-block rounded-full px-3 py-1 text-xs font-bold ${severidadColor(desvio.severidad)}`}>
-              {desvio.severidad}
-            </span>
-            <span className="text-sm font-mono text-gray-600">{desvio.id_gestion}</span>
-          </div>
-          <p className="mb-1 text-lg font-bold text-gray-900">{desvio.desvio}</p>
-          <p className="text-sm text-gray-600">
-            {desvio.sucursal} • Responsable: {desvio.responsable}
-          </p>
-        </div>
-      </div>
-
-      {/* Timeline */}
-      <div className="mb-4 rounded bg-white px-3 py-2">
-        <TimelineIndicator estado={desvio.estado} />
-      </div>
-
-      {/* Estado y plazo */}
-      <div className="mb-4 grid grid-cols-2 gap-3 text-sm">
-        <div>
-          <span className="text-xs font-semibold text-gray-600">ESTADO</span>
-          <p className="font-bold text-gray-900">{ESTADO_LABELS[desvio.estado]}</p>
-          <p className="text-xs text-gray-500">Hace {diasEnProceso} días</p>
-        </div>
-        <div>
-          <span className="text-xs font-semibold text-gray-600">PLAZO</span>
-          <p className={`font-bold ${esVencida ? 'text-red-600' : 'text-gray-900'}`}>
-            {new Date(desvio.plazo_fecha).toLocaleDateString()}
-          </p>
-          {esVencida && <p className="text-xs font-semibold text-red-600">VENCIDA</p>}
-        </div>
-      </div>
-
-      {desvio.plan_accion && (
-        <div className="mb-4 rounded border-l-4 border-blue-400 bg-blue-50 p-3">
-          <p className="text-xs font-semibold text-blue-900">Plan de acción:</p>
-          <p className="text-sm text-blue-800">{desvio.plan_accion}</p>
-        </div>
-      )}
-
-      {/* Expandable section */}
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-      >
-        {expanded ? '▼' : '▶'} {desvio.eventos?.length || 0} eventos
-      </button>
-
-      {expanded && (
-        <div className="mt-4 space-y-4 rounded bg-white p-4">
-          {/* Eventos */}
-          <div className="max-h-64 space-y-3 overflow-y-auto border-b pb-4">
-            {(desvio.eventos || []).map((evento) => (
-              <div key={evento.id} className="border-l-2 border-gray-300 pl-3">
-                <p className="text-xs font-semibold text-gray-600">
-                  {evento.tipo.toUpperCase()} • {evento.actor_nombre || 'Sistema'}
-                </p>
-                <p className="text-sm text-gray-700">{evento.comentario}</p>
-                <p className="text-xs text-gray-500">{formatDateTime(evento.created_at)}</p>
-              </div>
-            ))}
-          </div>
-
-          {/* Nuevo comentario */}
-          <div className="space-y-2">
-            <textarea
-              value={comentario}
-              onChange={(e) => setComentario(e.target.value)}
-              placeholder="Agregar comentario..."
-              className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              rows={2}
-            />
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={handleComment}
-                disabled={sending || !comentario.trim()}
-                className="rounded bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {sending ? 'Enviando...' : 'Comentar'}
-              </button>
-            </div>
-          </div>
-
-          {/* Acciones de estado */}
-          {desvio.estado !== 'Cerrada' && desvio.estado !== 'Resuelta' && (
-            <div className="border-t pt-4">
-              <p className="mb-2 text-xs font-semibold text-gray-600">CAMBIAR ESTADO</p>
-              <div className="flex flex-wrap gap-2">
-                {(['En_proceso', 'Resuelta', 'Cerrada'] as const).map((estado) => (
-                  <button
-                    key={estado}
-                    type="button"
-                    onClick={() => handleStateChange(estado)}
-                    disabled={updating}
-                    className="rounded border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {ESTADO_LABELS[estado]}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </article>
-  );
-}
+const ESTADO_OPTIONS: GestionState[] = ['Abierta', 'En_proceso', 'Resuelta', 'Cerrada'];
 
 export default function DesviosGestion() {
   const [desvios, setDesvios] = useState<DesvioCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [estadoFilter, setEstadoFilter] = useState<'' | GestionState>('');
-  const [searchText, setSearchText] = useState('');
   const [severidadFilter, setSeveridadFilter] = useState<'' | 'Alta' | 'Media' | 'Baja'>('');
+  const [searchText, setSearchText] = useState('');
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [comentario, setComentario] = useState('');
+  const [sending, setSending] = useState(false);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
 
   const load = async () => {
     try {
@@ -244,7 +30,6 @@ export default function DesviosGestion() {
       setError(null);
       const data = await getGestion();
 
-      // Enrich with eventos
       const enriched = await Promise.all(
         data.map(async (gestion) => {
           const eventos = await getDesvioEventos(gestion.id_gestion);
@@ -292,20 +77,58 @@ export default function DesviosGestion() {
     });
   }, [filtered]);
 
+  const handleStateChange = async (desvioId: string, newEstado: GestionState) => {
+    const snapshot = desvios;
+    setUpdatingId(desvioId);
+
+    setDesvios((prev) =>
+      prev.map((d) => (d.id_gestion === desvioId ? { ...d, estado: newEstado } : d))
+    );
+
+    try {
+      await updateGestion(desvioId, newEstado);
+      toast.success(`Desvio marcado como ${gestionStateLabel(newEstado)}`);
+    } catch (err) {
+      setDesvios(snapshot);
+      toast.error('Error al actualizar estado');
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const handleComment = async (desvioId: string) => {
+    if (!comentario.trim()) return;
+
+    setSending(true);
+    try {
+      await enviarMensajeInterno({
+        idGestion: desvioId,
+        comentario,
+        origen: 'auditor',
+        actorId: '',
+        actorNombre: '',
+      });
+      toast.success('Comentario enviado');
+      setComentario('');
+      void load();
+    } catch (err) {
+      toast.error('Error al enviar comentario');
+    } finally {
+      setSending(false);
+    }
+  };
+
   return (
     <AppLayout title="Gestión de Desvios">
       <div className="mb-8">
-        {/* Intro */}
         <div className="mb-6">
           <p className="text-lg font-light text-gray-600">
             {desvios.length} desvios en gestión
           </p>
         </div>
 
-        {/* Filtros */}
-        <div className="rounded-lg border border-gray-200 bg-white p-5">
+        <div className="rounded-lg border border-gray-200 bg-white p-5 sticky top-0 z-10">
           <div className="space-y-4">
-            {/* Búsqueda */}
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-2">BUSCAR</label>
               <input
@@ -317,11 +140,10 @@ export default function DesviosGestion() {
               />
             </div>
 
-            {/* Estados */}
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-2">ESTADO</label>
               <div className="flex flex-wrap gap-2">
-                {(['', 'Abierta', 'En_proceso', 'Resuelta', 'Cerrada'] as const).map((e) => (
+                {(['', 'Vencida', 'Abierta', 'En_proceso', 'Resuelta', 'Cerrada'] as const).map((e) => (
                   <button
                     key={e || 'todos'}
                     type="button"
@@ -332,19 +154,18 @@ export default function DesviosGestion() {
                         : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
                     }`}
                   >
-                    {e ? ESTADO_LABELS[e] : 'Todos'}
+                    {e ? gestionStateLabel(e) : 'Todos'}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Severidad */}
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-2">SEVERIDAD</label>
               <div className="flex flex-wrap gap-2">
                 {(['', 'Alta', 'Media', 'Baja'] as const).map((s) => (
                   <button
-                    key={s || 'todos'}
+                    key={s || 'todas'}
                     type="button"
                     onClick={() => setSeveridadFilter(s)}
                     className={`rounded px-3 py-1.5 text-xs font-semibold transition ${
@@ -368,18 +189,166 @@ export default function DesviosGestion() {
         <FeedbackState title="No hay desvios en gestión." description="Cuando los auditores aprueben borradores, aparecerán aqui para su seguimiento." />
       )}
 
-      {/* Grid de desvios */}
       {!loading && !error && grouped.length > 0 && (
-        <div className="space-y-8">
+        <div className="space-y-6">
           {grouped.map(([estado, items]) => (
-            <section key={estado}>
-              <h2 className="mb-4 text-lg font-bold text-gray-900">{ESTADO_LABELS[estado]}</h2>
-              <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
-                {items.map((desvio) => (
-                  <DesvioCardComponent key={desvio.id_gestion} desvio={desvio} onRefresh={load} />
-                ))}
+            <div key={estado}>
+              <h2 className="mb-3 text-lg font-bold text-gray-900">{gestionStateLabel(estado)}</h2>
+              <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-gray-200 bg-gray-50">
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700">Sev.</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700">Descripción</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700">Sucursal</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700">Responsable</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700">Estado</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700">Plazo</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700">Días</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700">Eventos</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((desvio) => {
+                      const isExpanded = expandedId === desvio.id_gestion;
+                      const diasEnProceso = desvio.created_at
+                        ? Math.floor((Date.now() - new Date(desvio.created_at).getTime()) / (1000 * 60 * 60 * 24))
+                        : 0;
+                      const esVencida = desvio.estado === 'Vencida';
+
+                      return (
+                        <tbody key={desvio.id_gestion}>
+                          <tr
+                            onClick={() => setExpandedId(isExpanded ? null : desvio.id_gestion)}
+                            className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer"
+                          >
+                            <td className="px-4 py-3 text-sm">
+                              <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${severidadColor(desvio.severidad)}`}>
+                                {desvio.severidad.charAt(0).toUpperCase()}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-sm">
+                              <div className="font-medium text-gray-900 line-clamp-2">{desvio.desvio}</div>
+                              <div className="text-xs text-gray-500">{desvio.id_gestion}</div>
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-600">{desvio.sucursal}</td>
+                            <td className="px-4 py-3 text-sm text-gray-600">{desvio.responsable}</td>
+                            <td className="px-4 py-3 text-sm">
+                              <select
+                                value={desvio.estado}
+                                onChange={(e) => void handleStateChange(desvio.id_gestion, e.target.value as GestionState)}
+                                disabled={updatingId === desvio.id_gestion}
+                                onClick={(e) => e.stopPropagation()}
+                                className={`rounded px-2 py-1 text-xs font-semibold border-0 cursor-pointer disabled:opacity-60 ${gestionStateColor(desvio.estado)}`}
+                              >
+                                {ESTADO_OPTIONS.map((op) => (
+                                  <option key={op} value={op}>
+                                    {gestionStateLabel(op)}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className={`px-4 py-3 text-sm ${esVencida ? 'text-red-600 font-semibold' : 'text-gray-600'}`}>
+                              {formatDate(desvio.plazo_fecha)}
+                              {esVencida && <span className="ml-1 text-xs">⚠</span>}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-600">{diasEnProceso}</td>
+                            <td className="px-4 py-3 text-sm text-gray-600">{desvio.eventos.length}</td>
+                            <td className="px-4 py-3 text-sm">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setExpandedId(isExpanded ? null : desvio.id_gestion);
+                                }}
+                                className="rounded-md bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+                              >
+                                {isExpanded ? 'Cerrar' : 'Ver'}
+                              </button>
+                            </td>
+                          </tr>
+
+                          {isExpanded && (
+                            <tr className="bg-gray-50 border-b border-gray-100">
+                              <td colSpan={9} className="px-4 py-4">
+                                <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                                  <div>
+                                    <h4 className="mb-3 font-semibold text-gray-900 text-sm">Timeline</h4>
+                                    <div className="max-h-48 space-y-3 overflow-y-auto border rounded border-gray-200 bg-white p-3">
+                                      {desvio.eventos.length === 0 ? (
+                                        <p className="text-xs text-gray-500 text-center py-4">Sin eventos</p>
+                                      ) : (
+                                        desvio.eventos.map((evento) => (
+                                          <div key={evento.id} className="border-l-2 border-gray-300 pl-3 text-sm">
+                                            <p className="text-xs font-semibold text-gray-600">
+                                              {evento.tipo.toUpperCase()} • {evento.actor_nombre || 'Sistema'}
+                                            </p>
+                                            <p className="text-sm text-gray-700 mt-0.5">{evento.comentario}</p>
+                                            <p className="text-xs text-gray-500 mt-1">{formatDateTime(evento.created_at)}</p>
+                                          </div>
+                                        ))
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="space-y-3">
+                                    <div>
+                                      <label className="block text-sm font-semibold text-gray-900 mb-2">Agregar comentario</label>
+                                      <textarea
+                                        value={comentario}
+                                        onChange={(e) => setComentario(e.target.value)}
+                                        placeholder="..."
+                                        className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                        rows={3}
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => void handleComment(desvio.id_gestion)}
+                                        disabled={sending || !comentario.trim()}
+                                        className="mt-2 rounded bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                      >
+                                        {sending ? 'Enviando...' : 'Enviar'}
+                                      </button>
+                                    </div>
+
+                                    {desvio.estado !== 'Cerrada' && desvio.estado !== 'Resuelta' && (
+                                      <div>
+                                        <p className="text-xs font-semibold text-gray-700 mb-2">Cambiar estado</p>
+                                        <div className="flex flex-wrap gap-2">
+                                          {(['En_proceso', 'Resuelta', 'Cerrada'] as const).map((s) => (
+                                            <button
+                                              key={s}
+                                              type="button"
+                                              onClick={() => void handleStateChange(desvio.id_gestion, s)}
+                                              disabled={updatingId === desvio.id_gestion}
+                                              className="rounded border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                            >
+                                              {gestionStateLabel(s)}
+                                            </button>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {desvio.plan_accion && (
+                                      <div className="rounded border-l-4 border-blue-400 bg-blue-50 p-3">
+                                        <p className="text-xs font-semibold text-blue-900">Plan de acción:</p>
+                                        <p className="text-sm text-blue-800 mt-1">{desvio.plan_accion}</p>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
-            </section>
+            </div>
           ))}
         </div>
       )}
