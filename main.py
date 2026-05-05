@@ -37,7 +37,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -56,6 +56,26 @@ class InternalMessageRequest(BaseModel):
     actor_nombre: str | None = None
 
 
+class PanelUserCreateRequest(BaseModel):
+    email: str
+    password: str
+    role: str
+    nombre: str
+    telefono: str | None = None
+    id_sucursal: str | None = None
+    permisos_modulos: list[str] = []
+
+
+class PanelUserUpdateRequest(BaseModel):
+    email: str | None = None
+    password: str | None = None
+    role: str | None = None
+    nombre: str | None = None
+    telefono: str | None = None
+    id_sucursal: str | None = None
+    permisos_modulos: list[str] | None = None
+
+
 class DesvioBorradorDiscardRequest(BaseModel):
     reason: str | None = None
 
@@ -72,6 +92,26 @@ _MESSAGE_TTL_SECONDS = 300
 _supabase_client: Client | None = None
 _dedup_store_available: bool | None = None
 _last_reminder_sent: dict[str, tuple[datetime, int]] = {}  # {id_sesion: (last_reminder_timestamp, reminders_sent)}
+_VALID_PANEL_ROLES = {"admin", "auditor", "sucursal"}
+_VALID_MODULE_PERMISSIONS = {
+    "dashboard",
+    "desvios",
+    "gestion_desvios",
+    "revision_desvios",
+    "mis_desvios",
+    "sucursales",
+    "admin",
+}
+_DEFAULT_MODULES_BY_ROLE = {
+    "admin": ["dashboard", "desvios", "gestion_desvios", "revision_desvios", "mis_desvios", "sucursales", "admin"],
+    "auditor": ["desvios", "gestion_desvios", "revision_desvios", "sucursales"],
+    "sucursal": ["dashboard", "mis_desvios", "sucursales"],
+}
+_MODULES_BY_ROLE = {
+    "admin": _VALID_MODULE_PERMISSIONS,
+    "auditor": {"desvios", "gestion_desvios", "revision_desvios", "sucursales"},
+    "sucursal": {"dashboard", "mis_desvios", "sucursales"},
+}
 
 
 def _json_list(value) -> list:
@@ -87,6 +127,41 @@ def _json_list(value) -> list:
         except Exception:
             return []
     return []
+
+
+def _normalize_module_permissions(role: str, modules: list[str] | None = None) -> list[str]:
+    """Return module permissions valid for the selected panel role."""
+    if role not in _VALID_PANEL_ROLES:
+        raise HTTPException(status_code=400, detail="Rol invalido")
+
+    allowed = _MODULES_BY_ROLE[role]
+    source = modules if modules is not None else _DEFAULT_MODULES_BY_ROLE[role]
+    normalized: list[str] = []
+    for module in source:
+        if module not in _VALID_MODULE_PERMISSIONS:
+            raise HTTPException(status_code=400, detail=f"Modulo invalido: {module}")
+        if module in allowed and module not in normalized:
+            normalized.append(module)
+    return normalized
+
+
+def _profile_from_user_and_row(user, profile: dict | None) -> dict:
+    """Merge Supabase Auth user data with the panel profile row."""
+    profile = profile or {}
+    app_metadata = getattr(user, "app_metadata", None) or {}
+    role = profile.get("role") or "auditor"
+    return {
+        "id": getattr(user, "id", None),
+        "email": getattr(user, "email", None),
+        "role": role,
+        "nombre": profile.get("nombre") or getattr(user, "email", None),
+        "telefono": profile.get("telefono"),
+        "id_sucursal": profile.get("id_sucursal"),
+        "permisos_modulos": _normalize_module_permissions(
+            role,
+            app_metadata.get("module_permissions") if isinstance(app_metadata.get("module_permissions"), list) else None,
+        ),
+    }
 
 
 def _get_supabase_client() -> Client | None:
@@ -233,6 +308,14 @@ async def _require_admin_or_auditor(request: Request) -> dict:
     except Exception as exc:
         logger.warning(f"Auth validation failed: {exc}")
         raise HTTPException(status_code=401, detail="Invalid Authorization token")
+
+
+async def _require_admin(request: Request) -> dict:
+    """Validate Supabase JWT and require an admin profile."""
+    profile = await _require_admin_or_auditor(request)
+    if profile.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Only admin can perform this action")
+    return profile
 
 
 async def _require_profile(request: Request) -> dict:
@@ -426,6 +509,132 @@ async def create_internal_message(id_gestion: str, payload: InternalMessageReque
     )
     data = event_response.data or []
     return data[0] if data else {"status": "ok"}
+
+
+@app.get("/api/admin/panel-users")
+async def list_panel_users(request: Request):
+    """List Auth users merged with panel profile and module permissions."""
+    await _require_admin(request)
+    client = _get_supabase_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="Supabase is not configured")
+
+    profiles_response = client.table("profiles").select("id, role, nombre, telefono, id_sucursal").execute()
+    profiles = {row["id"]: row for row in (profiles_response.data or [])}
+    users = client.auth.admin.list_users(page=1, per_page=1000)
+    return [_profile_from_user_and_row(user, profiles.get(getattr(user, "id", ""))) for user in users]
+
+
+@app.post("/api/admin/panel-users")
+async def create_panel_user(payload: PanelUserCreateRequest, request: Request):
+    """Create a Supabase Auth user and its panel profile."""
+    await _require_admin(request)
+    client = _get_supabase_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="Supabase is not configured")
+
+    email = (payload.email or "").strip().lower()
+    password = payload.password or ""
+    nombre = (payload.nombre or "").strip() or email
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Email invalido")
+    if len(password) < 6:
+        raise HTTPException(status_code=400, detail="La contrasena debe tener al menos 6 caracteres")
+
+    modules = _normalize_module_permissions(payload.role, payload.permisos_modulos)
+    if payload.role == "sucursal" and not payload.id_sucursal:
+        raise HTTPException(status_code=400, detail="Los responsables necesitan una sucursal")
+
+    try:
+        user_response = client.auth.admin.create_user({
+            "email": email,
+            "password": password,
+            "email_confirm": True,
+            "app_metadata": {"module_permissions": modules},
+            "user_metadata": {"nombre": nombre},
+        })
+        user = getattr(user_response, "user", None)
+        user_id = getattr(user, "id", None)
+        if not user_id:
+            raise ValueError("Supabase no devolvio el usuario creado")
+
+        profile_payload = {
+            "id": user_id,
+            "role": payload.role,
+            "nombre": nombre,
+            "telefono": payload.telefono or None,
+            "id_sucursal": payload.id_sucursal if payload.role == "sucursal" else None,
+        }
+        profile_response = client.table("profiles").upsert(profile_payload).execute()
+        profile = (profile_response.data or [profile_payload])[0]
+        return _profile_from_user_and_row(user, profile)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Failed to create panel user {email}: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="No se pudo crear el usuario")
+
+
+@app.patch("/api/admin/panel-users/{user_id}")
+async def update_panel_user(user_id: str, payload: PanelUserUpdateRequest, request: Request):
+    """Update Auth credentials/metadata and panel profile fields."""
+    await _require_admin(request)
+    client = _get_supabase_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="Supabase is not configured")
+
+    current_user_response = client.auth.admin.get_user_by_id(user_id)
+    current_user = getattr(current_user_response, "user", None)
+    if not current_user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    profile_response = client.table("profiles").select("id, role, nombre, telefono, id_sucursal").eq("id", user_id).maybe_single().execute()
+    current_profile = profile_response.data or {}
+    role = payload.role or current_profile.get("role") or "auditor"
+    modules = _normalize_module_permissions(
+        role,
+        payload.permisos_modulos if payload.permisos_modulos is not None else None,
+    )
+    if payload.permisos_modulos is None:
+        current_metadata = getattr(current_user, "app_metadata", None) or {}
+        current_modules = current_metadata.get("module_permissions")
+        modules = _normalize_module_permissions(role, current_modules if isinstance(current_modules, list) else None)
+
+    id_sucursal = payload.id_sucursal if payload.id_sucursal is not None else current_profile.get("id_sucursal")
+    if role == "sucursal" and not id_sucursal:
+        raise HTTPException(status_code=400, detail="Los responsables necesitan una sucursal")
+
+    auth_patch: dict = {"app_metadata": {**(getattr(current_user, "app_metadata", None) or {}), "module_permissions": modules}}
+    if payload.email:
+        email = payload.email.strip().lower()
+        if "@" not in email:
+            raise HTTPException(status_code=400, detail="Email invalido")
+        auth_patch["email"] = email
+        auth_patch["email_confirm"] = True
+    if payload.password:
+        if len(payload.password) < 6:
+            raise HTTPException(status_code=400, detail="La contrasena debe tener al menos 6 caracteres")
+        auth_patch["password"] = payload.password
+
+    try:
+        updated_user_response = client.auth.admin.update_user_by_id(user_id, auth_patch)
+        updated_user = getattr(updated_user_response, "user", None) or current_user
+
+        profile_payload = {
+            "id": user_id,
+            "role": role,
+            "nombre": payload.nombre if payload.nombre is not None else current_profile.get("nombre") or getattr(updated_user, "email", None),
+            "telefono": payload.telefono if payload.telefono is not None else current_profile.get("telefono"),
+            "id_sucursal": id_sucursal if role == "sucursal" else None,
+        }
+        saved_profile_response = client.table("profiles").upsert(profile_payload).execute()
+        saved_profile = (saved_profile_response.data or [profile_payload])[0]
+        return _profile_from_user_and_row(updated_user, saved_profile)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Failed to update panel user {user_id}: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="No se pudo guardar el usuario")
 
 
 @app.api_route("/api/desvios-borrador/{draft_id}/approve", methods=["POST", "GET", "OPTIONS"])

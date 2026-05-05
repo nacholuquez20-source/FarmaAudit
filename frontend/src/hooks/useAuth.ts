@@ -2,7 +2,8 @@ import { createContext, createElement, useContext, useEffect, useRef, useState }
 import type { ReactNode } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
-import type { Role, UserProfile } from '../types';
+import type { ModulePermission, Role, UserProfile } from '../types';
+import { normalizeModulePermissions } from '../lib/permissions';
 
 interface AuthState {
   user: User | null;
@@ -28,24 +29,32 @@ const DEV_PROFILE: UserProfile = {
   nombre: 'Dev Admin',
   telefono: null,
   id_sucursal: null,
+  permisos_modulos: normalizeModulePermissions('admin'),
 };
 
 const AuthContext = createContext<AuthState | null>(null);
 const PROFILE_LOAD_TIMEOUT_MS = 5000;
 const AUTH_STORAGE_KEY = 'farma-audit-auth';
 
-function normalizeProfile(profile: Partial<UserProfile> | null): UserProfile | null {
+function readModulePermissions(value: unknown): ModulePermission[] | null {
+  return Array.isArray(value) ? (value.filter((item) => typeof item === 'string') as ModulePermission[]) : null;
+}
+
+function normalizeProfile(profile: Partial<UserProfile> | null, authUser?: User | null): UserProfile | null {
   if (!profile?.id || !profile.role) return null;
+  const modulePermissions = readModulePermissions(authUser?.app_metadata?.module_permissions);
   return {
     id: profile.id,
+    email: authUser?.email ?? profile.email ?? null,
     role: profile.role,
     nombre: profile.nombre ?? null,
     telefono: profile.telefono ?? null,
     id_sucursal: profile.id_sucursal ?? null,
+    permisos_modulos: normalizeModulePermissions(profile.role, modulePermissions),
   };
 }
 
-async function loadProfile(userId: string): Promise<UserProfile | null> {
+async function loadProfile(userId: string, authUser?: User | null): Promise<UserProfile | null> {
   const { data, error } = await supabase
     .from('profiles')
     .select('id, role, nombre, telefono, id_sucursal')
@@ -53,7 +62,7 @@ async function loadProfile(userId: string): Promise<UserProfile | null> {
     .maybeSingle();
 
   if (error) throw error;
-  const baseProfile = normalizeProfile(data);
+  const baseProfile = normalizeProfile(data, authUser);
   if (!baseProfile || baseProfile.role !== 'sucursal') return baseProfile;
 
   const { data: sucursalData, error: sucursalError } = await supabase
@@ -69,9 +78,9 @@ async function loadProfile(userId: string): Promise<UserProfile | null> {
   };
 }
 
-async function loadProfileWithTimeout(userId: string): Promise<UserProfile | null> {
+async function loadProfileWithTimeout(userId: string, authUser?: User | null): Promise<UserProfile | null> {
   return Promise.race([
-    loadProfile(userId),
+    loadProfile(userId, authUser),
     new Promise<UserProfile | null>((resolve) => {
       window.setTimeout(() => resolve(null), PROFILE_LOAD_TIMEOUT_MS);
     }),
@@ -121,7 +130,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setProfileLoading(true);
       setProfileError(null);
       try {
-        const loadedProfile = await loadProfileWithTimeout(sessionUser.id);
+        const loadedProfile = await loadProfileWithTimeout(sessionUser.id, sessionUser);
         if (!cancelled) {
           setProfile(loadedProfile);
           if (!loadedProfile) setProfileError('No se pudo cargar el perfil del usuario.');

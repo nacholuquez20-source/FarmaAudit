@@ -1,4 +1,12 @@
 export type Role = 'admin' | 'auditor' | 'sucursal';
+export type ModulePermission =
+  | 'dashboard'
+  | 'desvios'
+  | 'gestion_desvios'
+  | 'revision_desvios'
+  | 'mis_desvios'
+  | 'sucursales'
+  | 'admin';
 export type Severidad = 'Alta' | 'Media' | 'Baja';
 export type GestionState = 'Abierta' | 'En_proceso' | 'Resuelta' | 'Cerrada' | 'Vencida';
 export type DesvioEventoTipo = 'creacion' | 'contacto' | 'respuesta' | 'cierre' | 'nota' | 'evidencia' | 'mensaje';
@@ -170,11 +178,33 @@ export interface Auditor {
 
 export interface UserProfile {
   id: string;
+  email?: string | null;
   role: Role;
   nombre: string | null;
   telefono: string | null;
   /** Responsable de sucursal: id en tabla sucursales (perfumerías). */
   id_sucursal: string | null;
+  permisos_modulos?: ModulePermission[] | null;
+}
+
+export interface CreatePanelUserInput {
+  email: string;
+  password: string;
+  role: Role;
+  nombre: string;
+  telefono?: string | null;
+  id_sucursal?: string | null;
+  permisos_modulos: ModulePermission[];
+}
+
+export interface UpdatePanelUserInput {
+  email?: string;
+  password?: string;
+  role?: Role;
+  nombre?: string | null;
+  telefono?: string | null;
+  id_sucursal?: string | null;
+  permisos_modulos?: ModulePermission[];
 }
 
 export interface DashboardStats {

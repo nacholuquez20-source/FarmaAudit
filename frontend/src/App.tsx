@@ -2,7 +2,8 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { FeedbackState } from './components/FeedbackState';
 import { useAuth } from './hooks/useAuth';
-import type { Role } from './types';
+import { firstAllowedPath, hasModuleAccess } from './lib/permissions';
+import type { ModulePermission, Role } from './types';
 
 const Login = lazy(() => import('./pages/Login'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
@@ -94,12 +95,14 @@ function ProtectedRoute({
   children,
   adminOnly = false,
   allowRoles,
+  module,
 }: {
   children: React.ReactNode;
   adminOnly?: boolean;
   allowRoles?: Role[];
+  module?: ModulePermission;
 }) {
-  const { user, role, loading, profileLoading, profileError } = useAuth();
+  const { user, role, profile, loading, profileLoading, profileError } = useAuth();
 
   if (loading) return <LoadingGate title="Verificando sesion..." />;
   if (!user) return <Navigate to="/login" replace />;
@@ -117,6 +120,10 @@ function ProtectedRoute({
     return <Navigate to="/dashboard" replace />;
   }
 
+  if (module && !hasModuleAccess(profile, module)) {
+    return <Navigate to={firstAllowedPath(profile)} replace />;
+  }
+
   return <>{children}</>;
 }
 
@@ -131,7 +138,7 @@ export default function App() {
           <Route
             path="/dashboard"
             element={
-              <ProtectedRoute allowRoles={['admin', 'sucursal']}>
+              <ProtectedRoute allowRoles={['admin', 'sucursal']} module="dashboard">
                 <Dashboard />
               </ProtectedRoute>
             }
@@ -140,7 +147,7 @@ export default function App() {
           <Route
             path="/desvios"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute module="desvios">
                 <Desvios />
               </ProtectedRoute>
             }
@@ -149,7 +156,7 @@ export default function App() {
           <Route
             path="/desvios/:id"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute module="desvios">
                 <DesvioDetail />
               </ProtectedRoute>
             }
@@ -158,7 +165,7 @@ export default function App() {
           <Route
             path="/gestion-desvios"
             element={
-              <ProtectedRoute allowRoles={['admin', 'auditor']}>
+              <ProtectedRoute allowRoles={['admin', 'auditor']} module="gestion_desvios">
                 <DesviosGestion />
               </ProtectedRoute>
             }
@@ -167,7 +174,7 @@ export default function App() {
           <Route
             path="/revision-desvios"
             element={
-              <ProtectedRoute allowRoles={['admin', 'auditor']}>
+              <ProtectedRoute allowRoles={['admin', 'auditor']} module="revision_desvios">
                 <RevisionDesvios />
               </ProtectedRoute>
             }
@@ -176,7 +183,7 @@ export default function App() {
           <Route
             path="/mis-desvios"
             element={
-              <ProtectedRoute allowRoles={['sucursal']}>
+              <ProtectedRoute allowRoles={['sucursal']} module="mis_desvios">
                 <MisDesvios />
               </ProtectedRoute>
             }
@@ -185,7 +192,7 @@ export default function App() {
           <Route
             path="/mis-desvios/:id"
             element={
-              <ProtectedRoute allowRoles={['sucursal']}>
+              <ProtectedRoute allowRoles={['sucursal']} module="mis_desvios">
                 <DesvioDetail />
               </ProtectedRoute>
             }
@@ -194,7 +201,7 @@ export default function App() {
           <Route
             path="/sucursales"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute module="sucursales">
                 <Sucursales />
               </ProtectedRoute>
             }
@@ -203,7 +210,7 @@ export default function App() {
           <Route
             path="/sucursales/:id"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute module="sucursales">
                 <SucursalDetail />
               </ProtectedRoute>
             }
@@ -212,7 +219,7 @@ export default function App() {
           <Route
             path="/admin"
             element={
-              <ProtectedRoute adminOnly>
+              <ProtectedRoute adminOnly module="admin">
                 <Admin />
               </ProtectedRoute>
             }

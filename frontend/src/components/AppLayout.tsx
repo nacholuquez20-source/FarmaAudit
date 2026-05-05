@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { useAuth, logout } from '../hooks/useAuth';
 import { useNotificaciones } from '../hooks/useNotificaciones';
+import { hasModuleAccess } from '../lib/permissions';
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -32,7 +33,7 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
     navigate(role === 'sucursal' ? `/mis-desvios/${idGestion}` : `/desvios/${idGestion}`);
   };
 
-  const canAccessAdmin = showAdmin && role === 'admin';
+  const canAccessAdmin = showAdmin && role === 'admin' && hasModuleAccess(profile, 'admin');
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -45,18 +46,31 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
               <nav className="flex flex-wrap gap-4 text-sm">
                 {role === 'admin' && (
                   <>
-                    <Link to="/dashboard" className="text-gray-600 hover:text-gray-900 hover:underline">
-                      Dashboard
-                    </Link>
-                    <Link to="/gestion-desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
-                      Gestion
-                    </Link>
-                    <Link to="/revision-desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
-                      Revision
-                    </Link>
-                    <Link to="/sucursales" className="text-gray-600 hover:text-gray-900 hover:underline">
-                      Sucursales
-                    </Link>
+                    {hasModuleAccess(profile, 'dashboard') && (
+                      <Link to="/dashboard" className="text-gray-600 hover:text-gray-900 hover:underline">
+                        Dashboard
+                      </Link>
+                    )}
+                    {hasModuleAccess(profile, 'desvios') && (
+                      <Link to="/desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
+                        Desvios
+                      </Link>
+                    )}
+                    {hasModuleAccess(profile, 'gestion_desvios') && (
+                      <Link to="/gestion-desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
+                        Gestion
+                      </Link>
+                    )}
+                    {hasModuleAccess(profile, 'revision_desvios') && (
+                      <Link to="/revision-desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
+                        Revision
+                      </Link>
+                    )}
+                    {hasModuleAccess(profile, 'sucursales') && (
+                      <Link to="/sucursales" className="text-gray-600 hover:text-gray-900 hover:underline">
+                        Sucursales
+                      </Link>
+                    )}
                     {canAccessAdmin && (
                       <Link to="/admin" className="text-gray-600 hover:text-gray-900 hover:underline">
                         Admin
@@ -66,31 +80,43 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
                 )}
                 {role === 'auditor' && (
                   <>
-                    <Link to="/gestion-desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
-                      Gestion
-                    </Link>
-                    <Link to="/revision-desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
-                      Revision
-                    </Link>
-                    <Link to="/sucursales" className="text-gray-600 hover:text-gray-900 hover:underline">
-                      Sucursales
-                    </Link>
+                    {hasModuleAccess(profile, 'gestion_desvios') && (
+                      <Link to="/gestion-desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
+                        Gestion
+                      </Link>
+                    )}
+                    {hasModuleAccess(profile, 'revision_desvios') && (
+                      <Link to="/revision-desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
+                        Revision
+                      </Link>
+                    )}
+                    {hasModuleAccess(profile, 'sucursales') && (
+                      <Link to="/sucursales" className="text-gray-600 hover:text-gray-900 hover:underline">
+                        Sucursales
+                      </Link>
+                    )}
                   </>
                 )}
                 {role === 'sucursal' && (
                   <>
-                    <Link to="/dashboard" className="text-gray-600 hover:text-gray-900 hover:underline">
-                      Resumen
-                    </Link>
-                    <Link to="/mis-desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
-                      Desvios
-                    </Link>
-                    <Link
-                      to={profile?.id_sucursal ? `/sucursales/${profile.id_sucursal}` : '/sucursales'}
-                      className="text-gray-600 hover:text-gray-900 hover:underline"
-                    >
-                      Mi sucursal
-                    </Link>
+                    {hasModuleAccess(profile, 'dashboard') && (
+                      <Link to="/dashboard" className="text-gray-600 hover:text-gray-900 hover:underline">
+                        Resumen
+                      </Link>
+                    )}
+                    {hasModuleAccess(profile, 'mis_desvios') && (
+                      <Link to="/mis-desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
+                        Desvios
+                      </Link>
+                    )}
+                    {hasModuleAccess(profile, 'sucursales') && (
+                      <Link
+                        to={profile?.id_sucursal ? `/sucursales/${profile.id_sucursal}` : '/sucursales'}
+                        className="text-gray-600 hover:text-gray-900 hover:underline"
+                      >
+                        Mi sucursal
+                      </Link>
+                    )}
                   </>
                 )}
               </nav>

@@ -7,15 +7,53 @@ import {
   updateAuditor,
   listPanelProfiles,
   updatePanelProfile,
+  createPanelUser,
 } from '../lib/api';
-import type { AdminTabKey, Auditor, Role, UserProfile } from '../types';
+import { MODULE_OPTIONS, normalizeModulePermissions } from '../lib/permissions';
+import type { AdminTabKey, Auditor, ModulePermission, Role, UserProfile } from '../types';
 import { useSucursales } from '../hooks/useSucursales';
 
 const ROLES: Role[] = ['admin', 'auditor', 'sucursal'];
 
+const EMPTY_USER_FORM = {
+  email: '',
+  password: '',
+  role: 'auditor' as Role,
+  nombre: '',
+  telefono: '',
+  id_sucursal: '',
+  permisos_modulos: normalizeModulePermissions('auditor'),
+};
+
 function shortId(id: string): string {
   if (id.length <= 10) return id;
-  return `${id.slice(0, 8)}…`;
+  return `${id.slice(0, 8)}...`;
+}
+
+function roleLabel(role: Role): string {
+  if (role === 'sucursal') return 'responsable sucursal';
+  return role;
+}
+
+function ModuleChecks({
+  role,
+  selected,
+  onToggle,
+}: {
+  role: Role;
+  selected: ModulePermission[];
+  onToggle: (module: ModulePermission) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {MODULE_OPTIONS.filter((module) => module.roles.includes(role)).map((module) => (
+        <label key={module.key} className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs">
+          <input type="checkbox" checked={selected.includes(module.key)} onChange={() => onToggle(module.key)} />
+          {module.label}
+        </label>
+      ))}
+    </div>
+  );
 }
 
 export default function Admin() {
@@ -30,6 +68,10 @@ export default function Admin() {
   const [formAuditor, setFormAuditor] = useState({ nombre: '', telefono: '', cuadrilla: '', activo: true });
   const [submittingAuditor, setSubmittingAuditor] = useState(false);
   const [savingProfileId, setSavingProfileId] = useState<string | null>(null);
+  const [showUserForm, setShowUserForm] = useState(false);
+  const [userForm, setUserForm] = useState(EMPTY_USER_FORM);
+  const [creatingUser, setCreatingUser] = useState(false);
+  const [passwordDrafts, setPasswordDrafts] = useState<Record<string, string>>({});
 
   const { sucursales } = useSucursales();
 
@@ -56,14 +98,7 @@ export default function Admin() {
         const data = await listPanelProfiles();
         setProfiles(data);
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Error al cargar usuarios del panel';
-        if (message.toLowerCase().includes('id_sucursal')) {
-          setError(
-            'Tu base aún no tiene la columna profiles.id_sucursal. Ejecutá frontend/docs/sql/etapa-4-roles-responsables.sql en Supabase.',
-          );
-        } else {
-          setError(message);
-        }
+        setError(err instanceof Error ? err.message : 'Error al cargar usuarios del panel');
       } finally {
         setLoadingUsuarios(false);
       }
@@ -111,10 +146,72 @@ export default function Admin() {
       profiles.map((row) => {
         if (row.id !== id) return row;
         const next: UserProfile = { ...row, ...patch };
-        if (patch.role && patch.role !== 'sucursal') next.id_sucursal = null;
+        if (patch.role) {
+          next.permisos_modulos = normalizeModulePermissions(patch.role, next.permisos_modulos);
+          if (patch.role !== 'sucursal') next.id_sucursal = null;
+        }
         return next;
       }),
     );
+  };
+
+  const toggleProfileModule = (id: string, module: ModulePermission) => {
+    const row = profiles.find((profile) => profile.id === id);
+    if (!row) return;
+    const current = normalizeModulePermissions(row.role, row.permisos_modulos);
+    const next = current.includes(module)
+      ? current.filter((item) => item !== module)
+      : [...current, module];
+    updateDraftProfile(id, { permisos_modulos: normalizeModulePermissions(row.role, next) });
+  };
+
+  const handleUserFormRole = (role: Role) => {
+    setUserForm((current) => ({
+      ...current,
+      role,
+      id_sucursal: role === 'sucursal' ? current.id_sucursal : '',
+      permisos_modulos: normalizeModulePermissions(role),
+    }));
+  };
+
+  const toggleUserFormModule = (module: ModulePermission) => {
+    setUserForm((current) => {
+      const modules = current.permisos_modulos.includes(module)
+        ? current.permisos_modulos.filter((item) => item !== module)
+        : [...current.permisos_modulos, module];
+      return { ...current, permisos_modulos: normalizeModulePermissions(current.role, modules) };
+    });
+  };
+
+  const handleCreatePanelUser = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setCreatingUser(true);
+    setError('');
+
+    try {
+      if (userForm.role === 'sucursal' && !userForm.id_sucursal) {
+        setError('Asigna una sucursal a los usuarios con rol Responsable.');
+        return;
+      }
+      const created = await createPanelUser({
+        email: userForm.email,
+        password: userForm.password,
+        role: userForm.role,
+        nombre: userForm.nombre,
+        telefono: userForm.telefono || null,
+        id_sucursal: userForm.role === 'sucursal' ? userForm.id_sucursal || null : null,
+        permisos_modulos: userForm.permisos_modulos,
+      });
+      setProfiles((current) =>
+        [...current, created].sort((a, b) => a.role.localeCompare(b.role) || (a.nombre || '').localeCompare(b.nombre || '')),
+      );
+      setUserForm(EMPTY_USER_FORM);
+      setShowUserForm(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al crear usuario');
+    } finally {
+      setCreatingUser(false);
+    }
   };
 
   const saveProfileRow = async (row: UserProfile) => {
@@ -122,16 +219,20 @@ export default function Admin() {
     setError('');
     try {
       if (row.role === 'sucursal' && !row.id_sucursal) {
-        setError('Asigná una sucursal a los usuarios con rol Responsable.');
+        setError('Asigna una sucursal a los usuarios con rol Responsable.');
         return;
       }
       const saved = await updatePanelProfile(row.id, {
+        email: row.email || undefined,
+        password: passwordDrafts[row.id] || undefined,
         role: row.role,
         nombre: row.nombre ?? null,
         telefono: row.telefono ?? null,
         id_sucursal: row.id_sucursal ?? null,
+        permisos_modulos: normalizeModulePermissions(row.role, row.permisos_modulos),
       });
       setProfiles(profiles.map((p) => (p.id === saved.id ? saved : p)));
+      setPasswordDrafts((current) => ({ ...current, [row.id]: '' }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al guardar perfil');
     } finally {
@@ -142,7 +243,7 @@ export default function Admin() {
   const loadingPrincipal = tab === 'auditores' ? loadingAuditores : loadingUsuarios;
 
   return (
-    <AppLayout title="Administración">
+    <AppLayout title="Administracion">
       {error && (
         <div className="mb-4">
           <FeedbackState title={error} tone="error" />
@@ -175,52 +276,52 @@ export default function Admin() {
       ) : tab === 'auditores' ? (
         <>
           <div className="mb-6 flex items-center justify-between">
-            <h2 className="text-xl font-semibold">Gestión de auditores de campo</h2>
+            <h2 className="text-xl font-semibold">Gestion de auditores de campo</h2>
             <button
               type="button"
               onClick={() => setShowAuditorForm(!showAuditorForm)}
               className="rounded-lg bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700"
             >
-              {showAuditorForm ? 'Cancelar' : '+ Agregar teléfono auditor'}
+              {showAuditorForm ? 'Cancelar' : '+ Agregar telefono auditor'}
             </button>
           </div>
 
           {showAuditorForm && (
             <form onSubmit={handleAddAuditor} className="mb-6 rounded-lg bg-white p-6 shadow">
               <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-3">
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">Nombre</label>
+                <label className="text-sm font-medium text-gray-700">
+                  Nombre
                   <input
                     type="text"
                     value={formAuditor.nombre}
                     onChange={(e) => setFormAuditor({ ...formAuditor, nombre: e.target.value })}
                     required
-                    className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                    className="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
                     placeholder="Ej: Juan Perez"
                   />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">Teléfono</label>
+                </label>
+                <label className="text-sm font-medium text-gray-700">
+                  Telefono
                   <input
                     type="text"
                     value={formAuditor.telefono}
                     onChange={(e) => setFormAuditor({ ...formAuditor, telefono: e.target.value })}
                     required
-                    className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                    className="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
                     placeholder="+549..."
                   />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">Cuadrilla</label>
+                </label>
+                <label className="text-sm font-medium text-gray-700">
+                  Cuadrilla
                   <input
                     type="text"
                     value={formAuditor.cuadrilla}
                     onChange={(e) => setFormAuditor({ ...formAuditor, cuadrilla: e.target.value })}
                     required
-                    className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                    className="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
                     placeholder="Cuadrilla A"
                   />
-                </div>
+                </label>
               </div>
               <button
                 type="submit"
@@ -237,7 +338,7 @@ export default function Admin() {
               <thead className="border-b bg-gray-100">
                 <tr>
                   <th className="px-6 py-3 text-left font-semibold">Nombre</th>
-                  <th className="px-6 py-3 text-left font-semibold">Teléfono</th>
+                  <th className="px-6 py-3 text-left font-semibold">Telefono</th>
                   <th className="px-6 py-3 text-left font-semibold">Cuadrilla</th>
                   <th className="px-6 py-3 text-left font-semibold">Estado</th>
                 </tr>
@@ -277,21 +378,118 @@ export default function Admin() {
         </>
       ) : (
         <>
-          <p className="mb-6 text-sm text-gray-600">
-            Creá usuarios y contraseñas desde Supabase Auth. Acá definís rol del panel y, para auditores que vean sólo sus
-            reportes, el teléfono debe coincidir con el campo <span className="font-mono">auditor</span> en cada reporte. Los
-            responsables necesitan rol <strong>sucursal</strong> y la sucursal vinculada.
-          </p>
+          <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <p className="text-sm text-gray-600">
+              Crea usuarios con email, contrasena, rol y permisos por modulo. Los permisos controlan navegacion y acceso.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowUserForm((current) => !current)}
+              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+            >
+              {showUserForm ? 'Cancelar' : '+ Crear usuario'}
+            </button>
+          </div>
+
+          {showUserForm && (
+            <form onSubmit={handleCreatePanelUser} className="mb-6 rounded-lg bg-white p-6 shadow">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                <label className="text-sm font-semibold text-gray-700">
+                  Email
+                  <input
+                    type="email"
+                    required
+                    value={userForm.email}
+                    onChange={(e) => setUserForm({ ...userForm, email: e.target.value })}
+                    className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                    placeholder="usuario@empresa.com"
+                  />
+                </label>
+                <label className="text-sm font-semibold text-gray-700">
+                  Contrasena
+                  <input
+                    type="password"
+                    required
+                    minLength={6}
+                    value={userForm.password}
+                    onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
+                    className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                    placeholder="Minimo 6 caracteres"
+                  />
+                </label>
+                <label className="text-sm font-semibold text-gray-700">
+                  Nombre
+                  <input
+                    type="text"
+                    required
+                    value={userForm.nombre}
+                    onChange={(e) => setUserForm({ ...userForm, nombre: e.target.value })}
+                    className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="text-sm font-semibold text-gray-700">
+                  Telefono panel
+                  <input
+                    type="text"
+                    value={userForm.telefono}
+                    onChange={(e) => setUserForm({ ...userForm, telefono: e.target.value })}
+                    className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                    placeholder="Para auditor: igual al WhatsApp"
+                  />
+                </label>
+                <label className="text-sm font-semibold text-gray-700">
+                  Rol
+                  <select
+                    value={userForm.role}
+                    onChange={(e) => handleUserFormRole(e.target.value as Role)}
+                    className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  >
+                    {ROLES.map((role) => (
+                      <option key={role} value={role}>{roleLabel(role)}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-sm font-semibold text-gray-700">
+                  Sucursal
+                  <select
+                    value={userForm.id_sucursal}
+                    onChange={(e) => setUserForm({ ...userForm, id_sucursal: e.target.value })}
+                    disabled={userForm.role !== 'sucursal'}
+                    className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
+                  >
+                    <option value="">Sin sucursal</option>
+                    {sucursales.map((s) => (
+                      <option key={s.id} value={s.id}>{s.nombre}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="mt-5">
+                <div className="mb-2 text-sm font-semibold text-gray-700">Modulos habilitados</div>
+                <ModuleChecks role={userForm.role} selected={userForm.permisos_modulos} onToggle={toggleUserFormModule} />
+              </div>
+              <button
+                type="submit"
+                disabled={creatingUser}
+                className="mt-5 rounded-lg bg-green-600 px-5 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50"
+              >
+                {creatingUser ? 'Creando...' : 'Crear usuario'}
+              </button>
+            </form>
+          )}
 
           <div className="overflow-x-auto rounded-lg bg-white shadow">
-            <table className="min-w-[960px] w-full">
+            <table className="min-w-[1280px] w-full">
               <thead className="border-b bg-gray-100">
                 <tr>
                   <th className="px-4 py-3 text-left text-sm font-semibold">ID</th>
-                  <th className="px-4 py-3 text-left text-sm font-semibold">Nombre / email guardado</th>
-                  <th className="px-4 py-3 text-left text-sm font-semibold">Teléfono panel</th>
+                  <th className="px-4 py-3 text-left text-sm font-semibold">Email</th>
+                  <th className="px-4 py-3 text-left text-sm font-semibold">Nombre</th>
+                  <th className="px-4 py-3 text-left text-sm font-semibold">Telefono panel</th>
                   <th className="px-4 py-3 text-left text-sm font-semibold">Rol</th>
                   <th className="px-4 py-3 text-left text-sm font-semibold">Sucursal</th>
+                  <th className="px-4 py-3 text-left text-sm font-semibold">Modulos</th>
+                  <th className="px-4 py-3 text-left text-sm font-semibold">Nueva contrasena</th>
                   <th className="px-4 py-3 text-left text-sm font-semibold" />
                 </tr>
               </thead>
@@ -299,6 +497,14 @@ export default function Admin() {
                 {profiles.map((row) => (
                   <tr key={row.id} className="border-b align-top hover:bg-gray-50">
                     <td className="px-4 py-3 font-mono text-xs text-gray-600">{shortId(row.id)}</td>
+                    <td className="px-4 py-3">
+                      <input
+                        type="email"
+                        value={row.email ?? ''}
+                        onChange={(e) => updateDraftProfile(row.id, { email: e.target.value || null })}
+                        className="w-full min-w-[220px] rounded border border-gray-300 px-2 py-1 text-sm"
+                      />
+                    </td>
                     <td className="px-4 py-3">
                       <input
                         type="text"
@@ -313,7 +519,7 @@ export default function Admin() {
                         value={row.telefono ?? ''}
                         onChange={(e) => updateDraftProfile(row.id, { telefono: e.target.value || null })}
                         className="w-full rounded border border-gray-300 px-2 py-1 text-sm"
-                        placeholder="Auditor → coincide con WhatsApp/reporte"
+                        placeholder="Auditor -> coincide con WhatsApp/reporte"
                       />
                     </td>
                     <td className="px-4 py-3">
@@ -322,10 +528,8 @@ export default function Admin() {
                         onChange={(e) => updateDraftProfile(row.id, { role: e.target.value as Role })}
                         className="w-full rounded border border-gray-300 px-2 py-2 text-sm"
                       >
-                        {ROLES.map((r) => (
-                          <option key={r} value={r}>
-                            {r === 'sucursal' ? 'responsable sucursal' : r}
-                          </option>
+                        {ROLES.map((role) => (
+                          <option key={role} value={role}>{roleLabel(role)}</option>
                         ))}
                       </select>
                     </td>
@@ -336,13 +540,30 @@ export default function Admin() {
                         disabled={row.role !== 'sucursal'}
                         className="w-full max-w-[220px] rounded border border-gray-300 px-2 py-2 text-sm disabled:cursor-not-allowed disabled:bg-gray-100"
                       >
-                        <option value="">—</option>
+                        <option value="">-</option>
                         {sucursales.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.nombre}
-                          </option>
+                          <option key={s.id} value={s.id}>{s.nombre}</option>
                         ))}
                       </select>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="max-w-[340px]">
+                        <ModuleChecks
+                          role={row.role}
+                          selected={normalizeModulePermissions(row.role, row.permisos_modulos)}
+                          onToggle={(module) => toggleProfileModule(row.id, module)}
+                        />
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <input
+                        type="password"
+                        minLength={6}
+                        value={passwordDrafts[row.id] || ''}
+                        onChange={(e) => setPasswordDrafts((current) => ({ ...current, [row.id]: e.target.value }))}
+                        className="w-full min-w-[160px] rounded border border-gray-300 px-2 py-1 text-sm"
+                        placeholder="Dejar vacia"
+                      />
                     </td>
                     <td className="px-4 py-3">
                       <button
@@ -351,15 +572,15 @@ export default function Admin() {
                         onClick={() => saveProfileRow(row)}
                         className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
                       >
-                        {savingProfileId === row.id ? 'Guardando…' : 'Guardar'}
+                        {savingProfileId === row.id ? 'Guardando...' : 'Guardar'}
                       </button>
                     </td>
                   </tr>
                 ))}
                 {profiles.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-6 py-8 text-center text-gray-500">
-                      Sin perfiles cargados (o política RLS impide verlos como admin).
+                    <td colSpan={9} className="px-6 py-8 text-center text-gray-500">
+                      Sin usuarios cargados.
                     </td>
                   </tr>
                 )}

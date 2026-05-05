@@ -17,6 +17,8 @@ import type {
   Notificacion,
   NotificacionTipo,
   DesvioBorrador,
+  CreatePanelUserInput,
+  UpdatePanelUserInput,
 } from '../types';
 
 function handleApiError(error: { message?: string }): string {
@@ -521,34 +523,53 @@ export async function updateAuditor(telefono: string, data: Partial<Auditor>): P
 }
 
 export async function listPanelProfiles(): Promise<UserProfile[]> {
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('id, role, nombre, telefono, id_sucursal')
-    .order('role', { ascending: true })
-    .order('nombre', { ascending: true });
+  const apiUrl = getBotApiUrl();
+  if (!apiUrl) throw new Error('Falta configurar VITE_API_URL con la URL del bot.');
 
-  if (error) throw new Error(handleApiError(error));
-  return (data || []) as UserProfile[];
+  const response = await fetch(`${apiUrl}/api/admin/panel-users`, {
+    method: 'GET',
+    headers: await getAuthHeaders(),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail || 'No se pudo cargar usuarios del panel.');
+  }
+  return response.json();
+}
+
+export async function createPanelUser(input: CreatePanelUserInput): Promise<UserProfile> {
+  const apiUrl = getBotApiUrl();
+  if (!apiUrl) throw new Error('Falta configurar VITE_API_URL con la URL del bot.');
+
+  const response = await fetch(`${apiUrl}/api/admin/panel-users`, {
+    method: 'POST',
+    headers: await getAuthHeaders(),
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail || 'No se pudo crear el usuario.');
+  }
+  return response.json();
 }
 
 export async function updatePanelProfile(
   id: string,
-  patch: Partial<Pick<UserProfile, 'role' | 'nombre' | 'telefono' | 'id_sucursal'>>,
+  patch: UpdatePanelUserInput,
 ): Promise<UserProfile> {
-  const payload: Record<string, unknown> = { ...patch };
-  if (patch.role != null && patch.role !== 'sucursal') {
-    payload.id_sucursal = null;
+  const apiUrl = getBotApiUrl();
+  if (!apiUrl) throw new Error('Falta configurar VITE_API_URL con la URL del bot.');
+
+  const response = await fetch(`${apiUrl}/api/admin/panel-users/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: await getAuthHeaders(),
+    body: JSON.stringify(patch),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail || 'No se pudo guardar el usuario.');
   }
-
-  const { data, error } = await supabase
-    .from('profiles')
-    .update(payload)
-    .eq('id', id)
-    .select('id, role, nombre, telefono, id_sucursal')
-    .single();
-
-  if (error) throw new Error(handleApiError(error));
-  return data as UserProfile;
+  return response.json();
 }
 
 function getGestionDate(gestion: Gestion): string | null {
