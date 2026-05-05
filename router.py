@@ -60,6 +60,45 @@ class ConversationRouter:
 
     _locks_lock = asyncio.Lock()
 
+    PERFUMERIA_BLOCK_HINTS: Dict[str, List[str]] = {
+        "PRES": [
+            "vidriera", "presentacion", "exhibidor", "exhibicion",
+            "productos principales", "producto principal", "limpieza vidriera",
+        ],
+        "GOND": [
+            "gondola", "gondolas", "puntera", "punteras", "burbuja",
+            "burbujas", "oferta", "ofertas", "reposicion", "variedad",
+            "polvo", "sucia", "sucias",
+        ],
+        "ATENCION": [
+            "atencion", "asesorar", "asesora", "asesoramiento", "cliente",
+            "clientes", "probador", "probadores", "trato", "amable",
+        ],
+        "COND": [
+            "temperatura", "iluminacion", "piso", "obstaculo", "obstaculos",
+            "aire acondicionado", "ambiente", "limpio",
+        ],
+        "PERSONAL": [
+            "uniforme", "identificacion", "credencial", "asesor", "asesora",
+            "personal", "limpio", "limpia",
+        ],
+        "REVISTA": [
+            "revista", "catalogo", "folleto", "precio", "precios",
+            "promocion", "promociones",
+        ],
+        "STOCK": [
+            "stock", "faltante", "faltantes", "disponible", "disponibles",
+            "disponibilidad", "reposicion",
+        ],
+        "EXTRAS": [
+            "extra", "extras", "observacion", "observaciones", "sugerencia",
+            "seguimiento",
+        ],
+    }
+
+    CONTEXT_CONFIDENCE_HIGH = 48
+    CONTEXT_MARGIN_HIGH = 14
+
     @staticmethod
     def _utc_now_iso() -> str:
         """Return current UTC timestamp in ISO format."""
@@ -548,6 +587,87 @@ class ConversationRouter:
         contrast_markers = [" pero ", " aunque ", " salvo ", " excepto ", " sin embargo "]
         return not any(marker in f" {normalized} " for marker in contrast_markers)
 
+    @classmethod
+    def _tokenize_context_text(cls, text: str) -> List[str]:
+        normalized = cls._normalize_intent_text(text)
+        stopwords = {
+            "para", "como", "esta", "estan", "este", "esta", "esto", "todo",
+            "bien", "correcto", "correcta", "cliente", "clientes", "tiene",
+            "tienen", "hay", "pero", "porque", "donde", "cuando", "bloque",
+            "productos", "producto",
+        }
+        return [
+            token for token in normalized.split()
+            if len(token) >= 5 and token not in stopwords
+        ]
+
+    @classmethod
+    def _resolve_perfumeria_context(
+        cls,
+        text: str,
+        bloques_perfumeria: Dict[str, List[ChecklistPerfumeriaPunto]],
+        current_block: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Score text against perfumery blocks and return the strongest semantic match."""
+        normalized = cls._normalize_intent_text(text)
+        if not normalized:
+            return {"bloque_id": None, "score": 0, "confidence": "none", "matched_terms": []}
+
+        scores: Dict[str, int] = {}
+        matches: Dict[str, List[str]] = {}
+
+        for bloque_id, puntos in bloques_perfumeria.items():
+            score = 0
+            matched_terms: List[str] = []
+
+            for term in cls.PERFUMERIA_BLOCK_HINTS.get(bloque_id, []):
+                normalized_term = cls._normalize_intent_text(term)
+                if normalized_term and normalized_term in normalized:
+                    score += 50 if " " in normalized_term else 42
+                    matched_terms.append(term)
+
+            bloque_nombre = puntos[0].bloque_nombre if puntos else bloque_id
+            for token in cls._tokenize_context_text(bloque_nombre):
+                if token in normalized:
+                    score += 16
+                    matched_terms.append(token)
+
+            checklist_terms = set()
+            for punto in puntos:
+                checklist_terms.update(cls._tokenize_context_text(getattr(punto, "pregunta", "")))
+            for token in checklist_terms:
+                if token in normalized:
+                    score += 7
+                    matched_terms.append(token)
+
+            if bloque_id == current_block and score > 0:
+                score += 8
+
+            scores[bloque_id] = score
+            matches[bloque_id] = matched_terms
+
+        ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+        if not ranked or ranked[0][1] <= 0:
+            return {"bloque_id": None, "score": 0, "confidence": "none", "matched_terms": [], "scores": scores}
+
+        best_block, best_score = ranked[0]
+        second_score = ranked[1][1] if len(ranked) > 1 else 0
+        margin = best_score - second_score
+        confidence = "low"
+        if best_score >= cls.CONTEXT_CONFIDENCE_HIGH and margin >= cls.CONTEXT_MARGIN_HIGH:
+            confidence = "high"
+        elif best_score >= 34 and margin >= 8:
+            confidence = "medium"
+
+        return {
+            "bloque_id": best_block,
+            "score": best_score,
+            "confidence": confidence,
+            "matched_terms": matches.get(best_block, []),
+            "margin": margin,
+            "scores": scores,
+        }
+
     async def _discard_respuesta_collection(
         self,
         respuesta_activa: RespuestaPregunta,
@@ -592,6 +712,83 @@ class ConversationRouter:
             )
         return "respuesta_descartada_por_auditor"
 
+    async def _maybe_retarget_perfumeria_collection(
+        self,
+        respuesta_activa: RespuestaPregunta,
+        payload: WhatsAppPayload,
+        return_state: ConversationState,
+        meta_client: MetaClient,
+    ) -> Optional[Dict[str, Any]]:
+        """Move an active collection to a strongly detected perfumery block."""
+        if return_state != ConversationState.EN_BLOQUE_PERFUMERIA:
+            return None
+        if not payload.contenido:
+            return None
+        if self._is_finish_intent(payload.contenido) or self._is_cancel_intent(payload.contenido):
+            return None
+
+        sesion = self.sheets.get_sesion(respuesta_activa.id_sesion)
+        if not sesion:
+            return None
+
+        bloques_perfumeria = self.sheets.get_checklist_perfumeria()
+        if not bloques_perfumeria:
+            return None
+
+        detected = self._resolve_perfumeria_context(
+            payload.contenido,
+            bloques_perfumeria,
+            current_block=respuesta_activa.bloque_id,
+        )
+        detected_block = detected.get("bloque_id")
+        if (
+            not detected_block
+            or detected_block == respuesta_activa.bloque_id
+            or detected.get("confidence") != "high"
+        ):
+            return None
+
+        puntos_bloque = bloques_perfumeria.get(str(detected_block), [])
+        bloque_nombre = puntos_bloque[0].bloque_nombre if puntos_bloque else str(detected_block)
+
+        self.sheets.update_respuesta_pregunta(
+            respuesta_activa.id,
+            bloque_id=str(detected_block),
+            timeout_prompt_enviado=False,
+        )
+        self.sheets.create_respuesta_audit_log(
+            respuesta_activa.id,
+            "contexto_reasignado",
+            {
+                "from_bloque_id": respuesta_activa.bloque_id,
+                "to_bloque_id": detected_block,
+                "score": detected.get("score"),
+                "margin": detected.get("margin"),
+                "matched_terms": detected.get("matched_terms"),
+            },
+        )
+        self.sheets.update_conversacion(
+            telefono=payload.telefono,
+            estado=ConversationState.RECOLECTANDO_RESPUESTA,
+            id_pendiente=sesion.id_sesion,
+            ultimo_mensaje=json.dumps({
+                "return_state": return_state.value,
+                "bloque_id": detected_block,
+                "quoted_clarification": True,
+                "contextual_clarification": True,
+                "bloque_nombre": bloque_nombre,
+                "resume_bloque_actual": sesion.bloque_actual,
+                "context_score": detected.get("score"),
+                "matched_terms": detected.get("matched_terms"),
+            }, ensure_ascii=False),
+            id_respuesta_actual=respuesta_activa.id,
+        )
+
+        return {
+            **detected,
+            "bloque_nombre": bloque_nombre,
+        }
+
     async def _try_start_respuesta_collection(
         self,
         payload: WhatsAppPayload,
@@ -627,6 +824,20 @@ class ConversationRouter:
                 id_respuesta_actual=respuesta.id,
             )
             await self._append_respuesta_message(payload, respuesta, meta_client)
+            retargeted = await self._maybe_retarget_perfumeria_collection(
+                respuesta,
+                payload,
+                return_state,
+                meta_client,
+            )
+            if retargeted:
+                await meta_client.send_text(
+                    payload.telefono,
+                    f"Detecte que esto habla de {retargeted['bloque_nombre']}. "
+                    "Lo guardo como aclaracion de ese bloque sin mover el bloque actual. "
+                    "Podes sumar mas fotos, audios o texto. Escribi LISTO cuando termines.",
+                )
+                return True
             await meta_client.send_text(
                 payload.telefono,
                 "Recibido. Podes sumar mas fotos, audios o texto. Escribi LISTO recien cuando termines este bloque.",
@@ -742,6 +953,30 @@ class ConversationRouter:
             return "max_mensajes_alcanzado"
 
         await self._append_respuesta_message(payload, respuesta_activa, meta_client)
+        context = self._safe_json_loads(conv.ultimo_mensaje)
+        if not context.get("quoted_clarification"):
+            return_state_raw = context.get("return_state", ConversationState.EN_BLOQUE_PERFUMERIA.value)
+            try:
+                return_state = ConversationState(str(return_state_raw))
+            except ValueError:
+                return_state = ConversationState.EN_BLOQUE_PERFUMERIA
+
+            retargeted = await self._maybe_retarget_perfumeria_collection(
+                respuesta_activa,
+                payload,
+                return_state,
+                meta_client,
+            )
+            if retargeted:
+                matched_terms = retargeted.get("matched_terms") or []
+                terms_text = f" ({', '.join(matched_terms[:3])})" if matched_terms else ""
+                await meta_client.send_text(
+                    payload.telefono,
+                    f"Reubique esta respuesta en {retargeted['bloque_nombre']}{terms_text}. "
+                    "Sigo guardando ahi. Escribi LISTO cuando termines esta aclaracion.",
+                )
+                return "respuesta_contexto_reasignado"
+
         await meta_client.send_text(
             payload.telefono,
             "Recibido. Sigo guardando en este mismo bloque. Escribi LISTO cuando ya no quieras agregar nada mas.",

@@ -1,6 +1,7 @@
 import json
 import asyncio
 from datetime import date
+from types import SimpleNamespace
 
 from models import (
     ConversationState,
@@ -302,3 +303,59 @@ def test_collector_segments_keep_multiple_photo_text_pairs():
     assert len(segments) == 2
     assert segments[0]["evidencia"]["path"].endswith("foto1.jpg")
     assert segments[1]["evidencia"]["path"].endswith("foto2.jpg")
+
+
+def _fake_perfumeria_blocks():
+    return {
+        "ATENCION": [
+            SimpleNamespace(
+                bloque_nombre="ATENCION AL CLIENTE",
+                pregunta="Ofrece probadores a clientes",
+            )
+        ],
+        "PRES": [
+            SimpleNamespace(
+                bloque_nombre="PRESENTACION Y VIDRIERA",
+                pregunta="Vidriera limpia y productos principales disponibles",
+            )
+        ],
+        "GOND": [
+            SimpleNamespace(
+                bloque_nombre="GONDOLAS Y PUNTERAS",
+                pregunta="Gondolas ordenadas con variedad y reposicion",
+            )
+        ],
+    }
+
+
+def test_perfumeria_context_resolver_detects_vidriera_even_from_other_block():
+    result = ConversationRouter._resolve_perfumeria_context(
+        "La vidriera esta sucia y faltan productos principales",
+        _fake_perfumeria_blocks(),
+        current_block="GOND",
+    )
+
+    assert result["bloque_id"] == "PRES"
+    assert result["confidence"] == "high"
+
+
+def test_perfumeria_context_resolver_detects_probadores():
+    result = ConversationRouter._resolve_perfumeria_context(
+        "No hay probadores para ofrecer a clientes",
+        _fake_perfumeria_blocks(),
+        current_block="PRES",
+    )
+
+    assert result["bloque_id"] == "ATENCION"
+    assert result["confidence"] == "high"
+
+
+def test_perfumeria_context_resolver_stays_low_for_generic_text():
+    result = ConversationRouter._resolve_perfumeria_context(
+        "Esta correcto, no veo nada raro",
+        _fake_perfumeria_blocks(),
+        current_block="PRES",
+    )
+
+    assert result["bloque_id"] is None
+    assert result["confidence"] == "none"
