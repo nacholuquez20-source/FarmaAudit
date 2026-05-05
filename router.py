@@ -711,7 +711,17 @@ class ConversationRouter:
             respuesta_consolidada = "Respuesta enviada con evidencia multimedia."
         respuesta_consolidada = respuesta_consolidada[:RESPUESTA_CONFIG["respuesta_max_caracteres"]]
 
-        validacion = self._validate_respuesta_completitud(fresh.bloque_id, respuesta_consolidada, media_urls, mensajes, force=force)
+        context = self._safe_json_loads(conv.ultimo_mensaje)
+        return_state = context.get("return_state", ConversationState.EN_BLOQUE.value)
+        is_quoted_clarification = bool(context.get("quoted_clarification"))
+
+        validacion = self._validate_respuesta_completitud(
+            fresh.bloque_id,
+            respuesta_consolidada,
+            media_urls,
+            mensajes,
+            force=force or is_quoted_clarification,
+        )
         if not validacion["es_valida"]:
             self.sheets.create_respuesta_audit_log(fresh.id, "validacion_fallida", {"razon": validacion["razon"]})
             await meta_client.send_text(payload.telefono, f"{validacion['razon']}\n\nAgrega mas datos o escribi LISTO otra vez para continuar igual.")
@@ -727,8 +737,6 @@ class ConversationRouter:
         )
         self.sheets.create_respuesta_audit_log(fresh.id, "completada", {"auto_complete": auto_complete, "mensajes_count": len(mensajes), "media_count": len(media_urls)})
 
-        context = self._safe_json_loads(conv.ultimo_mensaje)
-        return_state = context.get("return_state", ConversationState.EN_BLOQUE.value)
         sesion = self.sheets.get_sesion(fresh.id_sesion)
         if not sesion:
             await meta_client.send_text(payload.telefono, "Respuesta registrada, pero no encontre la sesion para avanzar.")
@@ -1583,7 +1591,6 @@ class ConversationRouter:
                 primer_bloque,
                 bloque_nombre,
                 puntos_bloque,
-                prefix="Podes enviar multiples mensajes. Escribi LISTO cuando termines.",
             )
             return "sesion_created"
 
@@ -2328,10 +2335,12 @@ EDITAR → Hacer cambios""",
         bloque_nombre: str,
         puntos: list,
         prefix: str = "",
+        suffix: str = "Podes enviar multiples mensajes. Escribi LISTO cuando termines este bloque.",
     ) -> bool:
         """Send a perfumery block prompt and store its WhatsApp id for quoted replies."""
         pregunta = self._build_tema_pregunta(bloque_id, bloque_nombre, puntos)
-        text = f"{prefix}\n\n{pregunta}" if prefix else pregunta
+        parts = [part for part in (prefix, pregunta, suffix) if part]
+        text = "\n\n".join(parts)
         message_id = await meta_client.send_text_with_id(telefono, text)
         if message_id:
             self.sheets.save_whatsapp_bot_message(

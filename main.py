@@ -476,15 +476,39 @@ async def check_incomplete_respuestas_timeout():
                     "descartada_timeout",
                     {"segundos": inactive_seconds},
                 )
-                sheets.update_conversacion(
-                    telefono=respuesta.telefono_auditor,
-                    estado=ConversationState.IDLE,
-                    id_respuesta_actual="",
-                )
-                await meta_client.send_text(
-                    respuesta.telefono_auditor,
-                    "Timeout: tu respuesta fue descartada por inactividad. Escribi INICIO para retomar.",
-                )
+                conv = sheets.get_conversacion(respuesta.telefono_auditor)
+                context = {}
+                if conv and conv.ultimo_mensaje:
+                    try:
+                        context = json.loads(conv.ultimo_mensaje)
+                    except Exception:
+                        context = {}
+
+                if context.get("quoted_clarification"):
+                    try:
+                        resume_state = ConversationState(str(context.get("return_state") or ConversationState.EN_BLOQUE_PERFUMERIA.value))
+                    except ValueError:
+                        resume_state = ConversationState.EN_BLOQUE_PERFUMERIA
+                    sheets.update_conversacion(
+                        telefono=respuesta.telefono_auditor,
+                        estado=resume_state,
+                        id_pendiente=respuesta.id_sesion,
+                        id_respuesta_actual="",
+                    )
+                    await meta_client.send_text(
+                        respuesta.telefono_auditor,
+                        "Cierre la aclaracion por inactividad y mantuve la auditoria en curso. Podes seguir con el bloque actual.",
+                    )
+                else:
+                    sheets.update_conversacion(
+                        telefono=respuesta.telefono_auditor,
+                        estado=ConversationState.IDLE,
+                        id_respuesta_actual="",
+                    )
+                    await meta_client.send_text(
+                        respuesta.telefono_auditor,
+                        "Timeout: tu respuesta fue descartada por inactividad. Escribi INICIO para retomar.",
+                    )
                 continue
 
             if (
