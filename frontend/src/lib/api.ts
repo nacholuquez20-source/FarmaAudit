@@ -16,6 +16,7 @@ import type {
   DesvioOrigen,
   Notificacion,
   NotificacionTipo,
+  DesvioBorrador,
 } from '../types';
 
 function handleApiError(error: { message?: string }): string {
@@ -114,9 +115,17 @@ export async function getGestionById(id: string): Promise<Gestion | null> {
   return data;
 }
 
-function isMissingOptionalTableError(error: { code?: string; message?: string }): boolean {
+function isMissingTableError(error: { code?: string; message?: string }, tableName?: string): boolean {
   const message = error.message?.toLowerCase() || '';
-  return error.code === '42P01' || error.code === 'PGRST205' || message.includes('desvio_eventos');
+  return (
+    error.code === '42P01'
+    || error.code === 'PGRST205'
+    || (tableName ? message.includes(tableName.toLowerCase()) : false)
+  );
+}
+
+function isMissingOptionalTableError(error: { code?: string; message?: string }): boolean {
+  return isMissingTableError(error, 'desvio_eventos');
 }
 
 export async function getDesvioEventos(idGestion: string): Promise<DesvioEvento[]> {
@@ -301,6 +310,67 @@ export async function marcarNotificacionLeida(id: string): Promise<void> {
     .eq('id', id);
 
   if (error) throw new Error(handleApiError(error));
+}
+
+export async function getDesviosBorrador(): Promise<DesvioBorrador[]> {
+  const { data, error } = await supabase
+    .from('desvios_borrador')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    if (isMissingTableError(error, 'desvios_borrador')) return [];
+    throw new Error(handleApiError(error));
+  }
+
+  return (data ?? []) as DesvioBorrador[];
+}
+
+async function getAuthHeaders(): Promise<HeadersInit> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) {
+    throw new Error('Sesion no disponible. Volve a iniciar sesion.');
+  }
+  return {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${token}`,
+  };
+}
+
+export async function approveDesvioBorrador(id: string): Promise<{ id_gestion: string; id_reporte: string }> {
+  const apiUrl = getBotApiUrl();
+  if (!apiUrl) {
+    throw new Error('Falta configurar VITE_API_URL con la URL del bot.');
+  }
+
+  const response = await fetch(`${apiUrl}/api/desvios-borrador/${id}/approve`, {
+    method: 'POST',
+    headers: await getAuthHeaders(),
+  });
+
+  if (!response.ok) {
+    throw new Error('No se pudo aprobar el borrador.');
+  }
+
+  return response.json();
+}
+
+export async function discardDesvioBorrador(id: string, reason = ''): Promise<void> {
+  const apiUrl = getBotApiUrl();
+  if (!apiUrl) {
+    throw new Error('Falta configurar VITE_API_URL con la URL del bot.');
+  }
+
+  const response = await fetch(`${apiUrl}/api/desvios-borrador/${id}/discard`, {
+    method: 'POST',
+    headers: await getAuthHeaders(),
+    body: JSON.stringify({ reason }),
+  });
+
+  if (!response.ok) {
+    throw new Error('No se pudo descartar el borrador.');
+  }
 }
 
 async function getNotificationRecipients(idGestion: string, origen: DesvioOrigen): Promise<string[]> {

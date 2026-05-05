@@ -530,6 +530,153 @@ class SupabaseManager:
             logger.error(f"Failed to save perfumeria desvio for sesion {auditoria_id}: {e}")
             raise
 
+    def save_perfumeria_desvio_borrador(
+        self,
+        auditoria_id: str,
+        sucursal_id: str,
+        auditor_nombre: str,
+        bloque_id: str,
+        bloque_nombre: str,
+        descripcion: str,
+        severidad: str,
+        id_respuesta: Optional[str] = None,
+        respuesta_consolidada: str = "",
+        evidencia: Optional[Dict[str, Any]] = None,
+        confianza: Optional[float] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, str]:
+        """Create a WhatsApp finding draft for frontend review."""
+        try:
+            descripcion_limpia = (descripcion or "").strip()
+            if not descripcion_limpia:
+                raise ValueError("descripcion is required")
+
+            severidad_limpia = severidad if severidad in {"Alta", "Media", "Baja"} else "Media"
+            sucursal = self.get_sucursal(sucursal_id)
+            sucursal_nombre = sucursal.nombre if sucursal else sucursal_id
+            evidencia_items: List[Dict[str, Any]] = []
+            if evidencia:
+                evidencia_items.append({
+                    "tipo": evidencia.get("tipo") or "image",
+                    "path": evidencia.get("path") or "",
+                    "url": evidencia.get("url") or "",
+                    "mime_type": evidencia.get("mime_type") or "",
+                    "media_id": evidencia.get("media_id") or "",
+                    "bucket": "auditoria-respuestas",
+                })
+
+            response = self.client.table("desvios_borrador").insert({
+                "id_respuesta": id_respuesta,
+                "id_sesion": auditoria_id,
+                "id_sucursal": sucursal_id,
+                "sucursal": sucursal_nombre,
+                "bloque_id": bloque_id,
+                "bloque_nombre": bloque_nombre,
+                "descripcion": descripcion_limpia,
+                "severidad_sugerida": severidad_limpia,
+                "estado": "pendiente",
+                "evidencias_json": evidencia_items,
+                "respuesta_consolidada": respuesta_consolidada or descripcion_limpia,
+                "auditor_nombre": auditor_nombre,
+                "confianza": confianza,
+                "metadata_json": metadata or {},
+            }).execute()
+
+            draft = (response.data or [{}])[0]
+            draft_id = str(draft.get("id") or "")
+            logger.info(f"Created desvio borrador {draft_id} sesion={auditoria_id}")
+            return {"id_borrador": draft_id, "estado": "pendiente"}
+        except Exception as e:
+            message = str(e).lower()
+            if "desvios_borrador" in message or "could not find the table" in message or "42p01" in message:
+                logger.warning("desvios_borrador table missing; falling back to direct gestion persistence")
+                persisted = self.save_perfumeria_desvio(
+                    auditoria_id=auditoria_id,
+                    sucursal_id=sucursal_id,
+                    auditor_nombre=auditor_nombre,
+                    bloque_nombre=bloque_nombre,
+                    descripcion=descripcion,
+                    severidad=severidad,
+                    evidencia=evidencia,
+                )
+                return {**persisted, "estado": "converted_fallback"}
+            logger.error(f"Failed to save desvio borrador for sesion {auditoria_id}: {e}")
+            raise
+
+    def get_desvio_borrador(self, draft_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch one WhatsApp deviation draft."""
+        try:
+            response = self.client.table("desvios_borrador").select("*").eq("id", draft_id).maybe_single().execute()
+            return response.data
+        except Exception as e:
+            logger.error(f"Failed to get desvio borrador {draft_id}: {e}")
+            return None
+
+    def approve_desvio_borrador(self, draft_id: str, user_id: str) -> Dict[str, str]:
+        """Convert one draft into Reporte + Gestion."""
+        draft = self.get_desvio_borrador(draft_id)
+        if not draft:
+            raise ValueError("Draft not found")
+
+        if draft.get("id_gestion") and draft.get("id_reporte"):
+            return {
+                "id_borrador": draft_id,
+                "id_reporte": str(draft.get("id_reporte")),
+                "id_gestion": str(draft.get("id_gestion")),
+                "estado": str(draft.get("estado") or "convertido"),
+            }
+
+        evidencia = None
+        evidencias = draft.get("evidencias_json") or []
+        if isinstance(evidencias, str):
+            try:
+                evidencias = json.loads(evidencias)
+            except Exception:
+                evidencias = []
+        if isinstance(evidencias, list) and evidencias:
+            evidencia = evidencias[0]
+
+        persisted = self.save_perfumeria_desvio(
+            auditoria_id=str(draft.get("id_sesion") or ""),
+            sucursal_id=str(draft.get("id_sucursal") or ""),
+            auditor_nombre=str(draft.get("auditor_nombre") or "Auditor"),
+            bloque_nombre=str(draft.get("bloque_nombre") or draft.get("bloque_id") or ""),
+            descripcion=str(draft.get("descripcion") or ""),
+            severidad=str(draft.get("severidad_sugerida") or "Media"),
+            evidencia=evidencia,
+        )
+
+        self.client.table("desvios_borrador").update({
+            "estado": "convertido",
+            "id_reporte": persisted["id_reporte"],
+            "id_gestion": persisted["id_gestion"],
+            "aprobado_por": user_id,
+            "aprobado_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.utcnow().isoformat(),
+        }).eq("id", draft_id).execute()
+
+        return {
+            "id_borrador": draft_id,
+            **persisted,
+            "estado": "convertido",
+        }
+
+    def discard_desvio_borrador(self, draft_id: str, user_id: str, reason: str = "") -> Dict[str, str]:
+        """Discard one WhatsApp deviation draft without deleting audit evidence."""
+        draft = self.get_desvio_borrador(draft_id)
+        if not draft:
+            raise ValueError("Draft not found")
+
+        self.client.table("desvios_borrador").update({
+            "estado": "descartado",
+            "descartado_por": user_id,
+            "descartado_at": datetime.utcnow().isoformat(),
+            "razon_descarte": reason,
+            "updated_at": datetime.utcnow().isoformat(),
+        }).eq("id", draft_id).execute()
+
+        return {"id_borrador": draft_id, "estado": "descartado"}
+
     def save_whatsapp_bot_message(
         self,
         whatsapp_message_id: str,

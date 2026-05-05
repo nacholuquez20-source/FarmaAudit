@@ -48,6 +48,10 @@ class EncargadoNotificationRequest(BaseModel):
     descripcion_desvio: str
     sucursal: str | None = None
 
+
+class DesvioBorradorDiscardRequest(BaseModel):
+    reason: str | None = None
+
 # Lazy initialization - these will be created on demand
 router = None
 sheets = None
@@ -179,6 +183,36 @@ def get_sheets():
     return sheets
 
 
+async def _require_admin_or_auditor(request: Request) -> dict:
+    """Validate Supabase JWT and require an admin/auditor profile."""
+    auth_header = request.headers.get("authorization", "")
+    token = auth_header.replace("Bearer ", "", 1).strip() if auth_header.lower().startswith("bearer ") else ""
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing Authorization bearer token")
+
+    client = _get_supabase_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="Supabase is not configured")
+
+    try:
+        user_response = client.auth.get_user(token)
+        user = getattr(user_response, "user", None)
+        user_id = getattr(user, "id", None)
+        if not user_id:
+            raise ValueError("Invalid token")
+
+        profile_response = client.table("profiles").select("id, role, nombre").eq("id", user_id).maybe_single().execute()
+        profile = profile_response.data or {}
+        if profile.get("role") not in {"admin", "auditor"}:
+            raise HTTPException(status_code=403, detail="Only admin/auditor can perform this action")
+        return {"id": user_id, "role": profile.get("role"), "nombre": profile.get("nombre")}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning(f"Auth validation failed: {exc}")
+        raise HTTPException(status_code=401, detail="Invalid Authorization token")
+
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize background jobs on startup."""
@@ -271,6 +305,38 @@ async def send_encargado_notification(payload: EncargadoNotificationRequest):
         raise HTTPException(status_code=502, detail="No se pudo enviar el WhatsApp")
 
     return {"status": "ok"}
+
+
+@app.post("/api/desvios-borrador/{draft_id}/approve")
+async def approve_desvio_borrador(draft_id: str, request: Request):
+    """Approve a WhatsApp draft and convert it to gestion/reportes."""
+    profile = await _require_admin_or_auditor(request)
+    try:
+        result = get_sheets().approve_desvio_borrador(draft_id, str(profile["id"]))
+        return {"status": "ok", **result}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        logger.error(f"Failed to approve desvio borrador {draft_id}: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="No se pudo aprobar el borrador")
+
+
+@app.post("/api/desvios-borrador/{draft_id}/discard")
+async def discard_desvio_borrador(draft_id: str, payload: DesvioBorradorDiscardRequest, request: Request):
+    """Discard a WhatsApp draft without deleting the audit trail."""
+    profile = await _require_admin_or_auditor(request)
+    try:
+        result = get_sheets().discard_desvio_borrador(
+            draft_id,
+            str(profile["id"]),
+            payload.reason or "",
+        )
+        return {"status": "ok", **result}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        logger.error(f"Failed to discard desvio borrador {draft_id}: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="No se pudo descartar el borrador")
 
 
 # @app.get("/sync-now")

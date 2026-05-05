@@ -1273,6 +1273,8 @@ class ConversationRouter:
         setattr(synthetic_payload, "from_collector", True)
         setattr(synthetic_payload, "collector_media_items", fresh.get_media_ids())
         setattr(synthetic_payload, "collector_messages", mensajes)
+        setattr(synthetic_payload, "collector_response_id", fresh.id)
+        setattr(synthetic_payload, "collector_respuesta_consolidada", respuesta_consolidada)
 
         if return_state == ConversationState.EN_BLOQUE_PERFUMERIA.value:
             bloques_perfumeria = self.sheets.get_checklist_perfumeria()
@@ -1344,14 +1346,22 @@ class ConversationRouter:
 
             for desvio in segment_desvios:
                 evidencia = segment.get("evidencia")
-                persisted = self.sheets.save_perfumeria_desvio(
+                persisted = self.sheets.save_perfumeria_desvio_borrador(
                     auditoria_id=sesion.id_sesion,
                     sucursal_id=sesion.sucursal_id,
                     auditor_nombre=auditor_nombre,
+                    bloque_id=respuesta.bloque_id,
                     bloque_nombre=bloque_nombre,
                     descripcion=str(desvio.get("desvio", "")),
                     severidad=str(desvio.get("severidad", "Media")),
+                    id_respuesta=respuesta.id,
+                    respuesta_consolidada=respuesta_consolidada,
                     evidencia=evidencia,
+                    metadata={
+                        "origen": "aclaracion_citada",
+                        "desvio_extraido": desvio,
+                        "mensaje_index": segment.get("mensaje_index"),
+                    },
                 )
                 desvio.update(persisted)
                 desvio["origen"] = "aclaracion_citada"
@@ -3110,6 +3120,8 @@ EDITAR → Hacer cambios""",
                 auditor_nombre = auditor.nombre if auditor else "Auditor"
                 collector_messages = getattr(payload, "collector_messages", [])
                 collector_media_items = getattr(payload, "collector_media_items", [])
+                collector_response_id = str(getattr(payload, "collector_response_id", "") or "")
+                collector_respuesta_consolidada = str(getattr(payload, "collector_respuesta_consolidada", "") or respuesta)
                 segments = self._collector_text_evidence_segments(collector_messages)
                 if not segments:
                     segments = [{
@@ -3140,14 +3152,22 @@ EDITAR → Hacer cambios""",
 
                     for desvio in segment_desvios:
                         evidencia = segment.get("evidencia")
-                        persisted = self.sheets.save_perfumeria_desvio(
+                        persisted = self.sheets.save_perfumeria_desvio_borrador(
                             auditoria_id=sesion.id_sesion,
                             sucursal_id=sesion.sucursal_id,
                             auditor_nombre=auditor_nombre,
+                            bloque_id=bloque_id,
                             bloque_nombre=bloque_nombre,
                             descripcion=str(desvio.get("desvio", "")),
                             severidad=str(desvio.get("severidad", "Media")),
+                            id_respuesta=collector_response_id or None,
+                            respuesta_consolidada=collector_respuesta_consolidada,
                             evidencia=evidencia,
+                            metadata={
+                                "origen": "whatsapp_collector",
+                                "desvio_extraido": desvio,
+                                "mensaje_index": segment.get("mensaje_index"),
+                            },
                         )
                         desvio.update(persisted)
                         if evidencia:
@@ -3183,7 +3203,7 @@ EDITAR → Hacer cambios""",
                         siguiente_bloque,
                         siguiente_nombre,
                         puntos_siguiente,
-                        prefix="✅ Registrado.",
+                        prefix="✅ Guardado para revision.",
                     )
                 else:
                     await meta_client.send_text(

@@ -49,6 +49,9 @@ export function AppLayout({ children, title, showAdmin = true }: AppLayoutProps)
                     <Link to="/desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
                       Desvios
                     </Link>
+                    <Link to="/revision-desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
+                      Revision
+                    </Link>
                     <Link to="/sucursales" className="text-gray-600 hover:text-gray-900 hover:underline">
                       Sucursales
                     </Link>
@@ -63,6 +66,9 @@ export function AppLayout({ children, title, showAdmin = true }: AppLayoutProps)
                   <>
                     <Link to="/desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
                       Desvios
+                    </Link>
+                    <Link to="/revision-desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
+                      Revision
                     </Link>
                     <Link to="/sucursales" className="text-gray-600 hover:text-gray-900 hover:underline">
                       Sucursales

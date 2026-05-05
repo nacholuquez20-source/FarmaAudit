@@ -109,6 +109,42 @@ export interface EvidenciaStorageMetadata {
   origen: DesvioOrigen;
 }
 
+export interface DesvioBorradorEvidencia {
+  tipo: string;
+  path?: string;
+  url?: string;
+  mime_type?: string;
+  media_id?: string;
+  bucket?: string;
+}
+
+export interface DesvioBorrador {
+  id: string;
+  id_respuesta: string | null;
+  id_sesion: string | null;
+  id_sucursal: string | null;
+  sucursal: string;
+  bloque_id: string;
+  bloque_nombre: string;
+  descripcion: string;
+  severidad_sugerida: Severidad;
+  estado: 'pendiente' | 'aprobado' | 'descartado' | 'convertido';
+  evidencias_json: DesvioBorradorEvidencia[] | null;
+  respuesta_consolidada: string | null;
+  auditor_nombre: string | null;
+  confianza: number | null;
+  metadata_json: Record<string, unknown> | null;
+  id_reporte: string | null;
+  id_gestion: string | null;
+  aprobado_por: string | null;
+  aprobado_at: string | null;
+  descartado_por: string | null;
+  descartado_at: string | null;
+  razon_descarte: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface MensajeInternoMetadata {
   origen: DesvioOrigen;
   leido_por_auditor?: boolean;
