@@ -51,11 +51,6 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
                         Dashboard
                       </Link>
                     )}
-                    {hasModuleAccess(profile, 'desvios') && (
-                      <Link to="/desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
-                        Desvios
-                      </Link>
-                    )}
                     {hasModuleAccess(profile, 'gestion_desvios') && (
                       <Link to="/gestion-desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
                         Gestion

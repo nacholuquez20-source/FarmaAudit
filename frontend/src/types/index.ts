@@ -1,7 +1,6 @@
 export type Role = 'admin' | 'auditor' | 'sucursal';
 export type ModulePermission =
   | 'dashboard'
-  | 'desvios'
   | 'gestion_desvios'
   | 'revision_desvios'
   | 'mis_desvios'

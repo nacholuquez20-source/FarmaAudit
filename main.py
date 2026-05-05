@@ -95,7 +95,6 @@ _last_reminder_sent: dict[str, tuple[datetime, int]] = {}  # {id_sesion: (last_r
 _VALID_PANEL_ROLES = {"admin", "auditor", "sucursal"}
 _VALID_MODULE_PERMISSIONS = {
     "dashboard",
-    "desvios",
     "gestion_desvios",
     "revision_desvios",
     "mis_desvios",
@@ -103,14 +102,17 @@ _VALID_MODULE_PERMISSIONS = {
     "admin",
 }
 _DEFAULT_MODULES_BY_ROLE = {
-    "admin": ["dashboard", "desvios", "gestion_desvios", "revision_desvios", "mis_desvios", "sucursales", "admin"],
-    "auditor": ["desvios", "gestion_desvios", "revision_desvios", "sucursales"],
+    "admin": ["dashboard", "gestion_desvios", "revision_desvios", "mis_desvios", "sucursales", "admin"],
+    "auditor": ["gestion_desvios", "revision_desvios", "sucursales"],
     "sucursal": ["dashboard", "mis_desvios", "sucursales"],
 }
 _MODULES_BY_ROLE = {
     "admin": _VALID_MODULE_PERMISSIONS,
-    "auditor": {"desvios", "gestion_desvios", "revision_desvios", "sucursales"},
+    "auditor": {"gestion_desvios", "revision_desvios", "sucursales"},
     "sucursal": {"dashboard", "mis_desvios", "sucursales"},
+}
+_LEGACY_MODULE_ALIASES = {
+    "desvios": "gestion_desvios",
 }
 
 
@@ -138,6 +140,7 @@ def _normalize_module_permissions(role: str, modules: list[str] | None = None) -
     source = modules if modules is not None else _DEFAULT_MODULES_BY_ROLE[role]
     normalized: list[str] = []
     for module in source:
+        module = _LEGACY_MODULE_ALIASES.get(module, module)
         if module not in _VALID_MODULE_PERMISSIONS:
             raise HTTPException(status_code=400, detail=f"Modulo invalido: {module}")
         if module in allowed and module not in normalized:

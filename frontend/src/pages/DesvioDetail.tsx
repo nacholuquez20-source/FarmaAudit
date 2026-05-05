@@ -47,7 +47,7 @@ export default function DesvioDetail() {
 
   const actorName = profile?.nombre || user?.email || null;
   const canManageEstado = role === 'admin' || role === 'auditor';
-  const backPath = role === 'sucursal' ? '/mis-desvios' : '/desvios';
+  const backPath = role === 'sucursal' ? '/mis-desvios' : '/gestion-desvios';
 
   useEffect(() => {
     let cancelled = false;
@@ -274,7 +274,7 @@ export default function DesvioDetail() {
           onClick={() => navigate(backPath)}
           className="self-start text-sm font-medium text-blue-600 hover:text-blue-800"
         >
-          Volver a desvios
+          {role === 'sucursal' ? 'Volver a mis desvios' : 'Volver a gestion'}
         </button>
         <div className="flex gap-2">
           {canManageEstado && (

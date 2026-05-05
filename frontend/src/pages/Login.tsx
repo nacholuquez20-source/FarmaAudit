@@ -32,7 +32,7 @@ export default function Login() {
       if (r === 'admin' || r === 'sucursal') {
         navigate('/dashboard');
       } else {
-        navigate('/desvios');
+        navigate('/gestion-desvios');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al iniciar sesion');

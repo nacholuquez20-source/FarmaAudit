@@ -271,8 +271,8 @@ export default function Dashboard() {
             <section className="rounded-lg bg-white p-6 shadow xl:col-span-2">
               <div className="mb-4 flex items-center justify-between">
                 <h2 className="text-lg font-semibold">Semaforo por Sucursal</h2>
-                <Link to="/desvios" className="text-sm font-medium text-blue-600 hover:text-blue-800">
-                  Ver desvios
+                <Link to="/gestion-desvios" className="text-sm font-medium text-blue-600 hover:text-blue-800">
+                  Ver gestion
                 </Link>
               </div>
               {stats.sucursales_estado.length === 0 ? (
