@@ -571,6 +571,39 @@ class ConversationRouter:
         return normalized in exact or normalized.startswith(("cancelar ", "descartar ", "borra ", "borrar "))
 
     @classmethod
+    def _is_help_intent(cls, text: str) -> bool:
+        normalized = cls._normalize_intent_text(text)
+        if not normalized:
+            return False
+        return normalized in {
+            "ayuda", "help", "comandos", "opciones",
+            "que puedo hacer", "como sigo", "como continuo",
+        }
+
+    @classmethod
+    def _is_summary_intent(cls, text: str) -> bool:
+        normalized = cls._normalize_intent_text(text)
+        if not normalized:
+            return False
+        return normalized in {
+            "resumen", "ver resumen", "estado", "que registre",
+            "que tengo", "que guardaste", "lo guardado",
+        }
+
+    @staticmethod
+    def _format_collector_help() -> str:
+        return "\n".join([
+            "Estoy guardando todo en este bloque.",
+            "",
+            "Podes mandar texto, fotos o audios, en varios mensajes.",
+            "LISTO: cerrar este bloque y seguir.",
+            "RESUMEN: ver lo que ya guarde.",
+            "CANCELAR: descartar esta respuesta y cargarla de nuevo.",
+            "",
+            "Si algo era de otro bloque, decimelo natural: por ejemplo, 'eso era de vidriera'.",
+        ])
+
+    @classmethod
     def _is_positive_no_deviation_text(cls, text: str) -> bool:
         normalized = cls._normalize_intent_text(text)
         if not normalized:
@@ -835,12 +868,12 @@ class ConversationRouter:
                     payload.telefono,
                     f"Detecte que esto habla de {retargeted['bloque_nombre']}. "
                     "Lo guardo como aclaracion de ese bloque sin mover el bloque actual. "
-                    "Podes sumar mas fotos, audios o texto. Escribi LISTO cuando termines.",
+                    "Podes sumar mas fotos, audios o texto. Escribi LISTO cuando termines, o RESUMEN para revisar.",
                 )
                 return True
             await meta_client.send_text(
                 payload.telefono,
-                "Recibido. Podes sumar mas fotos, audios o texto. Escribi LISTO recien cuando termines este bloque.",
+                "Recibido. Podes sumar mas fotos, audios o texto. Escribi LISTO cuando termines, RESUMEN para revisar o CANCELAR para rehacer.",
             )
             return True
         except Exception as e:
@@ -938,6 +971,23 @@ class ConversationRouter:
                 meta_client,
             )
 
+        if payload.tipo == "text" and self._is_help_intent(payload.contenido or ""):
+            await meta_client.send_text(payload.telefono, self._format_collector_help())
+            return "collector_help_sent"
+
+        if payload.tipo == "text" and self._is_summary_intent(payload.contenido or ""):
+            fresh = self.sheets.get_respuesta_pregunta(respuesta_activa.id) or respuesta_activa
+            mensajes, respuesta_consolidada, _media_urls = self._consolidate_respuesta_messages(fresh)
+            await meta_client.send_text(
+                payload.telefono,
+                self._format_respuesta_collection_summary(
+                    mensajes,
+                    respuesta_consolidada,
+                    closing_line="Sigo guardando en este bloque. Podes sumar mas o escribir LISTO para continuar.",
+                ),
+            )
+            return "collector_summary_sent"
+
         if payload.tipo == "text" and self._is_finish_intent(payload.contenido or ""):
             return await self._complete_respuesta_collection(
                 respuesta_activa,
@@ -973,13 +1023,13 @@ class ConversationRouter:
                 await meta_client.send_text(
                     payload.telefono,
                     f"Reubique esta respuesta en {retargeted['bloque_nombre']}{terms_text}. "
-                    "Sigo guardando ahi. Escribi LISTO cuando termines esta aclaracion.",
+                    "Sigo guardando ahi. Escribi LISTO cuando termines esta aclaracion, o RESUMEN para revisar.",
                 )
                 return "respuesta_contexto_reasignado"
 
         await meta_client.send_text(
             payload.telefono,
-            "Recibido. Sigo guardando en este mismo bloque. Escribi LISTO cuando ya no quieras agregar nada mas.",
+            "Recibido. Sigo guardando en este bloque. Mandame mas si hace falta, o escribi LISTO. Tambien podes usar RESUMEN o CANCELAR.",
         )
         return "respuesta_mensaje_agregado"
 
@@ -1009,6 +1059,7 @@ class ConversationRouter:
     def _format_respuesta_collection_summary(
         mensajes: list,
         respuesta_consolidada: str,
+        closing_line: str = "Continuamos con el siguiente bloque.",
     ) -> str:
         """Build a short WhatsApp summary before advancing to the next block."""
         text_count = 0
@@ -1049,8 +1100,31 @@ class ConversationRouter:
         ]
         if resumen_texto:
             lines.extend(["", resumen_texto])
-        lines.extend(["", "Continuamos con el siguiente bloque."])
+        if closing_line:
+            lines.extend(["", closing_line])
         return "\n".join(lines)
+
+    @staticmethod
+    def _consolidate_respuesta_messages(
+        respuesta: RespuestaPregunta,
+    ) -> Tuple[List[Dict[str, Any]], str, List[str]]:
+        mensajes = [vars(msg) for msg in respuesta.get_mensajes()]
+        textos = [
+            str(msg.get("contenido", "")).strip()
+            for msg in mensajes
+            if str(msg.get("contenido", "")).strip() and not str(msg.get("contenido", "")).startswith("[")
+        ]
+        media_urls = [
+            media.get("url")
+            for msg in mensajes
+            for media in msg.get("media_ids", [])
+            if media.get("url")
+        ]
+        respuesta_consolidada = "\n".join(textos).strip()
+        if not respuesta_consolidada and media_urls:
+            respuesta_consolidada = "Respuesta enviada con evidencia multimedia."
+        respuesta_consolidada = respuesta_consolidada[:RESPUESTA_CONFIG["respuesta_max_caracteres"]]
+        return mensajes, respuesta_consolidada, media_urls
 
     @staticmethod
     def _is_collector_image_media(item: Any) -> bool:
@@ -1140,17 +1214,7 @@ class ConversationRouter:
         force: bool = False,
     ) -> str:
         fresh = self.sheets.get_respuesta_pregunta(respuesta_activa.id) or respuesta_activa
-        mensajes = [vars(msg) for msg in fresh.get_mensajes()]
-        textos = [
-            str(msg.get("contenido", "")).strip()
-            for msg in mensajes
-            if str(msg.get("contenido", "")).strip() and not str(msg.get("contenido", "")).startswith("[")
-        ]
-        media_urls = [media.get("url") for msg in mensajes for media in msg.get("media_ids", []) if media.get("url")]
-        respuesta_consolidada = "\n".join(textos).strip()
-        if not respuesta_consolidada and media_urls:
-            respuesta_consolidada = "Respuesta enviada con evidencia multimedia."
-        respuesta_consolidada = respuesta_consolidada[:RESPUESTA_CONFIG["respuesta_max_caracteres"]]
+        mensajes, respuesta_consolidada, media_urls = self._consolidate_respuesta_messages(fresh)
 
         context = self._safe_json_loads(conv.ultimo_mensaje)
         return_state = context.get("return_state", ConversationState.EN_BLOQUE.value)

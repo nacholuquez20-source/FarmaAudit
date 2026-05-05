@@ -243,6 +243,28 @@ def test_human_cancel_intent_accepts_natural_variants():
     assert ConversationRouter._is_cancel_intent("borrar esto")
 
 
+def test_collector_help_and_summary_intents_are_natural():
+    assert ConversationRouter._is_help_intent("ayuda")
+    assert ConversationRouter._is_help_intent("como sigo?")
+    assert ConversationRouter._is_summary_intent("resumen")
+    assert ConversationRouter._is_summary_intent("que guardaste?")
+
+
+def test_live_summary_keeps_collector_open():
+    summary = ConversationRouter._format_respuesta_collection_summary(
+        mensajes=[
+            {"tipo": "text", "contenido": "Vidriera con manchas", "media_ids": []},
+            {"tipo": "image", "contenido": "[Foto recibida]", "media_ids": [{"tipo": "image", "url": "signed"}]},
+        ],
+        respuesta_consolidada="Vidriera con manchas",
+        closing_line="Sigo guardando en este bloque.",
+    )
+
+    assert "1 foto(s)" in summary
+    assert "Sigo guardando en este bloque." in summary
+    assert "Continuamos con el siguiente bloque." not in summary
+
+
 def test_first_collector_image_uses_image_path():
     media = ConversationRouter._first_collector_image([
         {"tipo": "audio", "path": "auditoria/ses/resp/audio.ogg", "mime_type": "audio/ogg"},
