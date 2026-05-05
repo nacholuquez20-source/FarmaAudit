@@ -817,6 +817,84 @@ class ConversationRouter:
         lines.extend(["", "Continuamos con el siguiente bloque."])
         return "\n".join(lines)
 
+    @staticmethod
+    def _is_collector_image_media(item: Any) -> bool:
+        if not isinstance(item, dict):
+            return False
+        mime_type = str(item.get("mime_type") or "")
+        tipo = str(item.get("tipo") or "")
+        path = str(item.get("path") or "")
+        return bool(path) and (tipo == "image" or mime_type.startswith("image/"))
+
+    @classmethod
+    def _collector_message_text(cls, msg: Dict[str, Any]) -> str:
+        text = str(msg.get("contenido", "")).strip()
+        if not text or text.startswith("["):
+            return ""
+        if cls._is_finish_intent(text) or cls._is_cancel_intent(text):
+            return ""
+        return text
+
+    @classmethod
+    def _collector_image_items(cls, msg: Dict[str, Any]) -> List[Dict[str, Any]]:
+        return [
+            item for item in (msg.get("media_ids", []) or [])
+            if cls._is_collector_image_media(item)
+        ]
+
+    @classmethod
+    def _collector_text_evidence_segments(cls, mensajes: list) -> List[Dict[str, Any]]:
+        """Pair each text/audio transcription with the closest collected image."""
+        normalized_messages = [msg for msg in mensajes if isinstance(msg, dict)]
+        text_indexes = [
+            idx for idx, msg in enumerate(normalized_messages)
+            if cls._collector_message_text(msg)
+        ]
+        segments: List[Dict[str, Any]] = []
+        used_image_paths = set()
+
+        def available_images(message: Dict[str, Any]) -> List[Dict[str, Any]]:
+            images = []
+            for image in cls._collector_image_items(message):
+                path = str(image.get("path") or "")
+                if path and path in used_image_paths:
+                    continue
+                images.append(image)
+            return images
+
+        for position, idx in enumerate(text_indexes):
+            msg = normalized_messages[idx]
+            prev_text_idx = text_indexes[position - 1] if position > 0 else -1
+            next_text_idx = text_indexes[position + 1] if position + 1 < len(text_indexes) else len(normalized_messages)
+
+            same_message_images = available_images(msg)
+            evidence = same_message_images[0] if same_message_images else None
+
+            if evidence is None:
+                for scan_idx in range(idx - 1, prev_text_idx, -1):
+                    images = available_images(normalized_messages[scan_idx])
+                    if images:
+                        evidence = images[-1]
+                        break
+
+            if evidence is None:
+                for scan_idx in range(idx + 1, next_text_idx):
+                    images = available_images(normalized_messages[scan_idx])
+                    if images:
+                        evidence = images[0]
+                        break
+
+            if evidence and evidence.get("path"):
+                used_image_paths.add(str(evidence.get("path")))
+
+            segments.append({
+                "texto": cls._collector_message_text(msg),
+                "evidencia": evidence,
+                "mensaje_index": idx,
+            })
+
+        return segments
+
     async def _complete_respuesta_collection(
         self,
         respuesta_activa: RespuestaPregunta,
@@ -895,6 +973,7 @@ class ConversationRouter:
         synthetic_payload = WhatsAppPayload(telefono=payload.telefono, tipo="text", contenido=respuesta_consolidada)
         setattr(synthetic_payload, "from_collector", True)
         setattr(synthetic_payload, "collector_media_items", fresh.get_media_ids())
+        setattr(synthetic_payload, "collector_messages", mensajes)
 
         if return_state == ConversationState.EN_BLOQUE_PERFUMERIA.value:
             bloques_perfumeria = self.sheets.get_checklist_perfumeria()
@@ -936,38 +1015,53 @@ class ConversationRouter:
         if not bloque_nombre:
             bloque_nombre = puntos_bloque[0].bloque_nombre if puntos_bloque else bloque_id
 
-        contexto_puntos = "\n".join([f"- {p.pregunta}" for p in puntos_bloque])
-        desvios = []
-        if respuesta_consolidada and respuesta_consolidada != "Aclaracion enviada con evidencia multimedia.":
-            desvios = await self._extract_perfumeria_deviations(
-                bloque_nombre,
-                contexto_puntos,
-                respuesta_consolidada,
-            )
-            if not desvios:
-                fallback_desvio = self._build_perfumeria_fallback_desvio(bloque_nombre, respuesta_consolidada)
-                if fallback_desvio:
-                    desvios = [fallback_desvio]
-
         auditor = self.sheets.get_auditor(payload.telefono)
         auditor_nombre = auditor.nombre if auditor else "Auditor"
-        evidencia = self._first_collector_image(media_items)
         hallazgos = json.loads(sesion.hallazgos_json) if sesion.hallazgos_json else []
+        contexto_puntos = "\n".join([f"- {p.pregunta}" for p in puntos_bloque])
+        segments = self._collector_text_evidence_segments(mensajes)
+        if not segments and respuesta_consolidada and respuesta_consolidada != "Aclaracion enviada con evidencia multimedia.":
+            segments = [{
+                "texto": respuesta_consolidada,
+                "evidencia": self._first_collector_image(media_items),
+                "mensaje_index": None,
+            }]
+
+        desvios: List[Dict[str, Any]] = []
         persisted_count = 0
-        for desvio in desvios:
-            persisted = self.sheets.save_perfumeria_desvio(
-                auditoria_id=sesion.id_sesion,
-                sucursal_id=sesion.sucursal_id,
-                auditor_nombre=auditor_nombre,
-                bloque_nombre=bloque_nombre,
-                descripcion=str(desvio.get("desvio", "")),
-                severidad=str(desvio.get("severidad", "Media")),
-                evidencia=evidencia,
+        for segment in segments:
+            segment_text = str(segment.get("texto") or "").strip()
+            if not segment_text:
+                continue
+            segment_desvios = await self._extract_perfumeria_deviations(
+                bloque_nombre,
+                contexto_puntos,
+                segment_text,
             )
-            desvio.update(persisted)
-            desvio["origen"] = "aclaracion_citada"
-            hallazgos.append(desvio)
-            persisted_count += 1
+            if not segment_desvios:
+                fallback_desvio = self._build_perfumeria_fallback_desvio(bloque_nombre, segment_text)
+                if fallback_desvio:
+                    segment_desvios = [fallback_desvio]
+
+            for desvio in segment_desvios:
+                evidencia = segment.get("evidencia")
+                persisted = self.sheets.save_perfumeria_desvio(
+                    auditoria_id=sesion.id_sesion,
+                    sucursal_id=sesion.sucursal_id,
+                    auditor_nombre=auditor_nombre,
+                    bloque_nombre=bloque_nombre,
+                    descripcion=str(desvio.get("desvio", "")),
+                    severidad=str(desvio.get("severidad", "Media")),
+                    evidencia=evidencia,
+                )
+                desvio.update(persisted)
+                desvio["origen"] = "aclaracion_citada"
+                if evidencia:
+                    desvio["evidencia_path"] = evidencia.get("path")
+                    desvio["evidencia_match"] = "mensaje_cercano"
+                hallazgos.append(desvio)
+                desvios.append(desvio)
+                persisted_count += 1
 
         resultados = json.loads(sesion.resultados_json) if sesion.resultados_json else {}
         resultados[f"aclaracion_{bloque_id}_{respuesta.id[:8]}"] = {
@@ -2713,38 +2807,55 @@ EDITAR → Hacer cambios""",
                     "timestamp": self._utc_now_iso()
                 }
 
-                # Parse deviations with Claude
-                desvios = await self._extract_perfumeria_deviations(
-                    bloque_nombre, contexto_puntos, respuesta
-                )
-                if not desvios:
-                    fallback_desvio = self._build_perfumeria_fallback_desvio(bloque_nombre, respuesta)
-                    if fallback_desvio:
-                        desvios = [fallback_desvio]
-                        logger.info(
-                            "Created perfumeria fallback desvio for bloque=%s sesion=%s",
-                            bloque_id,
-                            sesion.id_sesion,
-                        )
-
                 auditor = self.sheets.get_auditor(payload.telefono)
                 auditor_nombre = auditor.nombre if auditor else "Auditor"
-                evidencia = self._first_collector_image(getattr(payload, "collector_media_items", []))
+                collector_messages = getattr(payload, "collector_messages", [])
+                collector_media_items = getattr(payload, "collector_media_items", [])
+                segments = self._collector_text_evidence_segments(collector_messages)
+                if not segments:
+                    segments = [{
+                        "texto": respuesta,
+                        "evidencia": self._first_collector_image(collector_media_items),
+                        "mensaje_index": None,
+                    }]
 
                 # Persist each extracted deviation in the same tables used by the web UI.
                 hallazgos = json.loads(sesion.hallazgos_json) if sesion.hallazgos_json else []
-                for desvio in desvios:
-                    persisted = self.sheets.save_perfumeria_desvio(
-                        auditoria_id=sesion.id_sesion,
-                        sucursal_id=sesion.sucursal_id,
-                        auditor_nombre=auditor_nombre,
-                        bloque_nombre=bloque_nombre,
-                        descripcion=str(desvio.get("desvio", "")),
-                        severidad=str(desvio.get("severidad", "Media")),
-                        evidencia=evidencia,
+                desvios: List[Dict[str, Any]] = []
+                for segment in segments:
+                    segment_text = str(segment.get("texto") or "").strip()
+                    if not segment_text:
+                        continue
+                    segment_desvios = await self._extract_perfumeria_deviations(
+                        bloque_nombre, contexto_puntos, segment_text
                     )
-                    desvio.update(persisted)
-                    hallazgos.append(desvio)
+                    if not segment_desvios:
+                        fallback_desvio = self._build_perfumeria_fallback_desvio(bloque_nombre, segment_text)
+                        if fallback_desvio:
+                            segment_desvios = [fallback_desvio]
+                            logger.info(
+                                "Created perfumeria fallback desvio for bloque=%s sesion=%s",
+                                bloque_id,
+                                sesion.id_sesion,
+                            )
+
+                    for desvio in segment_desvios:
+                        evidencia = segment.get("evidencia")
+                        persisted = self.sheets.save_perfumeria_desvio(
+                            auditoria_id=sesion.id_sesion,
+                            sucursal_id=sesion.sucursal_id,
+                            auditor_nombre=auditor_nombre,
+                            bloque_nombre=bloque_nombre,
+                            descripcion=str(desvio.get("desvio", "")),
+                            severidad=str(desvio.get("severidad", "Media")),
+                            evidencia=evidencia,
+                        )
+                        desvio.update(persisted)
+                        if evidencia:
+                            desvio["evidencia_path"] = evidencia.get("path")
+                            desvio["evidencia_match"] = "mensaje_cercano"
+                        hallazgos.append(desvio)
+                        desvios.append(desvio)
 
                 # Move to next block
                 current_index = bloques_ordenados.index(bloque_id)

@@ -250,3 +250,55 @@ def test_first_collector_image_uses_image_path():
 
     assert media is not None
     assert media["path"].endswith("foto.jpg")
+
+
+def test_collector_segments_pair_photo_before_text():
+    segments = ConversationRouter._collector_text_evidence_segments([
+        {
+            "tipo": "image",
+            "contenido": "[Foto recibida]",
+            "media_ids": [{"tipo": "image", "path": "auditoria/ses/resp/gondola.jpg", "mime_type": "image/jpeg"}],
+        },
+        {"tipo": "audio", "contenido": "La gondola esta desordenada", "media_ids": []},
+    ])
+
+    assert len(segments) == 1
+    assert segments[0]["texto"] == "La gondola esta desordenada"
+    assert segments[0]["evidencia"]["path"].endswith("gondola.jpg")
+
+
+def test_collector_segments_pair_photo_after_text_until_next_text():
+    segments = ConversationRouter._collector_text_evidence_segments([
+        {"tipo": "text", "contenido": "Faltan probadores", "media_ids": []},
+        {
+            "tipo": "image",
+            "contenido": "[Foto recibida]",
+            "media_ids": [{"tipo": "image", "path": "auditoria/ses/resp/probadores.jpg", "mime_type": "image/jpeg"}],
+        },
+        {"tipo": "text", "contenido": "Vidriera correcta", "media_ids": []},
+    ])
+
+    assert len(segments) == 2
+    assert segments[0]["evidencia"]["path"].endswith("probadores.jpg")
+    assert segments[1]["evidencia"] is None
+
+
+def test_collector_segments_keep_multiple_photo_text_pairs():
+    segments = ConversationRouter._collector_text_evidence_segments([
+        {
+            "tipo": "image",
+            "contenido": "[Foto recibida]",
+            "media_ids": [{"tipo": "image", "path": "auditoria/ses/resp/foto1.jpg", "mime_type": "image/jpeg"}],
+        },
+        {"tipo": "text", "contenido": "Gondola desordenada", "media_ids": []},
+        {
+            "tipo": "image",
+            "contenido": "[Foto recibida]",
+            "media_ids": [{"tipo": "image", "path": "auditoria/ses/resp/foto2.jpg", "mime_type": "image/jpeg"}],
+        },
+        {"tipo": "text", "contenido": "Vidriera con manchas", "media_ids": []},
+    ])
+
+    assert len(segments) == 2
+    assert segments[0]["evidencia"]["path"].endswith("foto1.jpg")
+    assert segments[1]["evidencia"]["path"].endswith("foto2.jpg")
