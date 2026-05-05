@@ -5,7 +5,9 @@ import logging
 import uuid
 from typing import List, Optional, Any, Dict
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 
+from PIL import Image
 from supabase import create_client, Client
 from config import get_settings
 from models import (
@@ -792,8 +794,22 @@ class SupabaseManager:
             logger.error(f"Failed to get gestion {id_gestion}: {e}")
             return None
 
-    def upload_desvio_evidencia(self, id_gestion: str, content: bytes, mime_type: str) -> str:
-        """Upload evidence bytes to the private desvio-evidencias bucket."""
+    def _generate_thumbnail(self, content: bytes, mime_type: str) -> Optional[bytes]:
+        """Generate thumbnail from image bytes. Returns thumbnail bytes or None on failure."""
+        if not mime_type.startswith("image/"):
+            return None
+        try:
+            img = Image.open(BytesIO(content))
+            img.thumbnail((400, 400), Image.Resampling.LANCZOS)
+            thumb_io = BytesIO()
+            img.save(thumb_io, format="JPEG", quality=75, optimize=True)
+            return thumb_io.getvalue()
+        except Exception as e:
+            logger.warning(f"Failed to generate thumbnail: {e}")
+            return None
+
+    def upload_desvio_evidencia(self, id_gestion: str, content: bytes, mime_type: str) -> Dict[str, str]:
+        """Upload evidence bytes to the private desvio-evidencias bucket with auto-generated thumbnail."""
         ext_by_mime = {
             "image/jpeg": "jpg",
             "image/png": "png",
@@ -801,13 +817,35 @@ class SupabaseManager:
             "application/pdf": "pdf",
         }
         ext = ext_by_mime.get(mime_type, "jpg")
-        path = f"gestion/{id_gestion}/whatsapp-{uuid.uuid4().hex}.{ext}"
+        uuid_hex = uuid.uuid4().hex
+        path = f"gestion/{id_gestion}/whatsapp-{uuid_hex}.{ext}"
+
         self.client.storage.from_("desvio-evidencias").upload(
             path,
             content,
             {"content-type": mime_type, "upsert": "false"},
         )
-        return path
+
+        thumb_path = None
+        if mime_type.startswith("image/"):
+            thumb_content = self._generate_thumbnail(content, mime_type)
+            if thumb_content:
+                thumb_path = f"gestion/{id_gestion}/whatsapp-{uuid_hex}-thumb.jpg"
+                try:
+                    self.client.storage.from_("desvio-evidencias").upload(
+                        thumb_path,
+                        thumb_content,
+                        {"content-type": "image/jpeg", "upsert": "false"},
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to upload thumbnail: {e}")
+                    thumb_path = None
+
+        return {
+            "path": path,
+            "thumb_path": thumb_path,
+            "bucket": "desvio-evidencias",
+        }
 
     def create_signed_evidencia_url(self, path: str, expires_seconds: int = 86400) -> str:
         """Create a signed URL for a Storage evidence object."""
@@ -1393,8 +1431,8 @@ class SupabaseManager:
             logger.error(f"Error getting audit trail for {id_respuesta}: {e}")
             return []
 
-    def upload_auditoria_respuesta_media(self, id_sesion: str, id_respuesta: str, content: bytes, mime_type: str) -> str:
-        """Upload collected audit response media to Storage."""
+    def upload_auditoria_respuesta_media(self, id_sesion: str, id_respuesta: str, content: bytes, mime_type: str) -> Dict[str, str]:
+        """Upload collected audit response media to Storage with auto-generated thumbnail for images."""
         ext_by_mime = {
             "image/jpeg": "jpg",
             "image/png": "png",
@@ -1405,13 +1443,35 @@ class SupabaseManager:
             "application/pdf": "pdf",
         }
         ext = ext_by_mime.get(mime_type, "bin")
-        path = f"auditoria/{id_sesion}/{id_respuesta}/{uuid.uuid4().hex}.{ext}"
+        uuid_hex = uuid.uuid4().hex
+        path = f"auditoria/{id_sesion}/{id_respuesta}/{uuid_hex}.{ext}"
+
         self.client.storage.from_("auditoria-respuestas").upload(
             path,
             content,
             {"content-type": mime_type, "upsert": "false"},
         )
-        return path
+
+        thumb_path = None
+        if mime_type.startswith("image/"):
+            thumb_content = self._generate_thumbnail(content, mime_type)
+            if thumb_content:
+                thumb_path = f"auditoria/{id_sesion}/{id_respuesta}/{uuid_hex}-thumb.jpg"
+                try:
+                    self.client.storage.from_("auditoria-respuestas").upload(
+                        thumb_path,
+                        thumb_content,
+                        {"content-type": "image/jpeg", "upsert": "false"},
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to upload thumbnail: {e}")
+                    thumb_path = None
+
+        return {
+            "path": path,
+            "thumb_path": thumb_path,
+            "bucket": "auditoria-respuestas",
+        }
 
     def create_signed_auditoria_respuesta_url(self, path: str, expires_seconds: int = 86400) -> str:
         """Create signed URL for collected audit response media."""

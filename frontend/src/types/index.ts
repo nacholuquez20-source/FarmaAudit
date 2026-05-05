@@ -112,6 +112,7 @@ export interface EvidenciaStorageMetadata {
 export interface DesvioBorradorEvidencia {
   tipo: string;
   path?: string;
+  thumb_path?: string;
   url?: string;
   mime_type?: string;
   media_id?: string;

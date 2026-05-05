@@ -460,7 +460,9 @@ class ConversationRouter:
         try:
             if payload.tipo == "image" and payload.media_id:
                 content, mime_type = await meta_client.download_media_with_metadata(payload.media_id)
-                path = self.sheets.upload_desvio_evidencia(str(id_gestion), content, mime_type)
+                upload_result = self.sheets.upload_desvio_evidencia(str(id_gestion), content, mime_type)
+                path = upload_result["path"]
+                thumb_path = upload_result.get("thumb_path")
                 signed_url = self.sheets.create_signed_evidencia_url(path)
                 comentario = (payload.contenido or "").strip() or "Foto de correccion enviada por WhatsApp."
                 self.sheets.save_encargado_evento(
@@ -471,6 +473,7 @@ class ConversationRouter:
                     metadata={
                         "origen": "sucursal",
                         "foto_path": path,
+                        "thumb_path": thumb_path,
                         "foto_url_signed": signed_url,
                         "mime_type": mime_type,
                         "size_bytes": len(content),
@@ -898,12 +901,15 @@ class ConversationRouter:
         try:
             if payload.media_id and payload.tipo in {"image", "audio"}:
                 content, mime_type = await meta_client.download_media_with_metadata(payload.media_id)
-                path = self.sheets.upload_auditoria_respuesta_media(respuesta_activa.id_sesion, respuesta_activa.id, content, mime_type)
+                upload_result = self.sheets.upload_auditoria_respuesta_media(respuesta_activa.id_sesion, respuesta_activa.id, content, mime_type)
+                path = upload_result["path"]
+                thumb_path = upload_result.get("thumb_path")
                 signed_url = self.sheets.create_signed_auditoria_respuesta_url(path)
                 media_items.append({
                     "tipo": payload.tipo,
                     "url": signed_url,
                     "path": path,
+                    "thumb_path": thumb_path,
                     "mime_type": mime_type,
                     "media_id": payload.media_id,
                 })

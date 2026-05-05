@@ -3,35 +3,36 @@ import { useNavigate } from 'react-router-dom';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { useDesviosBorrador } from '../hooks/useDesviosBorrador';
-import { resolveEvidenceUrl } from '../lib/api';
+import { resolveEvidenceUrl, resolveEvidenceThumbUrl } from '../lib/api';
 import { formatDateTime, severidadColor } from '../lib/utils';
 import type { DesvioBorrador, DesvioBorradorEvidencia } from '../types';
 
-function getEvidenceSource(evidencia?: DesvioBorradorEvidencia): string {
-  if (!evidencia) return '';
-  if (evidencia.path) {
-    return evidencia.bucket ? `storage://${evidencia.bucket}/${evidencia.path}` : evidencia.path;
-  }
-  return evidencia.url || '';
-}
-
 function EvidencePreview({ evidencia, alt }: { evidencia?: DesvioBorradorEvidencia; alt: string }) {
-  const [url, setUrl] = useState('');
-  const source = getEvidenceSource(evidencia);
+  const [thumbUrl, setThumbUrl] = useState('');
+  const [fullUrl, setFullUrl] = useState('');
 
   useEffect(() => {
     let cancelled = false;
-    if (!source) {
-      setUrl('');
-      return;
-    }
 
     const load = async () => {
+      if (!evidencia) {
+        setThumbUrl('');
+        setFullUrl('');
+        return;
+      }
+
       try {
-        const resolved = await resolveEvidenceUrl(source);
-        if (!cancelled) setUrl(resolved);
+        const thumb = await resolveEvidenceThumbUrl(evidencia);
+        if (!cancelled) setThumbUrl(thumb);
       } catch {
-        if (!cancelled) setUrl('');
+        if (!cancelled) setThumbUrl('');
+      }
+
+      try {
+        const full = await resolveEvidenceUrl(evidencia.path || evidencia.url);
+        if (!cancelled) setFullUrl(full);
+      } catch {
+        if (!cancelled) setFullUrl('');
       }
     };
 
@@ -39,27 +40,44 @@ function EvidencePreview({ evidencia, alt }: { evidencia?: DesvioBorradorEvidenc
     return () => {
       cancelled = true;
     };
-  }, [source]);
+  }, [evidencia]);
 
-  if (!source) {
+  if (!evidencia || (!evidencia.path && !evidencia.url)) {
     return <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded border border-gray-200 bg-gray-50 text-xs text-gray-400">Sin foto</div>;
   }
 
-  if (!url) {
+  const displayUrl = thumbUrl || fullUrl;
+  if (!displayUrl) {
     return <div className="h-24 w-24 shrink-0 rounded border border-gray-200 bg-gray-100" />;
   }
 
   return (
-    <a href={url} target="_blank" rel="noreferrer" className="block h-24 w-24 shrink-0">
-      <img src={url} alt={alt} className="h-24 w-24 rounded border border-gray-300 object-cover" />
+    <a href={fullUrl || displayUrl} target="_blank" rel="noreferrer" className="block h-24 w-24 shrink-0">
+      <img src={displayUrl} alt={alt} className="h-24 w-24 rounded border border-gray-300 object-cover" />
     </a>
   );
 }
 
-function firstEvidence(borrador: DesvioBorrador): DesvioBorradorEvidencia | undefined {
-  return (borrador.evidencias_json || []).find((item) => item.tipo === 'image' || item.mime_type?.startsWith('image/'))
-    || (borrador.evidencias_json || [])[0];
+function EvidenceGallery({ evidencias, alt }: { evidencias: DesvioBorradorEvidencia[]; alt: string }) {
+  const images = useMemo(() => evidencias.filter((e) => e.tipo === 'image' || e.mime_type?.startsWith('image/')), [evidencias]);
+
+  if (images.length === 0) {
+    return <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded border border-gray-200 bg-gray-50 text-xs text-gray-400">Sin foto</div>;
+  }
+
+  if (images.length === 1) {
+    return <EvidencePreview evidencia={images[0]} alt={alt} />;
+  }
+
+  return (
+    <div className="flex gap-2 overflow-x-auto pb-1">
+      {images.map((evidencia, idx) => (
+        <EvidencePreview key={idx} evidencia={evidencia} alt={`${alt} ${idx + 1}`} />
+      ))}
+    </div>
+  );
 }
+
 
 export default function RevisionDesvios() {
   const navigate = useNavigate();
@@ -135,13 +153,12 @@ export default function RevisionDesvios() {
 
               <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
                 {items.map((borrador) => {
-                  const evidencia = firstEvidence(borrador);
                   const busy = busyId === borrador.id;
 
                   return (
                     <article key={borrador.id} className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
                       <div className="mb-4 flex items-start gap-4">
-                        <EvidencePreview evidencia={evidencia} alt={borrador.descripcion} />
+                        <EvidenceGallery evidencias={borrador.evidencias_json || []} alt={borrador.descripcion} />
                         <div className="min-w-0 flex-1">
                           <div className="mb-2 flex flex-wrap items-center gap-2">
                             <span className="rounded bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700">

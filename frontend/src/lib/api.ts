@@ -272,6 +272,22 @@ export async function resolveEvidenceUrl(value?: string | null): Promise<string>
   return getSignedUrl(storage.path, storage.bucket);
 }
 
+export async function resolveEvidenceThumbUrl(evidencia?: { thumb_path?: string; path?: string; bucket?: string; url?: string }): Promise<string> {
+  if (!evidencia) return '';
+  if (evidencia.thumb_path) {
+    try {
+      const bucket = evidencia.bucket || getEvidenceBucket(evidencia.thumb_path);
+      return getSignedUrl(evidencia.thumb_path, bucket);
+    } catch {
+      return '';
+    }
+  }
+  if (evidencia.path) {
+    return resolveEvidenceUrl(evidencia.path);
+  }
+  return evidencia.url || '';
+}
+
 export async function enviarMensajeInterno(input: {
   idGestion: string;
   comentario: string;
