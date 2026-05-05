@@ -671,8 +671,34 @@ async def check_expired_audit_sessions():
                 # Backward compatibility for existing naive timestamps stored as local time.
                 elapsed_minutes = (now_local - last_update).total_seconds() / 60
 
-            # After 60 minutes, auto-omit the point and advance
+            checklist = sheets.get_checklist()
+            total_puntos = sesion.total_puntos or len(checklist)
+            if sesion.punto_actual >= total_puntos or sesion.punto_actual >= len(checklist):
+                logger.info(f"Closing stale completed session without notification: {sesion.id_sesion}")
+                sheets.update_sesion(
+                    id_sesion=sesion.id_sesion,
+                    estado="completa",
+                    timestamp_ultimo_punto=now_utc.isoformat(),
+                    punto_actual=sesion.punto_actual,
+                    omitidos_json=sesion.omitidos_json,
+                )
+                _last_reminder_sent.pop(sesion.id_sesion, None)
+                continue
+
             if elapsed_minutes >= 60:
+                logger.info(f"Closing stale session after inactivity without notification: {sesion.id_sesion}")
+                sheets.update_sesion(
+                    id_sesion=sesion.id_sesion,
+                    estado="completa",
+                    timestamp_ultimo_punto=now_utc.isoformat(),
+                    punto_actual=sesion.punto_actual,
+                    omitidos_json=sesion.omitidos_json,
+                )
+                _last_reminder_sent.pop(sesion.id_sesion, None)
+                continue
+
+            # Legacy auto-omit branch kept unreachable by the silent close above.
+            if False:
                 logger.info(f"Auto-omitting point due to inactivity: {sesion.id_sesion}")
                 omitidos = _json_list(sesion.omitidos_json)
                 omitidos.append(sesion.punto_actual)
