@@ -150,6 +150,19 @@ def test_validate_respuesta_requires_photo_for_gondola():
     assert "foto" in result["razon"].lower()
 
 
+def test_validate_respuesta_accepts_positive_no_deviation_without_photo():
+    router = ConversationRouter.__new__(ConversationRouter)
+
+    result = router._validate_respuesta_completitud(
+        bloque_id="GOND",
+        respuesta_consolidada="Todo ok, sin desvio.",
+        media_urls=[],
+        mensajes=[],
+    )
+
+    assert result["es_valida"] is True
+
+
 def test_respuesta_summary_counts_media_and_text():
     summary = ConversationRouter._format_respuesta_collection_summary(
         mensajes=[
@@ -207,6 +220,26 @@ def test_perfumeria_fallback_ignores_ok_response():
     )
 
     assert desvio is None
+
+
+def test_perfumeria_fallback_ignores_no_deviation_phrase():
+    desvio = ConversationRouter._build_perfumeria_fallback_desvio(
+        "ATENCION",
+        "no hay desvio",
+    )
+
+    assert desvio is None
+
+
+def test_human_finish_intent_accepts_natural_variants():
+    assert ConversationRouter._is_finish_intent("ya terminé")
+    assert ConversationRouter._is_finish_intent("pasemos al siguiente")
+    assert ConversationRouter._is_finish_intent("nada más")
+
+
+def test_human_cancel_intent_accepts_natural_variants():
+    assert ConversationRouter._is_cancel_intent("me equivoqué")
+    assert ConversationRouter._is_cancel_intent("borrar esto")
 
 
 def test_first_collector_image_uses_image_path():

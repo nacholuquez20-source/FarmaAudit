@@ -10,6 +10,8 @@ import uuid
 
 import asyncio
 
+import unicodedata
+
 from datetime import datetime, timedelta, timezone
 
 from typing import Any, List, Optional, Tuple, Dict
@@ -483,6 +485,113 @@ class ConversationRouter:
             error_mensaje=error_mensaje,
         )
 
+    @staticmethod
+    def _normalize_intent_text(text: str) -> str:
+        """Normalize short WhatsApp commands without caring about accents/case."""
+        normalized = unicodedata.normalize("NFD", text or "")
+        normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+        normalized = normalized.lower().strip()
+        for char in ",.;:!?¡¿'\"()[]{}":
+            normalized = normalized.replace(char, " ")
+        return " ".join(normalized.split())
+
+    @classmethod
+    def _is_finish_intent(cls, text: str) -> bool:
+        normalized = cls._normalize_intent_text(text)
+        if not normalized:
+            return False
+        exact = {
+            "listo", "siguiente", "terminar", "done", "finish", "fin",
+            "ya esta", "ya esta todo", "eso es todo", "nada mas",
+            "termine", "termine todo", "finalice", "continuar",
+            "continua", "continuemos", "sigamos", "pasemos",
+            "pasemos al siguiente", "pasar al siguiente",
+        }
+        if normalized in exact:
+            return True
+        starts = (
+            "listo ",
+            "ya termine",
+            "termine ",
+            "sigamos ",
+            "continuemos ",
+            "pasemos ",
+        )
+        return normalized.startswith(starts)
+
+    @classmethod
+    def _is_cancel_intent(cls, text: str) -> bool:
+        normalized = cls._normalize_intent_text(text)
+        if not normalized:
+            return False
+        exact = {
+            "cancelar", "cancela", "descartar", "descarta", "anular",
+            "borrar", "borrar esto", "borra esto", "olvidalo",
+            "me equivoque", "me confundi", "no era aca", "no era este bloque",
+        }
+        return normalized in exact or normalized.startswith(("cancelar ", "descartar ", "borra ", "borrar "))
+
+    @classmethod
+    def _is_positive_no_deviation_text(cls, text: str) -> bool:
+        normalized = cls._normalize_intent_text(text)
+        if not normalized:
+            return False
+        positive_markers = [
+            "todo ok", "todo correcto", "todo bien", "esta ok",
+            "esta correcto", "esta correcta", "sin problemas",
+            "sin desvio", "sin desvios", "no hay desvio", "no hay desvios",
+            "no hay observaciones", "no se observa nada", "sin novedades",
+        ]
+        has_positive = any(marker in normalized for marker in positive_markers)
+        if not has_positive:
+            return False
+        contrast_markers = [" pero ", " aunque ", " salvo ", " excepto ", " sin embargo "]
+        return not any(marker in f" {normalized} " for marker in contrast_markers)
+
+    async def _discard_respuesta_collection(
+        self,
+        respuesta_activa: RespuestaPregunta,
+        conv: Conversacion,
+        payload: WhatsAppPayload,
+        meta_client: MetaClient,
+    ) -> str:
+        """Discard the active collected answer and return to the previous state."""
+        context = self._safe_json_loads(conv.ultimo_mensaje)
+        return_state_raw = context.get("return_state", ConversationState.EN_BLOQUE.value)
+        try:
+            return_state = ConversationState(str(return_state_raw))
+        except ValueError:
+            return_state = ConversationState.EN_BLOQUE
+
+        self.sheets.update_respuesta_pregunta(
+            respuesta_activa.id,
+            estado="descartada",
+            razon_descarte="cancelada_por_auditor",
+            timestamp_ultimo_mensaje=datetime.now(timezone.utc).isoformat(),
+        )
+        self.sheets.create_respuesta_audit_log(
+            respuesta_activa.id,
+            "descartada_por_auditor",
+            {"telefono": payload.telefono},
+        )
+        self.sheets.update_conversacion(
+            telefono=payload.telefono,
+            estado=return_state,
+            id_pendiente=respuesta_activa.id_sesion,
+            id_respuesta_actual="",
+        )
+        if context.get("quoted_clarification"):
+            await meta_client.send_text(
+                payload.telefono,
+                "Listo, descarte esa aclaracion y mantuve la auditoria en curso.",
+            )
+        else:
+            await meta_client.send_text(
+                payload.telefono,
+                "Listo, descarte lo ultimo y seguimos en este bloque. Podes enviar la respuesta correcta.",
+            )
+        return "respuesta_descartada_por_auditor"
+
     async def _try_start_respuesta_collection(
         self,
         payload: WhatsAppPayload,
@@ -494,7 +603,7 @@ class ConversationRouter:
         """Start multi-message collection; return True when the message was handled."""
         if getattr(payload, "from_collector", False):
             return False
-        if payload.tipo == "text" and (payload.contenido or "").strip().upper() in {"PAUSAR", "SALTAR", "SKIP"}:
+        if payload.tipo == "text" and self._normalize_intent_text(payload.contenido or "") in {"pausar", "saltar", "skip"}:
             return False
 
         try:
@@ -610,8 +719,15 @@ class ConversationRouter:
                 )
                 return "quoted_context_during_active_collection"
 
-        cleaned = (payload.contenido or "").strip().upper()
-        if cleaned in {"LISTO", "SIGUIENTE", "TERMINAR", "DONE", "FINISH"}:
+        if payload.tipo == "text" and self._is_cancel_intent(payload.contenido or ""):
+            return await self._discard_respuesta_collection(
+                respuesta_activa,
+                conv,
+                payload,
+                meta_client,
+            )
+
+        if payload.tipo == "text" and self._is_finish_intent(payload.contenido or ""):
             return await self._complete_respuesta_collection(
                 respuesta_activa,
                 conv,
@@ -642,6 +758,8 @@ class ConversationRouter:
     ) -> dict:
         regla = RESPUESTA_VALIDACION.get(bloque_id, {"min_texto": 5, "requiere_foto": False, "requiere_audio": False})
         if force:
+            return {"es_valida": True}
+        if self._is_positive_no_deviation_text(respuesta_consolidada):
             return {"es_valida": True}
         if len(respuesta_consolidada.strip()) < regla["min_texto"]:
             return {"es_valida": False, "razon": f"Tu respuesta es muy corta. Minimo {regla['min_texto']} caracteres."}
@@ -2705,7 +2823,7 @@ EDITAR → Hacer cambios""",
     def _build_perfumeria_fallback_desvio(bloque_nombre: str, respuesta_auditor: str) -> Optional[Dict[str, str]]:
         """Create a conservative fallback finding when the text clearly describes a problem."""
         respuesta = (respuesta_auditor or "").strip()
-        normalized = respuesta.lower()
+        normalized = ConversationRouter._normalize_intent_text(respuesta)
         if len(normalized) < 4:
             return None
 
@@ -2728,7 +2846,9 @@ EDITAR → Hacer cambios""",
 
         has_negative = any(marker in normalized for marker in negative_markers)
         has_positive = any(marker in normalized for marker in positive_markers)
-        if not has_negative or (has_positive and not has_negative):
+        if has_positive and ConversationRouter._is_positive_no_deviation_text(respuesta):
+            return None
+        if not has_negative:
             return None
 
         severity = "Media"
