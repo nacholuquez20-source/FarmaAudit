@@ -47,8 +47,8 @@ export function AppLayout({ children, title, showAdmin = true }: AppLayoutProps)
                     <Link to="/dashboard" className="text-gray-600 hover:text-gray-900 hover:underline">
                       Dashboard
                     </Link>
-                    <Link to="/desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
-                      Desvios
+                    <Link to="/gestion-desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
+                      Gestion
                     </Link>
                     <Link to="/revision-desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
                       Revision
@@ -65,8 +65,8 @@ export function AppLayout({ children, title, showAdmin = true }: AppLayoutProps)
                 )}
                 {role === 'auditor' && (
                   <>
-                    <Link to="/desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
-                      Desvios
+                    <Link to="/gestion-desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
+                      Gestion
                     </Link>
                     <Link to="/revision-desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
                       Revision

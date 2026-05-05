@@ -9,6 +9,7 @@ const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Desvios = lazy(() => import('./pages/Desvios'));
 const DesvioDetail = lazy(() => import('./pages/DesvioDetail'));
+const DesviosGestion = lazy(() => import('./pages/DesviosGestion'));
 const RevisionDesvios = lazy(() => import('./pages/RevisionDesvios'));
 const MisDesvios = lazy(() => import('./pages/MisDesvios'));
 const Sucursales = lazy(() => import('./pages/Sucursales'));
@@ -150,6 +151,15 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <DesvioDetail />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/gestion-desvios"
+            element={
+              <ProtectedRoute allowRoles={['admin', 'auditor']}>
+                <DesviosGestion />
               </ProtectedRoute>
             }
           />
