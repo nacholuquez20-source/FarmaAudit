@@ -27,7 +27,10 @@ function handleApiError(error: { message?: string }): string {
 }
 
 function getBotApiUrl(): string {
-  return String(import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+  const raw = String(import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
+  if (!raw) return '';
+  if (/^https?:\/\//i.test(raw)) return raw;
+  return `https://${raw}`;
 }
 
 export async function getSucursales(): Promise<Sucursal[]> {

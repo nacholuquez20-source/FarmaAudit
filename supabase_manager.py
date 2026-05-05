@@ -1077,7 +1077,8 @@ class SupabaseManager:
         try:
             response = self.client.table("sesiones_auditoria").select("*").execute()
             expiradas = []
-            now = datetime.utcnow()
+            now_utc = datetime.now(timezone.utc)
+            now_naive = datetime.utcnow()
 
             active_states = {
                 "en_curso", "en_bloque", "confirmando_bloque", "stock_loop",
