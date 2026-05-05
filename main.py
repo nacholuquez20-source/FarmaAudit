@@ -49,6 +49,13 @@ class EncargadoNotificationRequest(BaseModel):
     sucursal: str | None = None
 
 
+class InternalMessageRequest(BaseModel):
+    comentario: str
+    origen: str = "auditor"
+    actor_id: str | None = None
+    actor_nombre: str | None = None
+
+
 class DesvioBorradorDiscardRequest(BaseModel):
     reason: str | None = None
 
@@ -228,6 +235,47 @@ async def _require_admin_or_auditor(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="Invalid Authorization token")
 
 
+async def _require_profile(request: Request) -> dict:
+    """Validate Supabase JWT and return the authenticated panel profile."""
+    auth_header = request.headers.get("authorization", "")
+    token = auth_header.replace("Bearer ", "", 1).strip() if auth_header.lower().startswith("bearer ") else ""
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing Authorization bearer token")
+
+    client = _get_supabase_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="Supabase is not configured")
+
+    try:
+        user_response = client.auth.get_user(token)
+        user = getattr(user_response, "user", None)
+        user_id = getattr(user, "id", None)
+        if not user_id:
+            raise ValueError("Invalid token")
+
+        profile_response = (
+            client.table("profiles")
+            .select("id, role, nombre, id_sucursal")
+            .eq("id", user_id)
+            .maybe_single()
+            .execute()
+        )
+        profile = profile_response.data or {}
+        if not profile.get("role"):
+            raise HTTPException(status_code=403, detail="Profile not found")
+        return {
+            "id": user_id,
+            "role": profile.get("role"),
+            "nombre": profile.get("nombre"),
+            "id_sucursal": profile.get("id_sucursal"),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning(f"Profile auth validation failed: {exc}")
+        raise HTTPException(status_code=401, detail="Invalid Authorization token")
+
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize background jobs on startup."""
@@ -327,6 +375,57 @@ async def send_encargado_notification(payload: EncargadoNotificationRequest):
         raise HTTPException(status_code=502, detail="No se pudo enviar el WhatsApp")
 
     return {"status": "ok"}
+
+
+@app.post("/api/gestion/{id_gestion}/mensajes")
+async def create_internal_message(id_gestion: str, payload: InternalMessageRequest, request: Request):
+    """Create an internal timeline message for one managed deviation."""
+    profile = await _require_profile(request)
+    comentario = (payload.comentario or "").strip()
+    if not comentario:
+        raise HTTPException(status_code=400, detail="comentario is required")
+
+    if payload.origen not in {"auditor", "sucursal"}:
+        raise HTTPException(status_code=400, detail="origen must be auditor or sucursal")
+
+    client = _get_supabase_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="Supabase is not configured")
+
+    gestion_response = (
+        client.table("gestion")
+        .select("id_gestion, id_sucursal")
+        .eq("id_gestion", id_gestion)
+        .maybe_single()
+        .execute()
+    )
+    gestion = gestion_response.data
+    if not gestion:
+        raise HTTPException(status_code=404, detail="Gestion not found")
+
+    if profile["role"] == "sucursal" and profile.get("id_sucursal") != gestion.get("id_sucursal"):
+        raise HTTPException(status_code=403, detail="No autorizado para esta gestion")
+
+    actor_id = payload.actor_id or profile["id"]
+    actor_nombre = payload.actor_nombre or profile.get("nombre") or "Usuario"
+    event_response = (
+        client.table("desvio_eventos")
+        .insert({
+            "id_gestion": id_gestion,
+            "tipo": "mensaje",
+            "comentario": comentario,
+            "actor_id": actor_id,
+            "actor_nombre": actor_nombre,
+            "metadata": {
+                "origen": payload.origen,
+                "leido_por_auditor": payload.origen == "auditor",
+                "leido_por_sucursal": payload.origen == "sucursal",
+            },
+        })
+        .execute()
+    )
+    data = event_response.data or []
+    return data[0] if data else {"status": "ok"}
 
 
 @app.api_route("/api/desvios-borrador/{draft_id}/approve", methods=["POST", "GET", "OPTIONS"])

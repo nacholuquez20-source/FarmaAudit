@@ -295,6 +295,27 @@ export async function enviarMensajeInterno(input: {
   actorId: string;
   actorNombre: string;
 }): Promise<DesvioEvento> {
+  const apiUrl = getBotApiUrl();
+  if (apiUrl) {
+    const response = await fetch(`${apiUrl}/api/gestion/${encodeURIComponent(input.idGestion)}/mensajes`, {
+      method: 'POST',
+      headers: await getAuthHeaders(),
+      body: JSON.stringify({
+        comentario: input.comentario,
+        origen: input.origen,
+        actor_id: input.actorId || undefined,
+        actor_nombre: input.actorNombre || undefined,
+      }),
+    });
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      throw new Error(body?.detail || 'No se pudo enviar el comentario.');
+    }
+
+    return response.json();
+  }
+
   return createDesvioEvento({
     id_gestion: input.idGestion,
     tipo: 'mensaje',
