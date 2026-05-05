@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { AppLayout } from '../components/AppLayout';
 import { ChatMensajes } from '../components/ChatMensajes';
@@ -8,7 +8,7 @@ import { FeedbackState } from '../components/FeedbackState';
 import { useAuth } from '../hooks/useAuth';
 import { useDesvioDetail } from '../hooks/useDesvioDetail';
 import type { Gestion } from '../types';
-import { notificarEncargado } from '../lib/api';
+import { notificarEncargado, resolveEvidenceUrl } from '../lib/api';
 import { formatDate, formatDateTime, gestionStateColor, gestionStateLabel, severidadColor, getWhatsappUrl } from '../lib/utils';
 
 function getDueState(gestion: Gestion): { label: string; className: string } {
@@ -37,6 +37,7 @@ export default function DesvioDetail() {
   const [resolutionComment, setResolutionComment] = useState('');
   const [evidenceText, setEvidenceText] = useState('');
   const [evidenceUrl, setEvidenceUrl] = useState('');
+  const [resolvedReporteFotoUrl, setResolvedReporteFotoUrl] = useState('');
 
   const whatsappUrl = useMemo(() => (gestion ? getWhatsappUrl(gestion) : null), [gestion]);
   const hasResolution = useMemo(
@@ -47,6 +48,29 @@ export default function DesvioDetail() {
   const actorName = profile?.nombre || user?.email || null;
   const canManageEstado = role === 'admin' || role === 'auditor';
   const backPath = role === 'sucursal' ? '/mis-desvios' : '/desvios';
+
+  useEffect(() => {
+    let cancelled = false;
+    const source = reporte?.foto_url;
+    if (!source) {
+      setResolvedReporteFotoUrl('');
+      return;
+    }
+
+    const loadEvidenceUrl = async () => {
+      try {
+        const resolved = await resolveEvidenceUrl(source);
+        if (!cancelled) setResolvedReporteFotoUrl(resolved);
+      } catch {
+        if (!cancelled) setResolvedReporteFotoUrl('');
+      }
+    };
+
+    void loadEvidenceUrl();
+    return () => {
+      cancelled = true;
+    };
+  }, [reporte?.foto_url]);
 
   const addTimelineEvent = async (event: Omit<Parameters<typeof addEvento>[0], 'actor_id' | 'actor_nombre'>) => {
     return addEvento({
@@ -479,12 +503,12 @@ export default function DesvioDetail() {
           <h2 className="mb-4 text-lg font-semibold text-gray-900">Evidencias</h2>
           {reporte?.foto_url ? (
             <a
-              href={reporte.foto_url}
+              href={resolvedReporteFotoUrl || reporte.foto_url}
               target="_blank"
               rel="noreferrer"
               className="block rounded-lg border border-gray-200 p-4 text-sm font-medium text-blue-600 hover:bg-blue-50"
             >
-              Abrir foto del reporte
+              {resolvedReporteFotoUrl ? 'Abrir foto del reporte' : 'Cargando foto del reporte...'}
             </a>
           ) : (
             <FeedbackState title="No hay evidencias asociadas todavia." />
