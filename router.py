@@ -3266,7 +3266,12 @@ EDITAR → Hacer cambios""",
             "inadecuada", "inadecuado", "insuficiente", "problema", "problemas",
             "deficiencia", "deficiente", "incorrecto", "incorrecta", "mal ",
             "poca variedad", "poco stock", "bajo stock", "vacio", "vacío",
-            "ausencia", "no funciona", "desvio", "desvío",
+            "ausencia", "no funciona", "desvio", "desvío", "tirado", "tirados",
+            "tirada", "tiradas", "mal presentado", "mal presentados",
+            "mal presentada", "mal presentadas", "desprolijo", "desprolija",
+            "desprolijos", "desprolijas", "fuera de lugar", "sin precio",
+            "sin cartel", "no tiene", "no tienen", "mezclado", "mezclados",
+            "mezclada", "mezcladas",
         ]
         positive_markers = [
             "todo ok", "todo correcto", "todo bien", "esta ok", "está ok",
@@ -3294,6 +3299,27 @@ EDITAR → Hacer cambios""",
             "timestamp": ConversationRouter._utc_now_iso(),
             "origen": "fallback",
         }
+
+    @staticmethod
+    def _parse_llm_json_array(text: str) -> list:
+        """Parse a JSON array even when the model wraps it in markdown fences."""
+        raw = (text or "").strip()
+        if raw.startswith("```"):
+            lines = raw.splitlines()
+            if lines and lines[0].strip().startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip().startswith("```"):
+                lines = lines[:-1]
+            raw = "\n".join(lines).strip()
+
+        if not raw.startswith("["):
+            start = raw.find("[")
+            end = raw.rfind("]")
+            if start >= 0 and end > start:
+                raw = raw[start:end + 1]
+
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, list) else []
 
     async def _extract_perfumeria_deviations(
         self,
@@ -3338,7 +3364,7 @@ EJEMPLO SI HAY DESVIOS:
             respuesta_texto = response.content[0].text.strip()
 
             # Parse JSON response
-            desvios_data = json.loads(respuesta_texto)
+            desvios_data = self._parse_llm_json_array(respuesta_texto)
 
             # Convert to hallazgo format
             desvios = []

@@ -364,13 +364,17 @@ class SupabaseManager:
     def get_expired_pendientes(self) -> List[Pendiente]:
         """Get all expired pending records."""
         try:
-            now = datetime.utcnow()
+            now_utc = datetime.now(timezone.utc)
+            now_naive = datetime.utcnow()
             response = self.client.table("pendientes").select("*").execute()
             expired = []
 
             for row in response.data or []:
                 expira_en = self._parse_datetime(row.get("expira_en"))
-                if expira_en and expira_en < now:
+                if not expira_en:
+                    continue
+                now = now_utc if expira_en.tzinfo is not None else now_naive
+                if expira_en < now:
                     expired.append(Pendiente(
                         id_temp=row.get("id_temp", ""),
                         telefono_auditor=str(row.get("telefono_auditor", "")),
@@ -1089,9 +1093,9 @@ class SupabaseManager:
                         continue
 
                     if ts.tzinfo is not None:
-                        elapsed_seconds = (now - ts.astimezone(timezone.utc)).total_seconds()
+                        elapsed_seconds = (now_utc - ts.astimezone(timezone.utc)).total_seconds()
                     else:
-                        elapsed_seconds = (now - ts).total_seconds()
+                        elapsed_seconds = (now_naive - ts).total_seconds()
 
                     if elapsed_seconds > timeout_min * 60:
                         expiradas.append(SesionAuditoria(

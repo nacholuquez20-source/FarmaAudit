@@ -232,6 +232,35 @@ def test_perfumeria_fallback_ignores_no_deviation_phrase():
     assert desvio is None
 
 
+def test_perfumeria_fallback_detects_mal_presentados():
+    desvio = ConversationRouter._build_perfumeria_fallback_desvio(
+        "GONDOLAS Y PUNTERAS",
+        "Las punteras tenian cosmeticos tirados mal presentados",
+    )
+
+    assert desvio is not None
+    assert "tirados" in desvio["desvio"]
+
+
+def test_parse_llm_json_array_accepts_markdown_fence():
+    parsed = ConversationRouter._parse_llm_json_array("""```json
+[
+  {"desvio": "Vidriera desordenada", "severidad": "Media"}
+]
+```""")
+
+    assert parsed[0]["desvio"] == "Vidriera desordenada"
+
+
+def test_parse_llm_json_array_accepts_empty_markdown_fence():
+    parsed = ConversationRouter._parse_llm_json_array("""```json
+[
+]
+```""")
+
+    assert parsed == []
+
+
 def test_human_finish_intent_accepts_natural_variants():
     assert ConversationRouter._is_finish_intent("ya terminé")
     assert ConversationRouter._is_finish_intent("pasemos al siguiente")

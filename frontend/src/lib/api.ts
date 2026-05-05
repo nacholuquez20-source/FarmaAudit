@@ -344,10 +344,17 @@ export async function approveDesvioBorrador(id: string): Promise<{ id_gestion: s
     throw new Error('Falta configurar VITE_API_URL con la URL del bot.');
   }
 
-  const response = await fetch(`${apiUrl}/api/desvios-borrador/${id}/approve`, {
+  const url = `${apiUrl}/api/desvios-borrador/${id}/approve`;
+  let response = await fetch(url, {
     method: 'POST',
     headers: await getAuthHeaders(),
   });
+  if (response.status === 405) {
+    response = await fetch(url, {
+      method: 'GET',
+      headers: await getAuthHeaders(),
+    });
+  }
 
   if (!response.ok) {
     throw new Error('No se pudo aprobar el borrador.');
@@ -362,11 +369,18 @@ export async function discardDesvioBorrador(id: string, reason = ''): Promise<vo
     throw new Error('Falta configurar VITE_API_URL con la URL del bot.');
   }
 
-  const response = await fetch(`${apiUrl}/api/desvios-borrador/${id}/discard`, {
+  const url = `${apiUrl}/api/desvios-borrador/${id}/discard`;
+  let response = await fetch(url, {
     method: 'POST',
     headers: await getAuthHeaders(),
     body: JSON.stringify({ reason }),
   });
+  if (response.status === 405) {
+    response = await fetch(url, {
+      method: 'GET',
+      headers: await getAuthHeaders(),
+    });
+  }
 
   if (!response.ok) {
     throw new Error('No se pudo descartar el borrador.');

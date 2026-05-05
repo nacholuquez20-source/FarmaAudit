@@ -307,9 +307,11 @@ async def send_encargado_notification(payload: EncargadoNotificationRequest):
     return {"status": "ok"}
 
 
-@app.post("/api/desvios-borrador/{draft_id}/approve")
+@app.api_route("/api/desvios-borrador/{draft_id}/approve", methods=["POST", "GET", "OPTIONS"])
 async def approve_desvio_borrador(draft_id: str, request: Request):
     """Approve a WhatsApp draft and convert it to gestion/reportes."""
+    if request.method == "OPTIONS":
+        return {"status": "ok"}
     profile = await _require_admin_or_auditor(request)
     try:
         result = get_sheets().approve_desvio_borrador(draft_id, str(profile["id"]))
@@ -321,15 +323,21 @@ async def approve_desvio_borrador(draft_id: str, request: Request):
         raise HTTPException(status_code=500, detail="No se pudo aprobar el borrador")
 
 
-@app.post("/api/desvios-borrador/{draft_id}/discard")
-async def discard_desvio_borrador(draft_id: str, payload: DesvioBorradorDiscardRequest, request: Request):
+@app.api_route("/api/desvios-borrador/{draft_id}/discard", methods=["POST", "GET", "OPTIONS"])
+async def discard_desvio_borrador(
+    draft_id: str,
+    request: Request,
+    payload: DesvioBorradorDiscardRequest | None = None,
+):
     """Discard a WhatsApp draft without deleting the audit trail."""
+    if request.method == "OPTIONS":
+        return {"status": "ok"}
     profile = await _require_admin_or_auditor(request)
     try:
         result = get_sheets().discard_desvio_borrador(
             draft_id,
             str(profile["id"]),
-            payload.reason or "",
+            (payload.reason if payload else "") or "",
         )
         return {"status": "ok", **result}
     except ValueError as exc:
