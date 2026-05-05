@@ -195,3 +195,13 @@ def test_perfumeria_fallback_ignores_ok_response():
     )
 
     assert desvio is None
+
+
+def test_first_collector_image_uses_image_path():
+    media = ConversationRouter._first_collector_image([
+        {"tipo": "audio", "path": "auditoria/ses/resp/audio.ogg", "mime_type": "audio/ogg"},
+        {"tipo": "image", "path": "auditoria/ses/resp/foto.jpg", "mime_type": "image/jpeg"},
+    ])
+
+    assert media is not None
+    assert media["path"].endswith("foto.jpg")

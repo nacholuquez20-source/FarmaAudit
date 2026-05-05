@@ -454,6 +454,7 @@ class SupabaseManager:
         bloque_nombre: str,
         descripcion: str,
         severidad: str,
+        evidencia: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, str]:
         """Create Reporte + Gestion for an extracted perfumery finding."""
         try:
@@ -472,6 +473,8 @@ class SupabaseManager:
             sucursal_nombre = sucursal.nombre if sucursal else sucursal_id
             hoy = date.today().isoformat()
             hora = datetime.utcnow().strftime("%H:%M")
+            evidencia_path = str(evidencia.get("path") or "") if evidencia else ""
+            evidencia_url = f"storage://auditoria-respuestas/{evidencia_path}" if evidencia_path else ""
 
             reporte = Reporte(
                 id="",
@@ -485,6 +488,7 @@ class SupabaseManager:
                 subitem="",
                 descripcion=descripcion_limpia,
                 severidad=severidad_enum,
+                foto_url=evidencia_url,
                 creado_por_audio=False,
             )
             reporte_id = self.create_reporte(reporte)
@@ -504,6 +508,22 @@ class SupabaseManager:
                 estado=GestionState.ABIERTA,
             )
             gestion_id = self.create_gestion(gestion)
+
+            if evidencia_path:
+                self.save_encargado_evento(
+                    id_gestion=gestion_id,
+                    tipo="evidencia",
+                    contenido="Evidencia enviada por WhatsApp durante la auditoria.",
+                    actor_nombre=auditor_nombre,
+                    metadata={
+                        "origen": "auditor",
+                        "foto_path": evidencia_path,
+                        "bucket": "auditoria-respuestas",
+                        "mime_type": evidencia.get("mime_type", ""),
+                        "canal": "whatsapp",
+                    },
+                )
+
             logger.info(f"Created perfumeria desvio reporte={reporte_id} gestion={gestion_id} sesion={auditoria_id}")
             return {"id_reporte": reporte_id, "id_gestion": gestion_id}
         except Exception as e:

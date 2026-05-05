@@ -1,11 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { useDesvios } from '../hooks/useDesvios';
 import { useReportes } from '../hooks/useReportes';
 import type { Gestion, GestionState, Severidad } from '../types';
-import { formatDate, gestionStateColor, gestionStateLabel, severidadColor, getWhatsappUrl } from '../lib/utils';
+import { resolveEvidenceUrl } from '../lib/api';
+import { formatDate, gestionStateColor, gestionStateLabel, severidadColor } from '../lib/utils';
 
 const severidades: Severidad[] = ['Alta', 'Media', 'Baja'];
 const estados: GestionState[] = ['Abierta', 'En_proceso', 'Resuelta', 'Vencida', 'Cerrada'];
@@ -19,9 +20,52 @@ function getDisplayDate(gestion: Gestion): string {
   return gestion.created_at || gestion.updated_at || gestion.plazo_fecha;
 }
 
+function EvidenceThumbnail({ source, alt }: { source?: string | null; alt: string }) {
+  const [url, setUrl] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!source) {
+      setUrl('');
+      return;
+    }
+
+    const loadUrl = async () => {
+      try {
+        const resolved = await resolveEvidenceUrl(source);
+        if (!cancelled) setUrl(resolved);
+      } catch {
+        if (!cancelled) setUrl('');
+      }
+    };
+
+    void loadUrl();
+    return () => {
+      cancelled = true;
+    };
+  }, [source]);
+
+  if (!source) return <span className="text-xs text-gray-400">Sin foto</span>;
+
+  if (!url) {
+    return <div className="h-14 w-14 shrink-0 rounded border border-gray-200 bg-gray-100" title="Cargando evidencia" />;
+  }
+
+  return (
+    <a href={url} target="_blank" rel="noreferrer" className="block h-14 w-14 shrink-0">
+      <img
+        src={url}
+        alt={alt}
+        className="h-14 w-14 rounded border border-gray-300 object-cover transition hover:scale-150"
+        title="Abrir evidencia"
+      />
+    </a>
+  );
+}
+
 export default function Desvios() {
   const navigate = useNavigate();
-  const { desvios, allDesvios, loading, error, filters, setFilters, resetFilters, sucursales, sucursalesResumen, isOverdue } = useDesvios();
+  const { desvios, allDesvios, loading, error, filters, setFilters, resetFilters, sucursalesResumen, isOverdue } = useDesvios();
   const { reportes } = useReportes();
   const [selectedSucursal, setSelectedSucursal] = useState<string | null>(null);
 
@@ -194,11 +238,10 @@ export default function Desvios() {
                     <tr>
                       <th className="px-4 py-3 text-left text-sm font-semibold">Fecha</th>
                       <th className="px-4 py-3 text-left text-sm font-semibold">Área</th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold">Descripción</th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold">Descripción y evidencia</th>
                       <th className="px-4 py-3 text-left text-sm font-semibold">Severidad</th>
                       <th className="px-4 py-3 text-left text-sm font-semibold">Estado</th>
                       <th className="px-4 py-3 text-left text-sm font-semibold">Vencimiento</th>
-                      <th className="px-4 py-3 text-center text-sm font-semibold">Foto</th>
                       <th className="px-4 py-3 text-right text-sm font-semibold">Acción</th>
                     </tr>
                   </thead>
@@ -209,8 +252,11 @@ export default function Desvios() {
                         <tr key={desvio.id_gestion} className="border-b hover:bg-gray-50">
                           <td className="px-4 py-4 text-sm text-gray-700">{formatDate(getDisplayDate(desvio))}</td>
                           <td className="px-4 py-4 text-sm text-gray-600">{desvio.area}</td>
-                          <td className="max-w-sm px-4 py-4 text-sm text-gray-700" title={desvio.desvio}>
-                            {getShortDescription(desvio.desvio)}
+                          <td className="max-w-md px-4 py-4 text-sm text-gray-700" title={desvio.desvio}>
+                            <div className="flex items-start gap-3">
+                              <EvidenceThumbnail source={reporte?.foto_url} alt={desvio.desvio} />
+                              <span>{getShortDescription(desvio.desvio)}</span>
+                            </div>
                           </td>
                           <td className="px-4 py-4 text-sm">
                             <span className={`rounded px-3 py-1 text-xs font-semibold ${severidadColor(desvio.severidad)}`}>
@@ -227,18 +273,6 @@ export default function Desvios() {
                               {formatDate(desvio.plazo_fecha)}
                             </div>
                             {isOverdue(desvio) && <div className="text-xs font-medium text-red-600">Vencido</div>}
-                          </td>
-                          <td className="px-4 py-4 text-center">
-                            {reporte?.foto_url ? (
-                              <img
-                                src={reporte.foto_url}
-                                alt="Evidencia"
-                                className="h-12 w-12 rounded border border-gray-300 object-cover hover:scale-150"
-                                title="Foto del reporte"
-                              />
-                            ) : (
-                              <span className="text-xs text-gray-400">Sin foto</span>
-                            )}
                           </td>
                           <td className="px-4 py-4 text-right text-sm">
                             <button

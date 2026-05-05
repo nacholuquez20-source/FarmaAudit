@@ -221,13 +221,41 @@ export async function uploadEvidencia(
   return { path, signedUrl: signed?.signedUrl ?? '' };
 }
 
-export async function getSignedUrl(path: string): Promise<string> {
+function getEvidenceBucket(path: string): string {
+  return path.startsWith('auditoria/') ? 'auditoria-respuestas' : 'desvio-evidencias';
+}
+
+export async function getSignedUrl(path: string, bucket = getEvidenceBucket(path)): Promise<string> {
   const { data, error } = await supabase.storage
-    .from('desvio-evidencias')
+    .from(bucket)
     .createSignedUrl(path, 60 * 60 * 24);
 
   if (error) throw new Error(handleApiError(error));
   return data?.signedUrl ?? '';
+}
+
+export function parseStorageUrl(value?: string | null): { bucket: string; path: string } | null {
+  if (!value) return null;
+  if (value.startsWith('storage://')) {
+    const withoutProtocol = value.replace('storage://', '');
+    const [bucket, ...pathParts] = withoutProtocol.split('/');
+    const path = pathParts.join('/');
+    return bucket && path ? { bucket, path } : null;
+  }
+  if (value.startsWith('auditoria/')) {
+    return { bucket: 'auditoria-respuestas', path: value };
+  }
+  if (value.startsWith('gestion/')) {
+    return { bucket: 'desvio-evidencias', path: value };
+  }
+  return null;
+}
+
+export async function resolveEvidenceUrl(value?: string | null): Promise<string> {
+  if (!value) return '';
+  const storage = parseStorageUrl(value);
+  if (!storage) return value;
+  return getSignedUrl(storage.path, storage.bucket);
 }
 
 export async function enviarMensajeInterno(input: {

@@ -739,6 +739,7 @@ class ConversationRouter:
 
         synthetic_payload = WhatsAppPayload(telefono=payload.telefono, tipo="text", contenido=respuesta_consolidada)
         setattr(synthetic_payload, "from_collector", True)
+        setattr(synthetic_payload, "collector_media_items", fresh.get_media_ids())
 
         if return_state == ConversationState.EN_BLOQUE_PERFUMERIA.value:
             bloques_perfumeria = self.sheets.get_checklist_perfumeria()
@@ -2356,6 +2357,7 @@ EDITAR → Hacer cambios""",
 
                 auditor = self.sheets.get_auditor(payload.telefono)
                 auditor_nombre = auditor.nombre if auditor else "Auditor"
+                evidencia = self._first_collector_image(getattr(payload, "collector_media_items", []))
 
                 # Persist each extracted deviation in the same tables used by the web UI.
                 hallazgos = json.loads(sesion.hallazgos_json) if sesion.hallazgos_json else []
@@ -2367,6 +2369,7 @@ EDITAR → Hacer cambios""",
                         bloque_nombre=bloque_nombre,
                         descripcion=str(desvio.get("desvio", "")),
                         severidad=str(desvio.get("severidad", "Media")),
+                        evidencia=evidencia,
                     )
                     desvio.update(persisted)
                     hallazgos.append(desvio)
@@ -2415,6 +2418,21 @@ EDITAR → Hacer cambios""",
                 "❌ Error procesando tu respuesta.",
             )
             return "error"
+
+    @staticmethod
+    def _first_collector_image(media_items: Any) -> Optional[Dict[str, Any]]:
+        """Return the first collected image metadata from a multi-message answer."""
+        if not isinstance(media_items, list):
+            return None
+        for item in media_items:
+            if not isinstance(item, dict):
+                continue
+            mime_type = str(item.get("mime_type") or "")
+            tipo = str(item.get("tipo") or "")
+            path = str(item.get("path") or "")
+            if path and (tipo == "image" or mime_type.startswith("image/")):
+                return item
+        return None
 
     @staticmethod
     def _build_perfumeria_fallback_desvio(bloque_nombre: str, respuesta_auditor: str) -> Optional[Dict[str, str]]:

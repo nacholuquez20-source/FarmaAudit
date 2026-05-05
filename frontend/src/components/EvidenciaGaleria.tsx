@@ -15,6 +15,7 @@ interface EvidenciaItem {
   actor_nombre: string | null;
   origen: DesvioOrigen;
   path: string | null;
+  bucket: string | null;
   legacyUrl: string | null;
   mimeType: string | null;
 }
@@ -45,6 +46,7 @@ export function EvidenciaGaleria({ eventos }: EvidenciaGaleriaProps) {
         actor_nombre: evento.actor_nombre,
         origen: readOrigen(evento.metadata?.origen),
         path: readString(evento.metadata?.foto_path),
+        bucket: readString(evento.metadata?.bucket),
         legacyUrl: readString(evento.metadata?.evidencia_url),
         mimeType: readString(evento.metadata?.mime_type),
       }))
@@ -62,7 +64,8 @@ export function EvidenciaGaleria({ eventos }: EvidenciaGaleriaProps) {
       const entries = await Promise.all(
         missingPaths.map(async (path) => {
           try {
-            return [path, await getSignedUrl(path)] as const;
+            const bucket = evidencias.find((item) => item.path === path)?.bucket || undefined;
+            return [path, await getSignedUrl(path, bucket)] as const;
           } catch {
             return [path, ''] as const;
           }
