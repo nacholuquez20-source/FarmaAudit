@@ -29,8 +29,8 @@ class MetaClient:
             return phone
         return f"+{phone}"
 
-    async def send_text(self, phone: str, text: str) -> bool:
-        """Send text message via Meta WhatsApp Cloud API."""
+    async def send_text_with_id(self, phone: str, text: str) -> Optional[str]:
+        """Send text message and return the WhatsApp message id when Meta provides it."""
         try:
             to_number = self._normalize_whatsapp_number(phone)
             url = f"{self.BASE_URL}/{self.phone_number_id}/messages"
@@ -45,17 +45,29 @@ class MetaClient:
             async with httpx.AsyncClient() as client:
                 response = await client.post(url, json=payload, headers=headers, timeout=30)
                 if response.status_code == 200:
+                    message_id = ""
+                    try:
+                        response_json = response.json()
+                        messages = response_json.get("messages") or []
+                        if messages and isinstance(messages[0], dict):
+                            message_id = str(messages[0].get("id") or "")
+                    except Exception:
+                        logger.warning("Could not parse Meta send_text response body")
                     logger.info(f"Sent text to {phone}")
-                    return True
+                    return message_id or None
                 else:
                     logger.error(f"Failed to send text to {phone}: Status {response.status_code}")
                     logger.error(f"Response body: {response.text}")
                     logger.error(f"Payload sent: {payload}")
                     logger.error(f"URL: {url}")
-                    return False
+                    return None
         except Exception as e:
             logger.error(f"Failed to send text to {phone}: {e}")
-            return False
+            return None
+
+    async def send_text(self, phone: str, text: str) -> bool:
+        """Send text message via Meta WhatsApp Cloud API."""
+        return bool(await self.send_text_with_id(phone, text))
 
     async def send_file(
         self, phone: str, file_url: str, caption: Optional[str] = None

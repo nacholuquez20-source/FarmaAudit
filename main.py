@@ -334,6 +334,7 @@ async def webhook(request: Request):
 
         # Check for duplicate message (Meta redelivery protection)
         message_id = msg.get("id", "")
+        context_message_id = str((msg.get("context") or {}).get("id") or "")
         if message_id:
             message_claimed = await _claim_message_for_processing(message_id, telefono)
             if not message_claimed:
@@ -374,9 +375,14 @@ async def webhook(request: Request):
             media_url=media_url,
             media_id=media_id,
             mime_type=mime_type,
+            message_id=message_id,
+            context_message_id=context_message_id,
         )
 
-        logger.info(f"[{correlation_id}] Received message from {payload.telefono} (type: {payload.tipo}, msg_id: {message_id})")
+        logger.info(
+            f"[{correlation_id}] Received message from {payload.telefono} "
+            f"(type: {payload.tipo}, msg_id: {message_id}, context_id: {context_message_id or 'none'})"
+        )
 
         meta_client = MetaClient()
         route = get_router()

@@ -181,6 +181,16 @@ class ConversationRouter:
                 if trigger in {"hola", "inicio", "empezar", "comenzar", "start"}:
                     return await self._iniciar_seleccion_sucursal(payload, meta_client)
 
+            if payload.context_message_id and conv.estado_actual != ConversationState.RECOLECTANDO_RESPUESTA:
+                quoted_context = self.sheets.get_whatsapp_bot_message(payload.context_message_id)
+                if quoted_context and quoted_context.get("tipo") == "perfumeria_block":
+                    return await self._start_quoted_perfumeria_clarification(
+                        payload,
+                        conv,
+                        quoted_context,
+                        meta_client,
+                    )
+
             # Route based on state
 
             if conv.estado_actual == ConversationState.IDLE:
@@ -717,18 +727,27 @@ class ConversationRouter:
         )
         self.sheets.create_respuesta_audit_log(fresh.id, "completada", {"auto_complete": auto_complete, "mensajes_count": len(mensajes), "media_count": len(media_urls)})
 
-        if not auto_complete:
-            await meta_client.send_text(
-                payload.telefono,
-                self._format_respuesta_collection_summary(mensajes, respuesta_consolidada),
-            )
-
         context = self._safe_json_loads(conv.ultimo_mensaje)
         return_state = context.get("return_state", ConversationState.EN_BLOQUE.value)
         sesion = self.sheets.get_sesion(fresh.id_sesion)
         if not sesion:
             await meta_client.send_text(payload.telefono, "Respuesta registrada, pero no encontre la sesion para avanzar.")
             return "respuesta_completada_sin_sesion"
+
+        if context.get("quoted_clarification"):
+            return await self._complete_quoted_perfumeria_clarification(
+                fresh,
+                sesion,
+                context,
+                payload,
+                meta_client,
+            )
+
+        if not auto_complete:
+            await meta_client.send_text(
+                payload.telefono,
+                self._format_respuesta_collection_summary(mensajes, respuesta_consolidada),
+            )
 
         self.sheets.update_conversacion(
             telefono=payload.telefono,
@@ -752,6 +771,120 @@ class ConversationRouter:
             Conversacion(telefono=payload.telefono, estado_actual=ConversationState.EN_BLOQUE, id_pendiente=sesion.id_sesion),
             meta_client,
         )
+
+    async def _complete_quoted_perfumeria_clarification(
+        self,
+        respuesta: RespuestaPregunta,
+        sesion: SesionAuditoria,
+        context: Dict[str, Any],
+        payload: WhatsAppPayload,
+        meta_client: MetaClient,
+    ) -> str:
+        """Persist a quoted clarification without moving the active audit block."""
+        mensajes = [vars(msg) for msg in respuesta.get_mensajes()]
+        textos = [
+            str(msg.get("contenido", "")).strip()
+            for msg in mensajes
+            if str(msg.get("contenido", "")).strip() and not str(msg.get("contenido", "")).startswith("[")
+        ]
+        media_items = respuesta.get_media_ids()
+        respuesta_consolidada = "\n".join(textos).strip()
+        if not respuesta_consolidada and media_items:
+            respuesta_consolidada = "Aclaracion enviada con evidencia multimedia."
+        respuesta_consolidada = respuesta_consolidada[:RESPUESTA_CONFIG["respuesta_max_caracteres"]]
+
+        bloque_id = respuesta.bloque_id
+        bloques_perfumeria = self.sheets.get_checklist_perfumeria()
+        puntos_bloque = bloques_perfumeria.get(bloque_id, [])
+        bloque_nombre = str(context.get("bloque_nombre") or "")
+        if not bloque_nombre:
+            bloque_nombre = puntos_bloque[0].bloque_nombre if puntos_bloque else bloque_id
+
+        contexto_puntos = "\n".join([f"- {p.pregunta}" for p in puntos_bloque])
+        desvios = []
+        if respuesta_consolidada and respuesta_consolidada != "Aclaracion enviada con evidencia multimedia.":
+            desvios = await self._extract_perfumeria_deviations(
+                bloque_nombre,
+                contexto_puntos,
+                respuesta_consolidada,
+            )
+            if not desvios:
+                fallback_desvio = self._build_perfumeria_fallback_desvio(bloque_nombre, respuesta_consolidada)
+                if fallback_desvio:
+                    desvios = [fallback_desvio]
+
+        auditor = self.sheets.get_auditor(payload.telefono)
+        auditor_nombre = auditor.nombre if auditor else "Auditor"
+        evidencia = self._first_collector_image(media_items)
+        hallazgos = json.loads(sesion.hallazgos_json) if sesion.hallazgos_json else []
+        persisted_count = 0
+        for desvio in desvios:
+            persisted = self.sheets.save_perfumeria_desvio(
+                auditoria_id=sesion.id_sesion,
+                sucursal_id=sesion.sucursal_id,
+                auditor_nombre=auditor_nombre,
+                bloque_nombre=bloque_nombre,
+                descripcion=str(desvio.get("desvio", "")),
+                severidad=str(desvio.get("severidad", "Media")),
+                evidencia=evidencia,
+            )
+            desvio.update(persisted)
+            desvio["origen"] = "aclaracion_citada"
+            hallazgos.append(desvio)
+            persisted_count += 1
+
+        resultados = json.loads(sesion.resultados_json) if sesion.resultados_json else {}
+        resultados[f"aclaracion_{bloque_id}_{respuesta.id[:8]}"] = {
+            "bloque_nombre": bloque_nombre,
+            "respuesta": respuesta_consolidada,
+            "media_count": len(media_items),
+            "desvios_count": persisted_count,
+            "timestamp": self._utc_now_iso(),
+        }
+
+        self.sheets.update_respuesta_pregunta(
+            respuesta.id,
+            respuesta_consolidada=respuesta_consolidada,
+            desvios_json=json.dumps(desvios, ensure_ascii=False),
+            timestamp_ultimo_mensaje=datetime.now(timezone.utc).isoformat(),
+        )
+        self.sheets.update_sesion(
+            id_sesion=sesion.id_sesion,
+            estado=sesion.estado,
+            timestamp_ultimo_punto=self._utc_now_iso(),
+            bloque_actual=sesion.bloque_actual,
+            resultados_json=json.dumps(resultados, ensure_ascii=False),
+            stock_items_json=sesion.stock_items_json,
+            desvios_libres_json=sesion.desvios_libres_json,
+            stock_total=sesion.stock_total,
+            stock_actual=sesion.stock_actual,
+            punto_actual=sesion.punto_actual,
+            hallazgos_json=json.dumps(hallazgos, ensure_ascii=False),
+            omitidos_json=sesion.omitidos_json,
+        )
+
+        try:
+            resume_state = ConversationState(str(context.get("return_state") or ConversationState.EN_BLOQUE_PERFUMERIA.value))
+        except ValueError:
+            resume_state = ConversationState.EN_BLOQUE_PERFUMERIA
+        self.sheets.update_conversacion(
+            telefono=payload.telefono,
+            estado=resume_state,
+            id_pendiente=sesion.id_sesion,
+            id_respuesta_actual="",
+        )
+
+        if persisted_count:
+            await meta_client.send_text(
+                payload.telefono,
+                f"Aclaracion agregada al bloque {bloque_nombre}. Cree {persisted_count} desvio(s) en FarmaAudit y no avance el bloque actual.",
+            )
+        else:
+            await meta_client.send_text(
+                payload.telefono,
+                f"Aclaracion guardada para el bloque {bloque_nombre}. No detecte un desvio nuevo para crear.",
+            )
+        return "quoted_clarification_completed"
 
 
 
@@ -1443,10 +1576,14 @@ class ConversationRouter:
 
             puntos_bloque = bloques_perfumeria.get(primer_bloque, [])
             bloque_nombre = puntos_bloque[0].bloque_nombre if puntos_bloque else primer_bloque
-            pregunta = self._build_tema_pregunta(primer_bloque, bloque_nombre, puntos_bloque)
-            await meta_client.send_text(
+            await self._send_perfumeria_block_prompt(
+                meta_client,
                 payload.telefono,
-                f"{pregunta}\n\nPodes enviar multiples mensajes. Escribi LISTO cuando termines.",
+                sesion,
+                primer_bloque,
+                bloque_nombre,
+                puntos_bloque,
+                prefix="Podes enviar multiples mensajes. Escribi LISTO cuando termines.",
             )
             return "sesion_created"
 
@@ -2182,6 +2319,104 @@ EDITAR → Hacer cambios""",
         msg += "\n¿Qué observas?"
         return msg
 
+    async def _send_perfumeria_block_prompt(
+        self,
+        meta_client: MetaClient,
+        telefono: str,
+        sesion: SesionAuditoria,
+        bloque_id: str,
+        bloque_nombre: str,
+        puntos: list,
+        prefix: str = "",
+    ) -> bool:
+        """Send a perfumery block prompt and store its WhatsApp id for quoted replies."""
+        pregunta = self._build_tema_pregunta(bloque_id, bloque_nombre, puntos)
+        text = f"{prefix}\n\n{pregunta}" if prefix else pregunta
+        message_id = await meta_client.send_text_with_id(telefono, text)
+        if message_id:
+            self.sheets.save_whatsapp_bot_message(
+                whatsapp_message_id=message_id,
+                telefono=telefono,
+                id_sesion=sesion.id_sesion,
+                bloque_id=bloque_id,
+                bloque_nombre=bloque_nombre,
+                tipo="perfumeria_block",
+                payload={
+                    "sucursal_id": sesion.sucursal_id,
+                    "punto_actual": sesion.punto_actual,
+                    "preguntas": [getattr(p, "pregunta", "") for p in puntos],
+                },
+            )
+            return True
+        return False
+
+    async def _start_quoted_perfumeria_clarification(
+        self,
+        payload: WhatsAppPayload,
+        conv: Conversacion,
+        quoted_context: Dict[str, Any],
+        meta_client: MetaClient,
+    ) -> str:
+        """Collect a multi-message clarification for a previously quoted perfumery block."""
+        id_sesion = str(quoted_context.get("id_sesion") or "")
+        bloque_id = str(quoted_context.get("bloque_id") or "")
+        if not id_sesion or not bloque_id:
+            return "quoted_context_incomplete"
+
+        sesion = self.sheets.get_sesion(id_sesion)
+        if not sesion:
+            await meta_client.send_text(payload.telefono, "No encontre la sesion de ese bloque citado.")
+            return "quoted_sesion_missing"
+
+        bloques_perfumeria = self.sheets.get_checklist_perfumeria()
+        puntos_bloque = bloques_perfumeria.get(bloque_id, [])
+        bloque_nombre = str(quoted_context.get("bloque_nombre") or "")
+        if not bloque_nombre:
+            bloque_nombre = puntos_bloque[0].bloque_nombre if puntos_bloque else bloque_id
+
+        try:
+            bloques_ordenados = sorted(bloques_perfumeria.keys())
+            pregunta_numero = bloques_ordenados.index(bloque_id) + 1 if bloque_id in bloques_ordenados else sesion.punto_actual + 1
+            now = datetime.now(timezone.utc).isoformat()
+            respuesta = self.sheets.create_respuesta_pregunta(RespuestaPregunta(
+                id=str(uuid.uuid4()),
+                id_sesion=id_sesion,
+                telefono_auditor=payload.telefono,
+                pregunta_numero=pregunta_numero,
+                bloque_id=bloque_id,
+                estado=RespuestaPreguntaEstado.RECOLECTANDO,
+                timestamp_inicio=now,
+                timestamp_ultimo_mensaje=now,
+                timeout_segundos=RESPUESTA_CONFIG["timeout_sin_actividad_segundos"],
+            ))
+            self.sheets.update_conversacion(
+                telefono=payload.telefono,
+                estado=ConversationState.RECOLECTANDO_RESPUESTA,
+                id_pendiente=id_sesion,
+                ultimo_mensaje=json.dumps({
+                    "return_state": conv.estado_actual.value,
+                    "bloque_id": bloque_id,
+                    "quoted_clarification": True,
+                    "bloque_nombre": bloque_nombre,
+                    "resume_bloque_actual": sesion.bloque_actual,
+                }, ensure_ascii=False),
+                id_respuesta_actual=respuesta.id,
+            )
+            await self._append_respuesta_message(payload, respuesta, meta_client)
+            await meta_client.send_text(
+                payload.telefono,
+                f"Recibido como aclaracion del bloque {bloque_nombre}. "
+                "Podes sumar mas fotos, audios o texto. Escribi LISTO cuando termines esta aclaracion.",
+            )
+            return "quoted_clarification_started"
+        except Exception as e:
+            logger.error(f"Could not start quoted clarification: {e}", exc_info=True)
+            await meta_client.send_text(
+                payload.telefono,
+                "No pude abrir la aclaracion del bloque citado. Reintenta o avisale al administrador.",
+            )
+            return "quoted_clarification_error"
+
     async def _handle_en_bloque_perfumeria(
         self,
         payload: WhatsAppPayload,
@@ -2394,8 +2629,15 @@ EDITAR → Hacer cambios""",
                     bloques_perfumeria = self.sheets.get_checklist_perfumeria()
                     puntos_siguiente = bloques_perfumeria.get(siguiente_bloque, [])
                     siguiente_nombre = puntos_siguiente[0].bloque_nombre if puntos_siguiente else siguiente_bloque
-                    pregunta = self._build_tema_pregunta(siguiente_bloque, siguiente_nombre, puntos_siguiente)
-                    await meta_client.send_text(payload.telefono, f"✅ Registrado.\n\n{pregunta}")
+                    await self._send_perfumeria_block_prompt(
+                        meta_client,
+                        payload.telefono,
+                        sesion,
+                        siguiente_bloque,
+                        siguiente_nombre,
+                        puntos_siguiente,
+                        prefix="✅ Registrado.",
+                    )
                 else:
                     await meta_client.send_text(
                         payload.telefono,
@@ -2407,8 +2649,14 @@ EDITAR → Hacer cambios""",
             else:
                 # Initial question display
                 bloque_nombre = puntos_bloque[0].bloque_nombre if puntos_bloque else bloque_id
-                pregunta = self._build_tema_pregunta(bloque_id, bloque_nombre, puntos_bloque)
-                await meta_client.send_text(payload.telefono, pregunta)
+                await self._send_perfumeria_block_prompt(
+                    meta_client,
+                    payload.telefono,
+                    sesion,
+                    bloque_id,
+                    bloque_nombre,
+                    puntos_bloque,
+                )
                 return "waiting_input"
 
         except Exception as e:

@@ -89,6 +89,18 @@ def test_respuesta_pregunta_accepts_supabase_user_id_column():
     assert respuesta.user_id_auditor is None
 
 
+def test_whatsapp_payload_keeps_reply_context_id():
+    payload = WhatsAppPayload(
+        telefono="5491111111111",
+        tipo="text",
+        contenido="aclaracion sobre este bloque",
+        message_id="wamid.inbound",
+        context_message_id="wamid.bot-block",
+    )
+
+    assert payload.context_message_id == "wamid.bot-block"
+
+
 def test_create_gestion_writes_to_frontend_table():
     manager = object.__new__(SupabaseManager)
     manager.client = _FakeClient()

@@ -283,6 +283,8 @@ class WhatsAppPayload:
     media_url: Optional[str] = None
     media_id: Optional[str] = None
     mime_type: Optional[str] = None
+    message_id: Optional[str] = None
+    context_message_id: Optional[str] = None
     timestamp: Optional[datetime] = field(default_factory=datetime.utcnow)
 
 

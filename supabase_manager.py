@@ -530,6 +530,51 @@ class SupabaseManager:
             logger.error(f"Failed to save perfumeria desvio for sesion {auditoria_id}: {e}")
             raise
 
+    def save_whatsapp_bot_message(
+        self,
+        whatsapp_message_id: str,
+        telefono: str,
+        id_sesion: str,
+        bloque_id: str,
+        bloque_nombre: str,
+        tipo: str,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Remember outbound bot messages so quoted replies can be routed later."""
+        if not whatsapp_message_id:
+            return
+        try:
+            self.client.table("whatsapp_bot_messages").upsert({
+                "whatsapp_message_id": whatsapp_message_id,
+                "telefono": telefono,
+                "id_sesion": id_sesion,
+                "bloque_id": bloque_id,
+                "bloque_nombre": bloque_nombre,
+                "tipo": tipo,
+                "payload_json": payload or {},
+            }, on_conflict="whatsapp_message_id").execute()
+        except Exception as e:
+            logger.warning(f"Could not save whatsapp bot message context: {e}")
+
+    def get_whatsapp_bot_message(self, whatsapp_message_id: str) -> Optional[Dict[str, Any]]:
+        """Get outbound bot message context by WhatsApp message id."""
+        if not whatsapp_message_id:
+            return None
+        try:
+            result = (
+                self.client.table("whatsapp_bot_messages")
+                .select("*")
+                .eq("whatsapp_message_id", whatsapp_message_id)
+                .limit(1)
+                .execute()
+            )
+            if result.data:
+                return result.data[0]
+            return None
+        except Exception as e:
+            logger.warning(f"Could not get whatsapp bot message context: {e}")
+            return None
+
     def get_encargado_by_phone(self, telefono: str) -> Optional[Dict[str, Any]]:
         """Find a branch manager by profiles.telefono or sucursales.tel_responsable."""
         telefono_norm = self._normalize_phone(telefono)
