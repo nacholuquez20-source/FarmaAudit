@@ -858,6 +858,84 @@ class SupabaseManager:
             logger.warning(f"Failed to create signed URL for {path}: {e}")
             return ""
 
+    def regenerate_missing_thumbnails(self) -> Dict[str, int]:
+        """
+        Find evidences without thumbnails in desvios_borrador and regenerate them.
+        Returns dict with counts: {"processed": N, "generated": N, "failed": N}
+        """
+        processed = 0
+        generated = 0
+        failed = 0
+
+        try:
+            response = self.client.table("desvios_borrador").select("id, evidencias_json").execute()
+            borradores = response.data or []
+        except Exception as e:
+            logger.error(f"Failed to fetch borradores: {e}")
+            return {"processed": 0, "generated": 0, "failed": 0}
+
+        for borrador in borradores:
+            try:
+                borrador_id = borrador.get("id")
+                evidencias_str = borrador.get("evidencias_json")
+                if not evidencias_str:
+                    continue
+
+                if isinstance(evidencias_str, str):
+                    try:
+                        evidencias = json.loads(evidencias_str)
+                    except Exception:
+                        continue
+                else:
+                    evidencias = evidencias_str
+
+                if not isinstance(evidencias, list):
+                    continue
+
+                updated = False
+                for evidencia in evidencias:
+                    if not isinstance(evidencia, dict):
+                        continue
+
+                    path = evidencia.get("path")
+                    thumb_path = evidencia.get("thumb_path")
+                    mime_type = evidencia.get("mime_type", "image/jpeg")
+
+                    if not path or thumb_path or not mime_type.startswith("image/"):
+                        continue
+
+                    processed += 1
+                    try:
+                        file_content = self.client.storage.from_("desvio-evidencias").download(path)
+                        thumb_content = self._generate_thumbnail(file_content, mime_type)
+
+                        if thumb_content:
+                            thumb_name = f"{path.rsplit('.', 1)[0]}-thumb.jpg"
+                            self.client.storage.from_("desvio-evidencias").upload(
+                                thumb_name,
+                                thumb_content,
+                                {"content-type": "image/jpeg", "upsert": "false"},
+                            )
+                            evidencia["thumb_path"] = thumb_name
+                            generated += 1
+                            updated = True
+                        else:
+                            failed += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to regenerate thumbnail for {path}: {e}")
+                        failed += 1
+
+                if updated:
+                    self.client.table("desvios_borrador").update({
+                        "evidencias_json": evidencias,
+                    }).eq("id", borrador_id).execute()
+
+            except Exception as e:
+                logger.error(f"Error processing borrador {borrador.get('id')}: {e}")
+
+        logger.info(f"Thumbnail regeneration: processed={processed}, generated={generated}, failed={failed}")
+        return {"processed": processed, "generated": generated, "failed": failed}
+
     def save_encargado_evento(
         self,
         id_gestion: str,

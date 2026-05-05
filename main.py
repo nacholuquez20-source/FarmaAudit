@@ -265,6 +265,13 @@ async def startup_event():
         timezone=pytz.UTC,
         max_instances=1,  # Prevent concurrent executions
     )
+    scheduler.add_job(
+        regenerate_thumbnails_job,
+        "interval",
+        hours=1,  # Run every hour
+        id="regenerate_thumbnails",
+        max_instances=1,  # Prevent concurrent executions
+    )
     # Disabled: Using Supabase directly, no longer syncing from Google Sheets
     # scheduler.add_job(
     #     sync_sheets_to_supabase,
@@ -786,6 +793,31 @@ Para mÃ¡s detalles, consulta la hoja de Reportes."""
         logger.info("Daily summary sent to coordinator")
     except Exception as e:
         logger.error(f"Error in daily summary job: {e}")
+
+
+async def regenerate_thumbnails_job():
+    """Background job: Regenerate missing thumbnails for existing evidences."""
+    try:
+        supabase_mgr = SupabaseManager()
+        result = supabase_mgr.regenerate_missing_thumbnails()
+        logger.info(f"Thumbnail regeneration completed: {result}")
+    except Exception as e:
+        logger.error(f"Error in thumbnail regeneration job: {e}", exc_info=True)
+
+
+@app.post("/admin/thumbnails/regenerate")
+async def regenerate_thumbnails_endpoint():
+    """
+    Manual endpoint to regenerate missing thumbnails.
+    Protected: requires admin context (implement auth check if needed).
+    """
+    try:
+        supabase_mgr = SupabaseManager()
+        result = supabase_mgr.regenerate_missing_thumbnails()
+        return {"status": "ok", "result": result}
+    except Exception as e:
+        logger.error(f"Error regenerating thumbnails: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
