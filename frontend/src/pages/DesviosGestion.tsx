@@ -2,24 +2,495 @@ import { useEffect, useMemo, useState } from 'react';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { getGestion, getDesvioEventos, updateGestion, enviarMensajeInterno } from '../lib/api';
-import { formatDate, formatDateTime, severidadColor, gestionStateColor, gestionStateLabel } from '../lib/utils';
-import type { Gestion, DesvioEvento, GestionState } from '../types';
+import { formatDate, formatDateTime, gestionStateLabel, getWhatsappUrl } from '../lib/utils';
+import { useAuth } from '../hooks/useAuth';
+import type { DesvioEvento, Gestion, GestionState, Severidad } from '../types';
 import { toast } from 'sonner';
 
 interface DesvioCard extends Gestion {
   eventos: DesvioEvento[];
 }
 
-const ESTADO_OPTIONS: GestionState[] = ['Abierta', 'En_proceso', 'Resuelta', 'Cerrada'];
+type GroupBy = 'estado' | 'sucursal' | 'none';
+type DetailTab = 'actividad' | 'plan' | 'evidencias' | 'detalle';
+type SlaStatus = 'overdue' | 'today' | 'soon' | 'ok' | 'closed';
+
+const ESTADOS: GestionState[] = ['Vencida', 'Abierta', 'En_proceso', 'Resuelta', 'Cerrada'];
+const SEVERIDADES: Severidad[] = ['Alta', 'Media', 'Baja'];
+
+const tokens = {
+  navy: '#1E3A6D',
+  orange: '#F15A29',
+  green: '#2A9D5F',
+  ink: '#0F172A',
+  muted: '#64748B',
+  line: '#E5E7EB',
+  state: {
+    Vencida: { bg: '#FEE2E2', fg: '#991B1B', dot: '#DC2626' },
+    Abierta: { bg: '#E0EAFF', fg: '#1E3A6D', dot: '#1E3A6D' },
+    En_proceso: { bg: '#FFF1E6', fg: '#9A3A12', dot: '#F15A29' },
+    Resuelta: { bg: '#E7F6EC', fg: '#1E6F3D', dot: '#2A9D5F' },
+    Cerrada: { bg: '#F1F4F9', fg: '#475467', dot: '#667085' },
+  } satisfies Record<GestionState, { bg: string; fg: string; dot: string }>,
+  severity: {
+    Alta: { bar: '#DC2626', soft: '#FEE2E2', fg: '#991B1B' },
+    Media: { bar: '#D97706', soft: '#FEF3C7', fg: '#92400E' },
+    Baja: { bar: '#0EA5E9', soft: '#E0F2FE', fg: '#075985' },
+  } satisfies Record<Severidad, { bar: string; soft: string; fg: string }>,
+  sla: {
+    overdue: { bg: '#FEE2E2', fg: '#991B1B', dot: '#DC2626' },
+    today: { bg: '#FFE5D6', fg: '#9A3A12', dot: '#F15A29' },
+    soon: { bg: '#FEF3C7', fg: '#92400E', dot: '#D97706' },
+    ok: { bg: '#F1F4F9', fg: '#344054', dot: '#94A3B8' },
+    closed: { bg: '#E7F6EC', fg: '#1E6F3D', dot: '#2A9D5F' },
+  } satisfies Record<SlaStatus, { bg: string; fg: string; dot: string }>,
+};
+
+function SearchIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="11" cy="11" r="7" />
+      <path d="m21 21-4.3-4.3" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M18 6 6 18M6 6l12 12" />
+    </svg>
+  );
+}
+
+function SendIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="m22 2-7 20-4-9-9-4z" />
+      <path d="M22 2 11 13" />
+    </svg>
+  );
+}
+
+function AttachmentIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="m21.4 11.1-9.2 9.1a6 6 0 0 1-8.5-8.5l9.2-9.1a4 4 0 1 1 5.6 5.6l-9.2 9.2a2 2 0 1 1-2.8-2.8l8.5-8.5" />
+    </svg>
+  );
+}
+
+function PinIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="10" r="3" />
+      <path d="M12 22s7-6.4 7-12A7 7 0 0 0 5 10c0 5.6 7 12 7 12z" />
+    </svg>
+  );
+}
+
+function UserIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 22a8 8 0 0 1 16 0" />
+    </svg>
+  );
+}
+
+function ClockIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 6v6l4 2" />
+    </svg>
+  );
+}
+
+function WhatsappIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M17.6 14.3c-.3-.1-1.7-.8-2-.9-.3-.1-.5-.1-.7.1-.2.3-.7.9-.9 1.1-.2.2-.3.2-.6.1-1.6-.8-2.6-1.4-3.7-3.2-.3-.5.3-.5.8-1.5.1-.2.1-.4 0-.5-.1-.1-.7-1.6-.9-2.2-.2-.6-.5-.5-.7-.5h-.6c-.2 0-.5.1-.8.4-.3.3-1 1-1 2.5s1.1 2.9 1.2 3.1c.1.2 2.1 3.2 5.1 4.5 1.9.8 2.6.9 3.5.7.6-.1 1.7-.7 2-1.4.3-.7.3-1.2.2-1.4-.1-.1-.3-.2-.6-.4zM12 2C6.5 2 2 6.5 2 12c0 1.8.5 3.5 1.3 4.9L2 22l5.3-1.4c1.4.8 2.9 1.2 4.7 1.2 5.5 0 10-4.5 10-10S17.5 2 12 2z" />
+    </svg>
+  );
+}
+
+function computeSla(desvio: Gestion): { status: SlaStatus; label: string; days: number } {
+  if (desvio.estado === 'Resuelta' || desvio.estado === 'Cerrada') {
+    return { status: 'closed', label: 'Completado', days: 0 };
+  }
+
+  const due = new Date(desvio.plazo_fecha);
+  const today = new Date();
+  due.setHours(0, 0, 0, 0);
+  today.setHours(0, 0, 0, 0);
+  const days = Math.round((due.getTime() - today.getTime()) / 86_400_000);
+
+  if (days < 0) return { status: 'overdue', label: `Vencido hace ${Math.abs(days)}d`, days };
+  if (days === 0) return { status: 'today', label: 'Vence hoy', days };
+  if (days <= 2) return { status: 'soon', label: `Vence en ${days}d`, days };
+  return { status: 'ok', label: `${days}d restantes`, days };
+}
+
+function normalize(value: string | null | undefined) {
+  return (value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function EstadoBadge({ estado, size = 'md' }: { estado: GestionState; size?: 'sm' | 'md' }) {
+  const color = tokens.state[estado];
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-md font-bold uppercase tracking-wide ${size === 'sm' ? 'px-2 py-1 text-[11px]' : 'px-3 py-1.5 text-xs'}`}
+      style={{ background: color.bg, color: color.fg }}
+    >
+      <span className="h-1.5 w-1.5 rounded-full" style={{ background: color.dot }} />
+      {gestionStateLabel(estado)}
+    </span>
+  );
+}
+
+function SeveridadBadge({ severidad }: { severidad: Severidad }) {
+  const color = tokens.severity[severidad];
+  return (
+    <span className="inline-flex items-center gap-2 text-sm font-semibold" style={{ color: color.fg }}>
+      <span className="h-7 w-1 rounded-full" style={{ background: color.bar }} />
+      {severidad}
+    </span>
+  );
+}
+
+function SlaPill({ desvio, large = false }: { desvio: Gestion; large?: boolean }) {
+  const sla = computeSla(desvio);
+  const color = tokens.sla[sla.status];
+  return (
+    <span
+      className={`inline-flex items-center gap-2 rounded-full font-semibold ${large ? 'px-4 py-2 text-sm' : 'px-3 py-1.5 text-xs'}`}
+      style={{ background: color.bg, color: color.fg }}
+    >
+      <span className="h-2 w-2 rounded-full" style={{ background: color.dot }} />
+      {sla.label}
+    </span>
+  );
+}
+
+function FilterChip({
+  active,
+  children,
+  count,
+  danger,
+  onClick,
+}: {
+  active: boolean;
+  children: React.ReactNode;
+  count?: number;
+  danger?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex min-h-10 items-center gap-2 rounded-lg border px-4 text-sm font-semibold transition hover:bg-slate-50"
+      style={{
+        borderColor: active ? tokens.navy : '#D0D5DD',
+        background: active ? tokens.navy : '#fff',
+        color: active ? '#fff' : danger ? '#991B1B' : '#344054',
+      }}
+    >
+      {children}
+      {count != null && (
+        <span
+          className="rounded-full px-2 py-0.5 text-xs font-bold"
+          style={{
+            background: active ? 'rgba(255,255,255,.18)' : danger ? '#FEE2E2' : '#F1F4F9',
+            color: active ? '#fff' : danger ? '#991B1B' : '#475467',
+          }}
+        >
+          {count}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function SelectBox({ checked, onClick }: { checked: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+      className="flex h-5 w-5 items-center justify-center rounded border transition"
+      style={{ borderColor: checked ? tokens.navy : '#CBD5E1', background: checked ? tokens.navy : '#fff' }}
+      aria-label={checked ? 'Quitar seleccion' : 'Seleccionar'}
+    >
+      {checked && <CheckIcon />}
+    </button>
+  );
+}
+
+function GroupHeader({ label, count, accent }: { label: string; count: number; accent: string }) {
+  return (
+    <div className="sticky top-[145px] z-10 flex items-center gap-3 border-y border-slate-200 bg-slate-50 px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-600 lg:top-[137px]">
+      <span className="ml-9 h-2 w-2 rounded-full" style={{ background: accent }} />
+      <span>{label}</span>
+      <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-xs tracking-normal">{count}</span>
+    </div>
+  );
+}
+
+function Timeline({ eventos }: { eventos: DesvioEvento[] }) {
+  if (eventos.length === 0) {
+    return <div className="rounded-lg border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">Sin actividad registrada todavia.</div>;
+  }
+
+  const eventColor: Record<string, string> = {
+    creacion: tokens.navy,
+    contacto: tokens.orange,
+    respuesta: tokens.navy,
+    cierre: tokens.green,
+    nota: '#64748B',
+    evidencia: tokens.green,
+    mensaje: '#475467',
+  };
+
+  return (
+    <div className="relative pl-9">
+      <div className="absolute left-[13px] top-1 bottom-1 w-0.5 bg-slate-200" />
+      <div className="space-y-4">
+        {eventos.map((evento) => {
+          const color = eventColor[evento.tipo] || '#64748B';
+          return (
+            <div key={evento.id} className="relative">
+              <div className="absolute -left-9 top-0 flex h-7 w-7 items-center justify-center rounded-full border-2 bg-white text-xs font-bold" style={{ borderColor: color, color }}>
+                {evento.tipo === 'cierre' ? '✓' : evento.tipo === 'contacto' ? '↗' : '•'}
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-3">
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="font-bold text-slate-950">{evento.actor_nombre || 'Sistema'}</span>
+                  <span className="text-slate-400">·</span>
+                  <span className="font-bold uppercase tracking-wide" style={{ color }}>{evento.tipo}</span>
+                  <span className="ml-auto text-slate-400">{formatDateTime(evento.created_at)}</span>
+                </div>
+                <p className="mt-1 text-sm leading-6 text-slate-700">{evento.comentario}</p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function Fact({ icon, label, value, sub, tone }: { icon: React.ReactNode; label: string; value: string; sub?: string; tone?: string }) {
+  return (
+    <div>
+      <div className="mb-1 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">
+        {icon}
+        {label}
+      </div>
+      <div className="text-sm font-bold text-slate-950">{value || '-'}</div>
+      {sub && <div className="mt-0.5 text-sm" style={{ color: tone || '#64748B' }}>{sub}</div>}
+    </div>
+  );
+}
+
+function DetailDrawer({
+  desvio,
+  tab,
+  setTab,
+  comentario,
+  setComentario,
+  sending,
+  updatingId,
+  onClose,
+  onStateChange,
+  onComment,
+  onWhatsapp,
+}: {
+  desvio: DesvioCard;
+  tab: DetailTab;
+  setTab: (tab: DetailTab) => void;
+  comentario: string;
+  setComentario: (value: string) => void;
+  sending: boolean;
+  updatingId: string | null;
+  onClose: () => void;
+  onStateChange: (id: string, state: GestionState) => void;
+  onComment: (id: string) => void;
+  onWhatsapp: (desvio: Gestion) => void;
+}) {
+  const sla = computeSla(desvio);
+  const visibleTabs: { key: DetailTab; label: string }[] = [
+    { key: 'actividad', label: `Actividad · ${desvio.eventos.length}` },
+    { key: 'plan', label: 'Plan de accion' },
+    { key: 'evidencias', label: 'Evidencias' },
+    { key: 'detalle', label: 'Detalle' },
+  ];
+  const evidenciaEventos = desvio.eventos.filter((evento) => evento.tipo === 'evidencia');
+
+  return (
+    <>
+      <button type="button" aria-label="Cerrar detalle" onClick={onClose} className="fixed inset-0 z-40 cursor-default bg-slate-950/35" />
+      <aside className="fixed inset-y-0 right-0 z-50 flex w-full flex-col bg-white shadow-2xl sm:w-[640px]">
+        <div className="border-b border-slate-200 px-6 py-5">
+          <div className="mb-4 flex items-center gap-3">
+            <span className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-bold" style={{ background: tokens.severity[desvio.severidad].soft, color: tokens.severity[desvio.severidad].fg }}>
+              <span className="h-1.5 w-1.5 rounded-full" style={{ background: tokens.severity[desvio.severidad].bar }} />
+              {desvio.severidad}
+            </span>
+            <EstadoBadge estado={desvio.estado} />
+            <SlaPill desvio={desvio} large />
+            <button type="button" onClick={onClose} className="ml-auto rounded-md p-2 text-slate-500 hover:bg-slate-100" aria-label="Cerrar">
+              <CloseIcon />
+            </button>
+          </div>
+          <div className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">{desvio.id_gestion} · {desvio.id_reporte || 'Sin reporte'}</div>
+          <h2 className="text-2xl font-bold leading-tight text-slate-950">{desvio.desvio}</h2>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 border-b border-slate-200 px-6 py-4 sm:grid-cols-3">
+          <Fact icon={<PinIcon />} label="Sucursal" value={desvio.sucursal} sub={desvio.id_sucursal} />
+          <Fact icon={<UserIcon />} label="Responsable" value={desvio.responsable} sub="Encargado/a" />
+          <Fact icon={<ClockIcon />} label="Plazo" value={formatDate(desvio.plazo_fecha)} sub={sla.label} tone={tokens.sla[sla.status].fg} />
+        </div>
+
+        <div className="flex flex-wrap gap-2 border-b border-slate-200 px-6 py-4">
+          <button type="button" onClick={() => onWhatsapp(desvio)} className="inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm font-bold text-white" style={{ background: tokens.orange }}>
+            <WhatsappIcon />
+            Contactar por WhatsApp
+          </button>
+          {desvio.estado !== 'Resuelta' && desvio.estado !== 'Cerrada' && (
+            <button type="button" disabled={updatingId === desvio.id_gestion} onClick={() => onStateChange(desvio.id_gestion, 'Resuelta')} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-emerald-200 bg-white px-4 text-sm font-bold text-emerald-700 disabled:opacity-60">
+              <CheckIcon />
+              Marcar resuelta
+            </button>
+          )}
+          {desvio.estado !== 'En_proceso' && desvio.estado !== 'Resuelta' && desvio.estado !== 'Cerrada' && (
+            <button type="button" disabled={updatingId === desvio.id_gestion} onClick={() => onStateChange(desvio.id_gestion, 'En_proceso')} className="min-h-11 rounded-lg border border-slate-300 bg-white px-4 text-sm font-bold text-slate-700 disabled:opacity-60">
+              En proceso
+            </button>
+          )}
+          <button type="button" className="ml-auto min-h-11 rounded-lg border border-slate-300 bg-white px-4 text-sm font-bold text-slate-700">
+            Reasignar
+          </button>
+        </div>
+
+        <div className="flex border-b border-slate-200 px-6">
+          {visibleTabs.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => setTab(item.key)}
+              className="mr-6 border-b-2 px-1 py-4 text-sm font-bold transition"
+              style={{ borderColor: tab === item.key ? tokens.navy : 'transparent', color: tab === item.key ? tokens.navy : '#64748B' }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 px-6 py-5">
+          {tab === 'actividad' && <Timeline eventos={desvio.eventos} />}
+          {tab === 'plan' && (
+            <div className="rounded-lg border border-slate-200 bg-white p-5">
+              <div className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Plan de accion acordado</div>
+              <p className="text-sm leading-6 text-slate-950">{desvio.plan_accion || 'Aun no se cargo un plan de accion para este desvio.'}</p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button type="button" className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700">Editar plan</button>
+                <button type="button" className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700">Solicitar a sucursal</button>
+              </div>
+            </div>
+          )}
+          {tab === 'evidencias' && (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {evidenciaEventos.length === 0 ? (
+                <div className="col-span-full rounded-lg border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">Sin evidencias vinculadas en la actividad.</div>
+              ) : (
+                evidenciaEventos.map((evento) => (
+                  <div key={evento.id} className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+                    <div className="flex h-32 items-center justify-center text-3xl text-white" style={{ background: `linear-gradient(135deg, ${tokens.navy}, ${tokens.orange})` }}>▧</div>
+                    <div className="p-3">
+                      <div className="truncate text-sm font-bold text-slate-950">{evento.comentario}</div>
+                      <div className="mt-1 text-xs text-slate-400">{formatDateTime(evento.created_at)}</div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+          {tab === 'detalle' && (
+            <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+              {[
+                ['ID gestion', desvio.id_gestion],
+                ['Reporte origen', desvio.id_reporte],
+                ['Sucursal', `${desvio.sucursal} (${desvio.id_sucursal})`],
+                ['Responsable', `${desvio.responsable} · ${desvio.tel_responsable || 'sin telefono'}`],
+                ['Severidad', desvio.severidad],
+                ['Estado', gestionStateLabel(desvio.estado)],
+                ['Creado', desvio.created_at ? formatDateTime(desvio.created_at) : '-'],
+                ['Actualizado', desvio.updated_at ? formatDateTime(desvio.updated_at) : '-'],
+              ].map(([label, value]) => (
+                <div key={label} className="grid grid-cols-[140px_1fr] border-b border-slate-100 px-4 py-3 text-sm last:border-b-0">
+                  <div className="font-semibold text-slate-400">{label}</div>
+                  <div className="font-semibold text-slate-950">{value || '-'}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-end gap-3 border-t border-slate-200 bg-white p-4">
+          <textarea
+            value={comentario}
+            onChange={(event) => setComentario(event.target.value)}
+            rows={2}
+            placeholder={`Comentar en ${desvio.id_gestion}...`}
+            className="min-h-[54px] flex-1 resize-none rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+          />
+          <button type="button" className="rounded-lg p-3 text-slate-500 hover:bg-slate-100" aria-label="Adjuntar evidencia">
+            <AttachmentIcon />
+          </button>
+          <button
+            type="button"
+            onClick={() => onComment(desvio.id_gestion)}
+            disabled={sending || !comentario.trim()}
+            className="inline-flex min-h-12 items-center gap-2 rounded-lg px-5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-200"
+            style={{ background: comentario.trim() ? tokens.orange : undefined }}
+          >
+            <SendIcon />
+            Enviar
+          </button>
+        </div>
+      </aside>
+    </>
+  );
+}
 
 export default function DesviosGestion() {
+  const { user, profile } = useAuth();
   const [desvios, setDesvios] = useState<DesvioCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [estadoFilter, setEstadoFilter] = useState<'' | GestionState>('');
-  const [severidadFilter, setSeveridadFilter] = useState<'' | 'Alta' | 'Media' | 'Baja'>('');
+  const [severidadFilter, setSeveridadFilter] = useState<'' | Severidad>('');
   const [searchText, setSearchText] = useState('');
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [groupBy, setGroupBy] = useState<GroupBy>('estado');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [drawerTab, setDrawerTab] = useState<DetailTab>('actividad');
   const [comentario, setComentario] = useState('');
   const [sending, setSending] = useState(false);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
@@ -29,14 +500,12 @@ export default function DesviosGestion() {
       setLoading(true);
       setError(null);
       const data = await getGestion();
-
       const enriched = await Promise.all(
-        data.map(async (gestion) => {
-          const eventos = await getDesvioEventos(gestion.id_gestion);
-          return { ...gestion, eventos } as DesvioCard;
-        }),
+        data.map(async (gestion) => ({
+          ...gestion,
+          eventos: await getDesvioEventos(gestion.id_gestion),
+        })),
       );
-
       setDesvios(enriched);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al cargar desvios');
@@ -49,46 +518,89 @@ export default function DesviosGestion() {
     void load();
   }, []);
 
+  useEffect(() => {
+    setComentario('');
+    setDrawerTab('actividad');
+  }, [openId]);
+
+  const counts = useMemo(() => {
+    const result = ESTADOS.reduce((acc, estado) => ({ ...acc, [estado]: 0 }), { total: desvios.length } as Record<GestionState | 'total', number>);
+    desvios.forEach((desvio) => {
+      result[desvio.estado] += 1;
+    });
+    return result;
+  }, [desvios]);
+
   const filtered = useMemo(() => {
-    return desvios.filter((d) => {
-      if (estadoFilter && d.estado !== estadoFilter) return false;
-      if (severidadFilter && d.severidad !== severidadFilter) return false;
-      if (searchText) {
-        const search = searchText.toLowerCase();
-        return (
-          d.desvio.toLowerCase().includes(search) ||
-          d.sucursal.toLowerCase().includes(search) ||
-          d.responsable.toLowerCase().includes(search)
-        );
-      }
-      return true;
+    const search = normalize(searchText);
+    return desvios.filter((desvio) => {
+      if (estadoFilter && desvio.estado !== estadoFilter) return false;
+      if (severidadFilter && desvio.severidad !== severidadFilter) return false;
+      if (!search) return true;
+
+      return [
+        desvio.id_gestion,
+        desvio.id_reporte,
+        desvio.desvio,
+        desvio.sucursal,
+        desvio.responsable,
+      ].some((value) => normalize(value).includes(search));
     });
   }, [desvios, estadoFilter, severidadFilter, searchText]);
 
-  const grouped = useMemo(() => {
-    const byEstado = new Map<GestionState, DesvioCard[]>();
-    filtered.forEach((d) => {
-      const key = d.estado;
-      byEstado.set(key, [...(byEstado.get(key) || []), d]);
+  const groups = useMemo(() => {
+    if (groupBy === 'none') return [{ key: 'all', label: '', accent: tokens.navy, items: filtered }];
+
+    if (groupBy === 'sucursal') {
+      const byBranch = new Map<string, DesvioCard[]>();
+      filtered.forEach((desvio) => {
+        byBranch.set(desvio.sucursal, [...(byBranch.get(desvio.sucursal) || []), desvio]);
+      });
+      return Array.from(byBranch.entries())
+        .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
+        .map(([key, items]) => ({ key, label: key, accent: tokens.navy, items }));
+    }
+
+    const byState = new Map<GestionState, DesvioCard[]>();
+    filtered.forEach((desvio) => {
+      byState.set(desvio.estado, [...(byState.get(desvio.estado) || []), desvio]);
     });
-    return Array.from(byEstado.entries()).sort((a, b) => {
-      const order: GestionState[] = ['Vencida', 'Abierta', 'En_proceso', 'Resuelta', 'Cerrada'];
-      return order.indexOf(a[0]) - order.indexOf(b[0]);
+    return ESTADOS
+      .filter((estado) => byState.has(estado))
+      .map((estado) => ({ key: estado, label: gestionStateLabel(estado), accent: tokens.state[estado].dot, items: byState.get(estado) || [] }));
+  }, [filtered, groupBy]);
+
+  const selectedDesvio = openId ? desvios.find((desvio) => desvio.id_gestion === openId) || null : null;
+  const visibleIds = filtered.map((desvio) => desvio.id_gestion);
+  const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
+
+  const toggleSelected = (id: string) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
     });
-  }, [filtered]);
+  };
+
+  const toggleAll = () => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (allSelected) visibleIds.forEach((id) => next.delete(id));
+      else visibleIds.forEach((id) => next.add(id));
+      return next;
+    });
+  };
 
   const handleStateChange = async (desvioId: string, newEstado: GestionState) => {
     const snapshot = desvios;
     setUpdatingId(desvioId);
-
-    setDesvios((prev) =>
-      prev.map((d) => (d.id_gestion === desvioId ? { ...d, estado: newEstado } : d))
-    );
+    setDesvios((prev) => prev.map((desvio) => (desvio.id_gestion === desvioId ? { ...desvio, estado: newEstado } : desvio)));
 
     try {
-      await updateGestion(desvioId, newEstado);
+      await updateGestion(desvioId, newEstado, profile?.nombre || user?.email || undefined);
       toast.success(`Desvio marcado como ${gestionStateLabel(newEstado)}`);
-    } catch (err) {
+    } catch {
       setDesvios(snapshot);
       toast.error('Error al actualizar estado');
     } finally {
@@ -101,257 +613,211 @@ export default function DesviosGestion() {
 
     setSending(true);
     try {
-      await enviarMensajeInterno({
+      const created = await enviarMensajeInterno({
         idGestion: desvioId,
-        comentario,
+        comentario: comentario.trim(),
         origen: 'auditor',
-        actorId: '',
-        actorNombre: '',
+        actorId: user?.id || '',
+        actorNombre: profile?.nombre || user?.email || 'Auditor',
       });
-      toast.success('Comentario enviado');
+      setDesvios((prev) =>
+        prev.map((desvio) => (desvio.id_gestion === desvioId ? { ...desvio, eventos: [...desvio.eventos, created] } : desvio)),
+      );
       setComentario('');
-      void load();
-    } catch (err) {
+      toast.success('Comentario enviado');
+    } catch {
       toast.error('Error al enviar comentario');
     } finally {
       setSending(false);
     }
   };
 
+  const handleWhatsapp = (desvio: Gestion) => {
+    const url = getWhatsappUrl(desvio);
+    if (!url) {
+      toast.error('Este desvio no tiene telefono de responsable');
+      return;
+    }
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
   return (
-    <AppLayout title="Gestión de Desvios">
-      <div className="mb-8">
-        <div className="mb-6">
-          <p className="text-lg font-light text-gray-600">
-            {desvios.length} desvios en gestión
-          </p>
-        </div>
-
-        <div className="rounded-lg border border-gray-200 bg-white p-5 sticky top-0 z-10">
-          <div className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-2">BUSCAR</label>
-              <input
-                type="text"
-                placeholder="Desvio, sucursal, responsable..."
-                value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
-                className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
+    <AppLayout title="FarmaAudit" contentClassName="max-w-none px-0 py-0">
+      <div className="min-h-[calc(100vh-73px)] bg-slate-100">
+        <section className="border-b border-slate-200 bg-white px-5 py-4 lg:px-8">
+          <div className="flex items-center gap-4">
+            <div className="flex h-11 w-11 items-center justify-center rounded-lg font-black text-white" style={{ background: tokens.navy }}>FA</div>
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-bold uppercase tracking-widest text-slate-500">FarmaAudit · Plazoleta</div>
+              <h1 className="truncate text-2xl font-bold text-slate-950">Gestion de Desvios</h1>
             </div>
+            <span className="hidden rounded-full bg-slate-100 px-4 py-2 text-sm font-bold text-slate-600 sm:inline-flex">{desvios.length} desvios</span>
+          </div>
+        </section>
 
-            <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-2">ESTADO</label>
-              <div className="flex flex-wrap gap-2">
-                {(['', 'Vencida', 'Abierta', 'En_proceso', 'Resuelta', 'Cerrada'] as const).map((e) => (
+        <section className="sticky top-0 z-20 border-b border-slate-200 bg-white px-5 py-4 lg:px-8">
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+              <label className="relative min-w-0 flex-1">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"><SearchIcon /></span>
+                <input
+                  value={searchText}
+                  onChange={(event) => setSearchText(event.target.value)}
+                  placeholder="Buscar por desvio, sucursal, responsable o ID..."
+                  className="h-12 w-full rounded-lg border border-slate-300 bg-white pl-12 pr-4 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                />
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="mr-1 text-xs font-bold uppercase tracking-wide text-slate-500">Vista</span>
+                {[
+                  ['estado', 'Por estado'],
+                  ['sucursal', 'Por sucursal'],
+                  ['none', 'Lista'],
+                ].map(([key, label]) => (
                   <button
-                    key={e || 'todos'}
+                    key={key}
                     type="button"
-                    onClick={() => setEstadoFilter(e)}
-                    className={`rounded px-3 py-1.5 text-xs font-semibold transition ${
-                      estadoFilter === e
-                        ? 'bg-gray-900 text-white'
-                        : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
-                    }`}
+                    onClick={() => setGroupBy(key as GroupBy)}
+                    className="min-h-10 rounded-lg border px-4 text-sm font-bold transition"
+                    style={{ borderColor: groupBy === key ? tokens.navy : '#D0D5DD', background: groupBy === key ? tokens.navy : '#fff', color: groupBy === key ? '#fff' : '#344054' }}
                   >
-                    {e ? gestionStateLabel(e) : 'Todos'}
+                    {label}
                   </button>
                 ))}
               </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-2">SEVERIDAD</label>
-              <div className="flex flex-wrap gap-2">
-                {(['', 'Alta', 'Media', 'Baja'] as const).map((s) => (
-                  <button
-                    key={s || 'todas'}
-                    type="button"
-                    onClick={() => setSeveridadFilter(s)}
-                    className={`rounded px-3 py-1.5 text-xs font-semibold transition ${
-                      severidadFilter === s
-                        ? 'bg-gray-900 text-white'
-                        : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
-                    }`}
-                  >
-                    {s || 'Todas'}
-                  </button>
-                ))}
-              </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="mr-1 text-xs font-bold uppercase tracking-wide text-slate-500">Estado</span>
+              <FilterChip active={estadoFilter === ''} count={counts.total} onClick={() => setEstadoFilter('')}>Todos</FilterChip>
+              {ESTADOS.map((estado) => (
+                <FilterChip key={estado} active={estadoFilter === estado} count={counts[estado]} danger={estado === 'Vencida'} onClick={() => setEstadoFilter(estado)}>
+                  {gestionStateLabel(estado)}
+                </FilterChip>
+              ))}
+              <span className="mx-2 hidden h-6 w-px bg-slate-200 lg:block" />
+              <span className="mr-1 text-xs font-bold uppercase tracking-wide text-slate-500">Severidad</span>
+              <FilterChip active={severidadFilter === ''} onClick={() => setSeveridadFilter('')}>Todas</FilterChip>
+              {SEVERIDADES.map((severidad) => (
+                <FilterChip key={severidad} active={severidadFilter === severidad} onClick={() => setSeveridadFilter(severidad)}>
+                  {severidad}
+                </FilterChip>
+              ))}
             </div>
           </div>
-        </div>
-      </div>
+        </section>
 
-      {loading && <FeedbackState title="Cargando desvios..." />}
-      {error && <FeedbackState title={error} tone="error" />}
-      {!loading && !error && desvios.length === 0 && (
-        <FeedbackState title="No hay desvios en gestión." description="Cuando los auditores aprueben borradores, aparecerán aqui para su seguimiento." />
-      )}
+        {selected.size > 0 && (
+          <div className="sticky top-[145px] z-20 flex flex-wrap items-center gap-3 bg-slate-900 px-5 py-3 text-sm font-bold text-white lg:top-[137px] lg:px-8">
+            <span>{selected.size} seleccionados</span>
+            <button type="button" className="rounded-md bg-white/10 px-3 py-2 hover:bg-white/20">Reasignar</button>
+            <button type="button" className="rounded-md bg-white/10 px-3 py-2 hover:bg-white/20">Exportar</button>
+            <button type="button" onClick={() => setSelected(new Set())} className="ml-auto rounded-md px-3 py-2 hover:bg-white/10">Cancelar</button>
+          </div>
+        )}
 
-      {!loading && !error && grouped.length > 0 && (
-        <div className="space-y-6">
-          {grouped.map(([estado, items]) => (
-            <div key={estado}>
-              <h2 className="mb-3 text-lg font-bold text-gray-900">{gestionStateLabel(estado)}</h2>
-              <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-gray-200 bg-gray-50">
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700">Sev.</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700">Descripción</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700">Sucursal</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700">Responsable</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700">Estado</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700">Plazo</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700">Días</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700">Eventos</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.map((desvio) => {
-                      const isExpanded = expandedId === desvio.id_gestion;
-                      const diasEnProceso = desvio.created_at
-                        ? Math.floor((Date.now() - new Date(desvio.created_at).getTime()) / (1000 * 60 * 60 * 24))
-                        : 0;
-                      const esVencida = desvio.estado === 'Vencida';
+        {loading && <div className="px-6 py-10"><FeedbackState title="Cargando desvios..." /></div>}
+        {error && <div className="px-6 py-10"><FeedbackState title={error} tone="error" /></div>}
+        {!loading && !error && desvios.length === 0 && (
+          <div className="px-6 py-10">
+            <FeedbackState title="No hay desvios en gestion." description="Cuando los auditores aprueben borradores, apareceran aqui para su seguimiento." />
+          </div>
+        )}
 
-                      return (
-                        <tbody key={desvio.id_gestion}>
-                          <tr
-                            onClick={() => setExpandedId(isExpanded ? null : desvio.id_gestion)}
-                            className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer"
-                          >
-                            <td className="px-4 py-3 text-sm">
-                              <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${severidadColor(desvio.severidad)}`}>
-                                {desvio.severidad.charAt(0).toUpperCase()}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 text-sm">
-                              <div className="font-medium text-gray-900 line-clamp-2">{desvio.desvio}</div>
-                              <div className="text-xs text-gray-500">{desvio.id_gestion}</div>
-                            </td>
-                            <td className="px-4 py-3 text-sm text-gray-600">{desvio.sucursal}</td>
-                            <td className="px-4 py-3 text-sm text-gray-600">{desvio.responsable}</td>
-                            <td className="px-4 py-3 text-sm">
-                              <select
-                                value={desvio.estado}
-                                onChange={(e) => void handleStateChange(desvio.id_gestion, e.target.value as GestionState)}
-                                disabled={updatingId === desvio.id_gestion}
-                                onClick={(e) => e.stopPropagation()}
-                                className={`rounded px-2 py-1 text-xs font-semibold border-0 cursor-pointer disabled:opacity-60 ${gestionStateColor(desvio.estado)}`}
-                              >
-                                {ESTADO_OPTIONS.map((op) => (
-                                  <option key={op} value={op}>
-                                    {gestionStateLabel(op)}
-                                  </option>
-                                ))}
-                              </select>
-                            </td>
-                            <td className={`px-4 py-3 text-sm ${esVencida ? 'text-red-600 font-semibold' : 'text-gray-600'}`}>
-                              {formatDate(desvio.plazo_fecha)}
-                              {esVencida && <span className="ml-1 text-xs">⚠</span>}
-                            </td>
-                            <td className="px-4 py-3 text-sm text-gray-600">{diasEnProceso}</td>
-                            <td className="px-4 py-3 text-sm text-gray-600">{desvio.eventos.length}</td>
-                            <td className="px-4 py-3 text-sm">
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setExpandedId(isExpanded ? null : desvio.id_gestion);
-                                }}
-                                className="rounded-md bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100"
-                              >
-                                {isExpanded ? 'Cerrar' : 'Ver'}
-                              </button>
-                            </td>
-                          </tr>
-
-                          {isExpanded && (
-                            <tr className="bg-gray-50 border-b border-gray-100">
-                              <td colSpan={9} className="px-4 py-4">
-                                <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-                                  <div>
-                                    <h4 className="mb-3 font-semibold text-gray-900 text-sm">Timeline</h4>
-                                    <div className="max-h-48 space-y-3 overflow-y-auto border rounded border-gray-200 bg-white p-3">
-                                      {desvio.eventos.length === 0 ? (
-                                        <p className="text-xs text-gray-500 text-center py-4">Sin eventos</p>
-                                      ) : (
-                                        desvio.eventos.map((evento) => (
-                                          <div key={evento.id} className="border-l-2 border-gray-300 pl-3 text-sm">
-                                            <p className="text-xs font-semibold text-gray-600">
-                                              {evento.tipo.toUpperCase()} • {evento.actor_nombre || 'Sistema'}
-                                            </p>
-                                            <p className="text-sm text-gray-700 mt-0.5">{evento.comentario}</p>
-                                            <p className="text-xs text-gray-500 mt-1">{formatDateTime(evento.created_at)}</p>
-                                          </div>
-                                        ))
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  <div className="space-y-3">
-                                    <div>
-                                      <label className="block text-sm font-semibold text-gray-900 mb-2">Agregar comentario</label>
-                                      <textarea
-                                        value={comentario}
-                                        onChange={(e) => setComentario(e.target.value)}
-                                        placeholder="..."
-                                        className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                        rows={3}
-                                      />
-                                      <button
-                                        type="button"
-                                        onClick={() => void handleComment(desvio.id_gestion)}
-                                        disabled={sending || !comentario.trim()}
-                                        className="mt-2 rounded bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-                                      >
-                                        {sending ? 'Enviando...' : 'Enviar'}
-                                      </button>
-                                    </div>
-
-                                    {desvio.estado !== 'Cerrada' && desvio.estado !== 'Resuelta' && (
-                                      <div>
-                                        <p className="text-xs font-semibold text-gray-700 mb-2">Cambiar estado</p>
-                                        <div className="flex flex-wrap gap-2">
-                                          {(['En_proceso', 'Resuelta', 'Cerrada'] as const).map((s) => (
-                                            <button
-                                              key={s}
-                                              type="button"
-                                              onClick={() => void handleStateChange(desvio.id_gestion, s)}
-                                              disabled={updatingId === desvio.id_gestion}
-                                              className="rounded border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
-                                            >
-                                              {gestionStateLabel(s)}
-                                            </button>
-                                          ))}
-                                        </div>
-                                      </div>
-                                    )}
-
-                                    {desvio.plan_accion && (
-                                      <div className="rounded border-l-4 border-blue-400 bg-blue-50 p-3">
-                                        <p className="text-xs font-semibold text-blue-900">Plan de acción:</p>
-                                        <p className="text-sm text-blue-800 mt-1">{desvio.plan_accion}</p>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+        {!loading && !error && desvios.length > 0 && (
+          <div className="bg-white">
+            <div className="hidden min-w-[1040px] grid-cols-[44px_150px_minmax(280px,1fr)_250px_190px_150px_76px] items-center border-b border-slate-200 bg-white px-4 py-3 text-xs font-bold uppercase tracking-wide text-slate-500 lg:grid">
+              <div><SelectBox checked={allSelected} onClick={toggleAll} /></div>
+              <div>Severidad</div>
+              <div>Desvio</div>
+              <div>Sucursal · Responsable</div>
+              <div>SLA</div>
+              <div>Estado</div>
+              <div className="text-right">Acciones</div>
             </div>
-          ))}
-        </div>
-      )}
+
+            {filtered.length === 0 && (
+              <div className="px-6 py-16 text-center">
+                <div className="text-lg font-bold text-slate-900">Sin resultados</div>
+                <div className="mt-1 text-sm text-slate-500">Ajusta los filtros o limpia la busqueda.</div>
+              </div>
+            )}
+
+            {groups.map((group) => (
+              <div key={group.key}>
+                {group.label && <GroupHeader label={group.label} count={group.items.length} accent={group.accent} />}
+                {group.items.map((desvio) => {
+                  const selectedRow = selected.has(desvio.id_gestion);
+                  return (
+                    <article
+                      key={desvio.id_gestion}
+                      onClick={() => setOpenId(desvio.id_gestion)}
+                      className="grid cursor-pointer grid-cols-[32px_1fr] gap-3 border-b border-slate-100 bg-white px-4 py-4 transition hover:bg-slate-50 lg:min-w-[1040px] lg:grid-cols-[44px_150px_minmax(280px,1fr)_250px_190px_150px_76px] lg:items-center lg:gap-0 lg:py-0"
+                    >
+                      <div className="pt-1 lg:pt-0"><SelectBox checked={selectedRow} onClick={() => toggleSelected(desvio.id_gestion)} /></div>
+                      <div className="lg:hidden">
+                        <div className="mb-3 flex flex-wrap items-center gap-2">
+                          <SeveridadBadge severidad={desvio.severidad} />
+                          <EstadoBadge estado={desvio.estado} size="sm" />
+                          <SlaPill desvio={desvio} />
+                        </div>
+                        <div className="font-semibold text-slate-950">{desvio.desvio}</div>
+                        <div className="mt-1 text-sm text-slate-500">{desvio.id_gestion} · {desvio.sucursal} · {desvio.responsable}</div>
+                      </div>
+
+                      <div className="hidden lg:block"><SeveridadBadge severidad={desvio.severidad} /></div>
+                      <div className="hidden min-w-0 py-3 pr-4 lg:block">
+                        <div className="truncate font-semibold text-slate-950">{desvio.desvio}</div>
+                        <div className="mt-1 flex items-center gap-2 text-xs text-slate-400">
+                          <span className="font-bold text-slate-500">{desvio.id_gestion}</span>
+                          <span>·</span>
+                          <span>{desvio.id_reporte || 'Sin reporte'}</span>
+                          {desvio.eventos.length > 0 && <span className="rounded-full bg-orange-100 px-2 py-0.5 font-bold text-orange-700">{desvio.eventos.length} eventos</span>}
+                        </div>
+                      </div>
+                      <div className="hidden min-w-0 py-3 pr-4 lg:block">
+                        <div className="truncate font-semibold text-slate-950">{desvio.sucursal}</div>
+                        <div className="mt-1 truncate text-xs text-slate-400">{desvio.responsable}</div>
+                      </div>
+                      <div className="hidden py-3 lg:block">
+                        <SlaPill desvio={desvio} />
+                        <div className="mt-1 text-xs text-slate-400">Plazo {formatDate(desvio.plazo_fecha)}</div>
+                      </div>
+                      <div className="hidden py-3 lg:block"><EstadoBadge estado={desvio.estado} size="sm" /></div>
+                      <div className="hidden justify-end gap-1 py-3 lg:flex" onClick={(event) => event.stopPropagation()}>
+                        <button type="button" onClick={() => handleWhatsapp(desvio)} className="rounded-md p-2 text-emerald-600 hover:bg-emerald-50" aria-label="Contactar por WhatsApp">
+                          <WhatsappIcon />
+                        </button>
+                        {desvio.estado !== 'Resuelta' && desvio.estado !== 'Cerrada' && (
+                          <button type="button" disabled={updatingId === desvio.id_gestion} onClick={() => void handleStateChange(desvio.id_gestion, 'Resuelta')} className="rounded-md p-2 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50" aria-label="Marcar resuelta">
+                            <CheckIcon />
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {selectedDesvio && (
+          <DetailDrawer
+            desvio={selectedDesvio}
+            tab={drawerTab}
+            setTab={setDrawerTab}
+            comentario={comentario}
+            setComentario={setComentario}
+            sending={sending}
+            updatingId={updatingId}
+            onClose={() => setOpenId(null)}
+            onStateChange={(id, state) => void handleStateChange(id, state)}
+            onComment={(id) => void handleComment(id)}
+            onWhatsapp={handleWhatsapp}
+          />
+        )}
+      </div>
     </AppLayout>
   );
 }

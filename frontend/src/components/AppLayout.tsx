@@ -8,9 +8,10 @@ interface AppLayoutProps {
   children: React.ReactNode;
   title: string;
   showAdmin?: boolean;
+  contentClassName?: string;
 }
 
-export function AppLayout({ children, title, showAdmin = true }: AppLayoutProps) {
+export function AppLayout({ children, title, showAdmin = true, contentClassName }: AppLayoutProps) {
   const { user, role, profile } = useAuth();
   const navigate = useNavigate();
   const { notificaciones, unreadCount, marcarLeida } = useNotificaciones();
@@ -150,7 +151,7 @@ export function AppLayout({ children, title, showAdmin = true }: AppLayoutProps)
         </div>
       </div>
 
-      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">{children}</div>
+      <div className={contentClassName || 'mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8'}>{children}</div>
       <Toaster position="bottom-right" richColors />
     </div>
   );
