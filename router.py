@@ -600,6 +600,16 @@ class ConversationRouter:
             await meta_client.send_text(payload.telefono, "No encontre una respuesta activa. Reintentemos con la pregunta actual.")
             return "respuesta_activa_missing"
 
+        if payload.context_message_id:
+            quoted_context = self.sheets.get_whatsapp_bot_message(payload.context_message_id)
+            quoted_bloque_id = str((quoted_context or {}).get("bloque_id") or "")
+            if quoted_bloque_id and quoted_bloque_id != respuesta_activa.bloque_id:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "Estoy guardando una respuesta en curso. Escribi LISTO para cerrarla y despues responde citado al bloque que queres aclarar.",
+                )
+                return "quoted_context_during_active_collection"
+
         cleaned = (payload.contenido or "").strip().upper()
         if cleaned in {"LISTO", "SIGUIENTE", "TERMINAR", "DONE", "FINISH"}:
             return await self._complete_respuesta_collection(
