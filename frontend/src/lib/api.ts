@@ -29,6 +29,8 @@ function handleApiError(error: { message?: string }): string {
 function getBotApiUrl(): string {
   const raw = String(import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
   if (!raw) return '';
+  const railwayHost = raw.match(/([a-z0-9-]+\.up\.railway\.app)/i)?.[1];
+  if (railwayHost) return `https://${railwayHost}`;
   if (/^https?:\/\//i.test(raw)) return raw;
   return `https://${raw}`;
 }

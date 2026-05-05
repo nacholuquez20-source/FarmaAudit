@@ -67,6 +67,21 @@ _dedup_store_available: bool | None = None
 _last_reminder_sent: dict[str, tuple[datetime, int]] = {}  # {id_sesion: (last_reminder_timestamp, reminders_sent)}
 
 
+def _json_list(value) -> list:
+    """Return a list from json/text/list fields stored by Supabase."""
+    if isinstance(value, list):
+        return value
+    if not value:
+        return []
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, list) else []
+        except Exception:
+            return []
+    return []
+
+
 def _get_supabase_client() -> Client | None:
     """Create Supabase client lazily for distributed deduplication."""
     global _supabase_client, _dedup_store_available
@@ -308,6 +323,7 @@ async def send_encargado_notification(payload: EncargadoNotificationRequest):
 
 
 @app.api_route("/api/desvios-borrador/{draft_id}/approve", methods=["POST", "GET", "OPTIONS"])
+@app.api_route("/desvios-borrador/{draft_id}/approve", methods=["POST", "GET", "OPTIONS"])
 async def approve_desvio_borrador(draft_id: str, request: Request):
     """Approve a WhatsApp draft and convert it to gestion/reportes."""
     if request.method == "OPTIONS":
@@ -324,6 +340,7 @@ async def approve_desvio_borrador(draft_id: str, request: Request):
 
 
 @app.api_route("/api/desvios-borrador/{draft_id}/discard", methods=["POST", "GET", "OPTIONS"])
+@app.api_route("/desvios-borrador/{draft_id}/discard", methods=["POST", "GET", "OPTIONS"])
 async def discard_desvio_borrador(
     draft_id: str,
     request: Request,
@@ -657,7 +674,7 @@ async def check_expired_audit_sessions():
             # After 60 minutes, auto-omit the point and advance
             if elapsed_minutes >= 60:
                 logger.info(f"Auto-omitting point due to inactivity: {sesion.id_sesion}")
-                omitidos = json.loads(sesion.omitidos_json) if sesion.omitidos_json else []
+                omitidos = _json_list(sesion.omitidos_json)
                 omitidos.append(sesion.punto_actual)
                 sesion.punto_actual += 1
                 sesion.timestamp_ultimo_punto = now_utc.isoformat()
