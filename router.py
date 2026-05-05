@@ -2512,8 +2512,8 @@ EJEMPLO SI HAY DESVIOS:
   {{"desvio": "Falta stock en gondolas", "severidad": "Alta"}}
 ]"""
 
-            response = self.parser.client.messages.create(
-                model="claude-3-5-sonnet-20241022",
+            response = await self.parser._get_client().messages.create(
+                model=self.parser.model,
                 max_tokens=500,
                 messages=[{"role": "user", "content": prompt}]
             )
