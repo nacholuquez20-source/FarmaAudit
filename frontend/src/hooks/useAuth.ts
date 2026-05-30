@@ -33,8 +33,9 @@ const DEV_PROFILE: UserProfile = {
 };
 
 const AuthContext = createContext<AuthState | null>(null);
-const PROFILE_LOAD_TIMEOUT_MS = 5000;
+const PROFILE_LOAD_TIMEOUT_MS = 15000;
 const AUTH_STORAGE_KEY = 'farma-audit-auth';
+const MAX_PROFILE_RETRIES = 2;
 
 function readModulePermissions(value: unknown): ModulePermission[] | null {
   return Array.isArray(value) ? (value.filter((item) => typeof item === 'string') as ModulePermission[]) : null;
@@ -78,13 +79,26 @@ async function loadProfile(userId: string, authUser?: User | null): Promise<User
   };
 }
 
-async function loadProfileWithTimeout(userId: string, authUser?: User | null): Promise<UserProfile | null> {
-  return Promise.race([
-    loadProfile(userId, authUser),
-    new Promise<UserProfile | null>((resolve) => {
-      window.setTimeout(() => resolve(null), PROFILE_LOAD_TIMEOUT_MS);
-    }),
-  ]);
+async function loadProfileWithRetry(userId: string, authUser?: User | null): Promise<UserProfile | null> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= MAX_PROFILE_RETRIES; attempt++) {
+    try {
+      return await Promise.race([
+        loadProfile(userId, authUser),
+        new Promise<UserProfile | null>((resolve) => {
+          window.setTimeout(() => resolve(null), PROFILE_LOAD_TIMEOUT_MS);
+        }),
+      ]);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (attempt < MAX_PROFILE_RETRIES) {
+        await new Promise(resolve => window.setTimeout(resolve, 1000 * (attempt + 1)));
+      }
+    }
+  }
+
+  throw lastError || new Error('Failed to load profile after retries');
 }
 
 function readCachedSessionUser(): User | null {
@@ -130,7 +144,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setProfileLoading(true);
       setProfileError(null);
       try {
-        const loadedProfile = await loadProfileWithTimeout(sessionUser.id, sessionUser);
+        const loadedProfile = await loadProfileWithRetry(sessionUser.id, sessionUser);
         if (!cancelled) {
           setProfile(loadedProfile);
           if (!loadedProfile) setProfileError('No se pudo cargar el perfil del usuario.');
@@ -139,7 +153,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.error('[AuthProvider] Failed to load profile:', err);
         if (!cancelled) {
           setProfile(null);
-          setProfileError(err instanceof Error ? err.message : 'No se pudo cargar el perfil del usuario.');
+          const message = err instanceof Error ? err.message : 'No se pudo cargar el perfil del usuario.';
+          setProfileError(message.includes('timeout') ? 'Conexión lenta. Reintentar...' : message);
         }
       } finally {
         if (!cancelled) setProfileLoading(false);

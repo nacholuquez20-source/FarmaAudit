@@ -18,11 +18,18 @@ const Admin = lazy(() => import('./pages/Admin'));
 
 function LoadingGate({ title }: { title: string }) {
   const [showRetry, setShowRetry] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setShowRetry(true), 2000);
+    const timer = window.setTimeout(() => setShowRetry(true), 3000);
     return () => window.clearTimeout(timer);
   }, []);
+
+  const handleRetry = () => {
+    setShowRetry(false);
+    setRetryCount(prev => prev + 1);
+    window.location.reload();
+  };
 
   return (
     <div className="flex h-screen items-center justify-center bg-gray-50">
@@ -30,11 +37,15 @@ function LoadingGate({ title }: { title: string }) {
         <FeedbackState title={title} />
         {showRetry && (
           <div className="mt-4 space-y-3">
-            <p className="text-sm text-gray-600">Esto esta tomando mas de lo esperado.</p>
+            <p className="text-sm text-gray-600">
+              {retryCount === 0
+                ? 'Esto esta tomando mas de lo esperado.'
+                : 'Aun cargando... verifica tu conexion.'}
+            </p>
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => window.location.reload()}
+                onClick={handleRetry}
                 className="flex-1 rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
               >
                 Refrescar
