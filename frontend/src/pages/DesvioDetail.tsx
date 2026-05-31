@@ -17,6 +17,7 @@ import { useDesvioDetail } from '../hooks/useDesvioDetail';
 import type { Gestion } from '../types';
 import { notificarEncargado, resolveEvidenceUrl } from '../lib/api';
 import { getWhatsappUrl } from '../lib/utils';
+import { ResolutionFormSchema } from '../lib/validation';
 
 function getDueState(gestion: Gestion): { label: string; className: string } {
   if (gestion.estado === 'Cerrada') {
@@ -174,17 +175,21 @@ export default function DesvioDetail() {
     event.preventDefault();
     if (!gestion) return;
 
-    const comment = resolutionComment.trim();
-    if (!comment) {
-      setActionError('El comentario de resolucion es obligatorio.');
-      return;
-    }
-
     setUpdatingStatus(true);
     setActionError('');
     setActionMessage('');
 
     try {
+      const validatedData = ResolutionFormSchema.parse({
+        resolutionComment,
+        evidenceText,
+        evidenceUrl,
+      });
+
+      const comment = validatedData.resolutionComment;
+      const evidence = validatedData.evidenceText?.trim() || null;
+      const url = validatedData.evidenceUrl?.trim() || null;
+
       await updateEstado('Resuelta');
       await addTimelineEvent({
         id_gestion: gestion.id_gestion,
@@ -192,18 +197,18 @@ export default function DesvioDetail() {
         comentario: comment,
         metadata: {
           estado: 'Resuelta',
-          evidencia_texto: evidenceText.trim() || null,
-          evidencia_url: evidenceUrl.trim() || null,
+          evidencia_texto: evidence,
+          evidencia_url: url,
         },
       });
 
-      if (evidenceText.trim() || evidenceUrl.trim()) {
+      if (evidence || url) {
         await addTimelineEvent({
           id_gestion: gestion.id_gestion,
           tipo: 'evidencia',
-          comentario: evidenceText.trim() || 'Evidencia adjunta por URL.',
+          comentario: evidence || 'Evidencia adjunta por URL.',
           metadata: {
-            evidencia_url: evidenceUrl.trim() || null,
+            evidencia_url: url,
           },
         });
       }
@@ -213,7 +218,8 @@ export default function DesvioDetail() {
       setEvidenceUrl('');
       setActionMessage('Desvio marcado como resuelto.');
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'No se pudo marcar como resuelto.');
+      const message = err instanceof Error ? err.message : 'No se pudo marcar como resuelto.';
+      setActionError(message);
     } finally {
       setUpdatingStatus(false);
     }
