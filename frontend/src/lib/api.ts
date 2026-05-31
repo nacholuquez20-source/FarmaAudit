@@ -21,6 +21,13 @@ import type {
   UpdatePanelUserInput,
 } from '../types';
 
+const VALID_STORAGE_BUCKETS = ['auditoria-respuestas', 'desvio-evidencias'] as const;
+type ValidBucket = typeof VALID_STORAGE_BUCKETS[number];
+
+function isValidBucket(bucket: unknown): bucket is ValidBucket {
+  return typeof bucket === 'string' && VALID_STORAGE_BUCKETS.includes(bucket as ValidBucket);
+}
+
 function handleApiError(error: { message?: string }): string {
   if (import.meta.env.DEV) {
     return error.message || 'An error occurred';
@@ -237,11 +244,14 @@ export async function uploadEvidencia(
   return { path, signedUrl: signed?.signedUrl ?? '' };
 }
 
-function getEvidenceBucket(path: string): string {
+function getEvidenceBucket(path: string): ValidBucket {
   return path.startsWith('auditoria/') ? 'auditoria-respuestas' : 'desvio-evidencias';
 }
 
-export async function getSignedUrl(path: string, bucket = getEvidenceBucket(path)): Promise<string> {
+export async function getSignedUrl(path: string, bucket: string = getEvidenceBucket(path)): Promise<string> {
+  if (!isValidBucket(bucket)) {
+    throw new Error(`Invalid storage bucket: ${bucket}. Allowed: ${VALID_STORAGE_BUCKETS.join(', ')}`);
+  }
   const { data, error } = await supabase.storage
     .from(bucket)
     .createSignedUrl(path, 60 * 60 * 24);
@@ -250,13 +260,14 @@ export async function getSignedUrl(path: string, bucket = getEvidenceBucket(path
   return data?.signedUrl ?? '';
 }
 
-export function parseStorageUrl(value?: string | null): { bucket: string; path: string } | null {
+export function parseStorageUrl(value?: string | null): { bucket: ValidBucket; path: string } | null {
   if (!value) return null;
   if (value.startsWith('storage://')) {
     const withoutProtocol = value.replace('storage://', '');
     const [bucket, ...pathParts] = withoutProtocol.split('/');
     const path = pathParts.join('/');
-    return bucket && path ? { bucket, path } : null;
+    if (!bucket || !path || !isValidBucket(bucket)) return null;
+    return { bucket, path };
   }
   if (value.startsWith('auditoria/')) {
     return { bucket: 'auditoria-respuestas', path: value };
@@ -278,7 +289,9 @@ export async function resolveEvidenceThumbUrl(evidencia?: { thumb_path?: string;
   if (!evidencia) return '';
   if (evidencia.thumb_path) {
     try {
-      const bucket = evidencia.bucket || getEvidenceBucket(evidencia.thumb_path);
+      const bucket = evidencia.bucket && isValidBucket(evidencia.bucket)
+        ? evidencia.bucket
+        : getEvidenceBucket(evidencia.thumb_path);
       return getSignedUrl(evidencia.thumb_path, bucket);
     } catch {
       return '';
