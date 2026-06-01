@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Send, Loader2 } from 'lucide-react';
 import { FeedbackState } from './FeedbackState';
 import { useMensajesInternos } from '../hooks/useMensajesInternos';
 import { formatDateTime } from '../lib/utils';
@@ -12,6 +13,16 @@ interface ChatMensajesProps {
 
 function getOrigen(evento: DesvioEvento): DesvioOrigen {
   return evento.metadata?.origen === 'sucursal' ? 'sucursal' : 'auditor';
+}
+
+function getInitials(name: string | null | undefined): string {
+  if (!name) return '?';
+  const parts = name.split(' ');
+  return parts.map((p) => p.charAt(0).toUpperCase()).join('').slice(0, 2);
+}
+
+function getAvatarColor(origen: DesvioOrigen): string {
+  return origen === 'sucursal' ? 'bg-blue-500' : 'bg-green-500';
 }
 
 export function ChatMensajes({ idGestion, eventos, onSent }: ChatMensajesProps) {
@@ -42,16 +53,31 @@ export function ChatMensajes({ idGestion, eventos, onSent }: ChatMensajesProps) 
           <div className="py-8 text-center text-sm text-gray-500">Todavia no hay mensajes.</div>
         ) : (
           mensajes.map((mensaje) => {
-            const fromSucursal = getOrigen(mensaje) === 'sucursal';
+            const origen = getOrigen(mensaje);
+            const fromSucursal = origen === 'sucursal';
+            const initials = getInitials(mensaje.actor_nombre);
+            const avatarColor = getAvatarColor(origen);
+
             return (
-              <div key={mensaje.id} className={`flex ${fromSucursal ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[82%] rounded-lg px-4 py-3 text-sm shadow-sm ${fromSucursal ? 'bg-blue-600 text-white' : 'bg-white text-gray-800'}`}>
-                  <div className={`mb-1 text-xs font-semibold ${fromSucursal ? 'text-blue-100' : 'text-gray-500'}`}>
-                    {mensaje.actor_nombre || (fromSucursal ? 'Sucursal' : 'Auditoria')}
+              <div key={mensaje.id} className={`flex gap-3 ${fromSucursal ? 'flex-row-reverse' : ''}`}>
+                <div className={`flex-shrink-0 ${avatarColor} h-8 w-8 rounded-full flex items-center justify-center text-xs font-semibold text-white`}>
+                  {initials}
+                </div>
+                <div className={`flex flex-col ${fromSucursal ? 'items-end' : 'items-start'} flex-1`}>
+                  <div className={`flex items-baseline gap-2 text-xs`}>
+                    <span className="font-semibold text-gray-900">
+                      {mensaje.actor_nombre || (fromSucursal ? 'Sucursal' : 'Auditoria')}
+                    </span>
+                    <span className="text-gray-500">{formatDateTime(mensaje.created_at)}</span>
                   </div>
-                  <div className="whitespace-pre-wrap break-words">{mensaje.comentario}</div>
-                  <div className={`mt-2 text-[11px] ${fromSucursal ? 'text-blue-100' : 'text-gray-400'}`}>
-                    {formatDateTime(mensaje.created_at)}
+                  <div
+                    className={`mt-1 max-w-[90%] rounded-lg px-4 py-3 text-sm shadow-sm ${
+                      fromSucursal
+                        ? 'bg-blue-600 text-white rounded-br-none'
+                        : 'bg-white text-gray-800 border border-gray-200 rounded-bl-none'
+                    }`}
+                  >
+                    <div className="whitespace-pre-wrap break-words">{mensaje.comentario}</div>
                   </div>
                 </div>
               </div>
@@ -64,15 +90,21 @@ export function ChatMensajes({ idGestion, eventos, onSent }: ChatMensajesProps) 
         <textarea
           value={texto}
           onChange={(event) => setTexto(event.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && e.ctrlKey) {
+              handleSubmit(e as any);
+            }
+          }}
           rows={2}
-          placeholder="Escribir mensaje..."
+          placeholder="Escribir mensaje... (Ctrl+Enter para enviar)"
           className="min-h-[48px] flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-transparent focus:ring-2 focus:ring-blue-500"
         />
         <button
           type="submit"
           disabled={enviando || !texto.trim()}
-          className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300 disabled:text-gray-600"
+          className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300 disabled:text-gray-600 transition"
         >
+          {enviando ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
           {enviando ? 'Enviando...' : 'Enviar'}
         </button>
       </form>

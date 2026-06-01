@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { FeedbackState } from './FeedbackState';
+import { ImageLightbox } from './ImageLightbox';
 import { getSignedUrl } from '../lib/api';
 import { formatDateTime } from '../lib/utils';
 import type { DesvioEvento, DesvioOrigen } from '../types';
@@ -35,6 +36,7 @@ function isImage(mimeType: string | null, url: string): boolean {
 
 export function EvidenciaGaleria({ eventos }: EvidenciaGaleriaProps) {
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   const evidencias = useMemo<EvidenciaItem[]>(
     () => eventos
@@ -91,13 +93,37 @@ export function EvidenciaGaleria({ eventos }: EvidenciaGaleriaProps) {
     );
   }
 
+  const imageEvidencias = evidencias.filter((item) => {
+    const url = item.path ? signedUrls[item.path] : item.legacyUrl;
+    return url && isImage(item.mimeType, url);
+  });
+
+  const handleImageClick = (index: number) => {
+    setLightboxIndex(index);
+  };
+
+  const handlePrevious = () => {
+    if (lightboxIndex !== null && lightboxIndex > 0) {
+      setLightboxIndex(lightboxIndex - 1);
+    }
+  };
+
+  const handleNext = () => {
+    if (lightboxIndex !== null && lightboxIndex < imageEvidencias.length - 1) {
+      setLightboxIndex(lightboxIndex + 1);
+    }
+  };
+
   return (
     <section className="rounded-lg bg-white p-6 shadow">
       <h2 className="mb-4 text-lg font-semibold text-gray-900">Galeria de evidencias</h2>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {evidencias.map((item) => {
+        {evidencias.map((item, index) => {
           const url = item.path ? signedUrls[item.path] : item.legacyUrl;
           const badge = item.origen === 'sucursal' ? 'Encargado' : 'Auditor';
+          const isImageFile = url && isImage(item.mimeType, url);
+          const imageIndex = isImageFile ? imageEvidencias.findIndex((e) => e.id === item.id) : -1;
+
           return (
             <article key={item.id} className="rounded-lg border border-gray-200 p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
@@ -105,19 +131,26 @@ export function EvidenciaGaleria({ eventos }: EvidenciaGaleriaProps) {
                 <span className="text-xs text-gray-500">{formatDateTime(item.created_at)}</span>
               </div>
               {url ? (
-                <a href={url} target="_blank" rel="noreferrer" className="group block">
-                  {isImage(item.mimeType, url) ? (
+                isImageFile ? (
+                  <button
+                    onClick={() => imageIndex >= 0 && handleImageClick(imageIndex)}
+                    className="group block w-full cursor-pointer"
+                    type="button"
+                    aria-label={`Open ${item.comentario || 'image'}`}
+                  >
                     <img
                       src={url}
                       alt={item.comentario || 'Evidencia'}
-                      className="h-32 w-full rounded object-cover ring-1 ring-gray-200 transition group-hover:opacity-90"
+                      className="h-32 w-full rounded object-cover ring-1 ring-gray-200 transition group-hover:opacity-75 group-hover:ring-blue-400"
                     />
-                  ) : (
+                  </button>
+                ) : (
+                  <a href={url} target="_blank" rel="noreferrer" className="group block">
                     <div className="flex h-32 items-center justify-center rounded bg-gray-100 text-sm font-medium text-blue-700">
                       Abrir archivo
                     </div>
-                  )}
-                </a>
+                  </a>
+                )
               ) : (
                 <div className="flex h-32 items-center justify-center rounded bg-gray-100 text-sm text-gray-500">
                   URL no disponible
@@ -134,6 +167,22 @@ export function EvidenciaGaleria({ eventos }: EvidenciaGaleriaProps) {
           );
         })}
       </div>
+
+      {lightboxIndex !== null && imageEvidencias[lightboxIndex] && (() => {
+        const item = imageEvidencias[lightboxIndex];
+        const url = item.path ? signedUrls[item.path] : item.legacyUrl;
+        return url ? (
+          <ImageLightbox
+            src={url}
+            alt={item.comentario || 'Evidencia'}
+            onClose={() => setLightboxIndex(null)}
+            currentIndex={lightboxIndex}
+            totalImages={imageEvidencias.length}
+            onPrevious={handlePrevious}
+            onNext={handleNext}
+          />
+        ) : null;
+      })()}
     </section>
   );
 }
