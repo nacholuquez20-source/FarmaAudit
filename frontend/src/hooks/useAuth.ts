@@ -63,20 +63,7 @@ async function loadProfile(userId: string, authUser?: User | null): Promise<User
     .maybeSingle();
 
   if (error) throw error;
-  const baseProfile = normalizeProfile(data, authUser);
-  if (!baseProfile || baseProfile.role !== 'sucursal') return baseProfile;
-
-  const { data: sucursalData, error: sucursalError } = await supabase
-    .from('profiles')
-    .select('id_sucursal')
-    .eq('id', userId)
-    .maybeSingle();
-
-  if (sucursalError) return baseProfile;
-  return {
-    ...baseProfile,
-    id_sucursal: typeof sucursalData?.id_sucursal === 'string' ? sucursalData.id_sucursal : null,
-  };
+  return normalizeProfile(data, authUser);
 }
 
 async function loadProfileWithRetry(userId: string, authUser?: User | null): Promise<UserProfile | null> {
