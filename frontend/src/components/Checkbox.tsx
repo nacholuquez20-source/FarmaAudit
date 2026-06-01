@@ -1,9 +1,10 @@
 import React from 'react';
 import { Check } from 'lucide-react';
 
-interface CheckboxProps extends React.InputHTMLAttributes<HTMLInputElement> {
+interface CheckboxProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type'> {
   label?: string;
   error?: string;
+  disabled?: boolean;
 }
 
 export function Checkbox({
@@ -26,7 +27,7 @@ export function Checkbox({
           className={`
             relative h-5 w-5 rounded border-2 transition-colors
             ${error ? 'border-red-500' : 'border-gray-300'}
-            ${!disabled && !props.disabled && 'cursor-pointer hover:border-gray-400'}
+            ${!disabled && 'cursor-pointer hover:border-gray-400'}
             ${disabled ? 'bg-gray-100 border-gray-200' : 'bg-white'}
             ${props.checked ? 'border-primary-navy bg-primary-navy' : ''}
           `.trim()}

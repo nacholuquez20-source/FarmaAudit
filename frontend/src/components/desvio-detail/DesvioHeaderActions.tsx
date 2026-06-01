@@ -7,7 +7,6 @@ interface DesvioHeaderActionsProps {
   whatsappUrl: string | null;
   contacting: boolean;
   notifying: boolean;
-  onBack: (path: string) => void;
   onContact: () => void;
   onNotify: () => void;
 }
@@ -18,7 +17,6 @@ export function DesvioHeaderActions({
   whatsappUrl,
   contacting,
   notifying,
-  onBack,
   onContact,
   onNotify,
 }: DesvioHeaderActionsProps) {

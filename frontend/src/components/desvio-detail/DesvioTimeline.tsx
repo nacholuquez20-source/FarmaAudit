@@ -1,6 +1,6 @@
 import { FeedbackState } from '../FeedbackState';
 import { formatDateTime } from '../../lib/utils';
-import { CheckCircle2, AlertCircle, MessageSquare, Image, Phone, Clock, X } from 'lucide-react';
+import { CheckCircle2, AlertCircle, MessageSquare, Image, Phone, Clock } from 'lucide-react';
 import type { DesvioEvento } from '../../types';
 
 interface DesvioTimelineProps {

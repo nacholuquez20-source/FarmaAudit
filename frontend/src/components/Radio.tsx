@@ -1,6 +1,4 @@
-import React from 'react';
-
-interface RadioOption {
+export interface RadioOption {
   value: string | number;
   label: string;
   disabled?: boolean;

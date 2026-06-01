@@ -2,9 +2,9 @@ import React from 'react';
 
 type TextareaSize = 'sm' | 'md' | 'lg';
 
-interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
+interface TextareaProps extends Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, 'size'> {
   label?: string;
-  size?: TextareaSize;
+  textareaSize?: TextareaSize;
   error?: string;
   helperText?: string;
   charLimit?: number;
@@ -18,7 +18,7 @@ const sizeClasses: Record<TextareaSize, string> = {
 
 export function Textarea({
   label,
-  size = 'md',
+  textareaSize = 'md',
   error,
   helperText,
   charLimit,
@@ -33,7 +33,7 @@ export function Textarea({
   const classes = `
     w-full rounded-lg border resize-vertical transition-colors
     ${error ? 'border-red-500 focus:border-red-600 focus:ring-red-100' : 'border-gray-300 focus:border-primary-navy focus:ring-blue-100'}
-    ${sizeClasses[size]}
+    ${sizeClasses[textareaSize]}
     disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed disabled:border-gray-200
     focus:outline-none focus:ring-2
     ${className}

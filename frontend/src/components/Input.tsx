@@ -3,10 +3,10 @@ import React from 'react';
 type InputSize = 'sm' | 'md' | 'lg';
 type InputType = 'text' | 'email' | 'password' | 'number' | 'tel' | 'url' | 'search' | 'date' | 'time';
 
-interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+interface InputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'size' | 'type'> {
   label?: string;
   type?: InputType;
-  size?: InputSize;
+  inputSize?: InputSize;
   error?: string;
   helperText?: string;
 }
@@ -20,7 +20,7 @@ const sizeClasses: Record<InputSize, string> = {
 export function Input({
   label,
   type = 'text',
-  size = 'md',
+  inputSize = 'md',
   error,
   helperText,
   className = '',
@@ -30,7 +30,7 @@ export function Input({
   const classes = `
     w-full rounded-lg border transition-colors
     ${error ? 'border-red-500 focus:border-red-600 focus:ring-red-100' : 'border-gray-300 focus:border-primary-navy focus:ring-blue-100'}
-    ${sizeClasses[size]}
+    ${sizeClasses[inputSize]}
     disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed disabled:border-gray-200
     focus:outline-none focus:ring-2
     ${className}

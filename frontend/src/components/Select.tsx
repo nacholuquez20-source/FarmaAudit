@@ -3,15 +3,15 @@ import { ChevronDown } from 'lucide-react';
 
 type SelectSize = 'sm' | 'md' | 'lg';
 
-interface SelectOption {
+export interface SelectOption {
   value: string | number;
   label: string;
   disabled?: boolean;
 }
 
-interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
+interface SelectProps extends Omit<React.SelectHTMLAttributes<HTMLSelectElement>, 'size'> {
   label?: string;
-  size?: SelectSize;
+  selectSize?: SelectSize;
   error?: string;
   helperText?: string;
   options: SelectOption[];
@@ -26,7 +26,7 @@ const sizeClasses: Record<SelectSize, string> = {
 
 export function Select({
   label,
-  size = 'md',
+  selectSize = 'md',
   error,
   helperText,
   options,
@@ -38,7 +38,7 @@ export function Select({
   const classes = `
     w-full appearance-none rounded-lg border pr-9 transition-colors
     ${error ? 'border-red-500 focus:border-red-600 focus:ring-red-100' : 'border-gray-300 focus:border-primary-navy focus:ring-blue-100'}
-    ${sizeClasses[size]}
+    ${sizeClasses[selectSize]}
     disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed disabled:border-gray-200
     focus:outline-none focus:ring-2
     ${className}

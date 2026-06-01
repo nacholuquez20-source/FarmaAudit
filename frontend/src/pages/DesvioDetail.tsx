@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { AppLayout } from '../components/AppLayout';
 import { ChatMensajes } from '../components/ChatMensajes';
 import { EvidenciaGaleria } from '../components/EvidenciaGaleria';
@@ -34,7 +34,6 @@ function getDueState(gestion: Gestion): { label: string; className: string } {
 
 export default function DesvioDetail() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
   const { user, profile, role } = useAuth();
   const { gestion, reporte, eventos, loading, error, eventsReady, reload, addEvento, updateEstado } = useDesvioDetail(id);
   const [actionError, setActionError] = useState('');
@@ -55,7 +54,6 @@ export default function DesvioDetail() {
 
   const actorName = profile?.nombre || user?.email || null;
   const canManageEstado = role === 'admin' || role === 'auditor';
-  const backPath = role === 'sucursal' ? '/mis-desvios' : '/gestion-desvios';
 
   useEffect(() => {
     let cancelled = false;
@@ -287,7 +285,6 @@ export default function DesvioDetail() {
         whatsappUrl={whatsappUrl}
         contacting={contacting}
         notifying={notifying}
-        onBack={() => navigate(backPath)}
         onContact={handleContact}
         onNotify={handleNotifyEncargado}
       />

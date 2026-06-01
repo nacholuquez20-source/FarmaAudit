@@ -8,6 +8,8 @@ export type ModulePermission =
   | 'admin';
 export type Severidad = 'Alta' | 'Media' | 'Baja';
 export type GestionState = 'Abierta' | 'En_proceso' | 'Resuelta' | 'Cerrada' | 'Vencida';
+export type SeverityType = Severidad;
+export type StatusType = GestionState;
 export type DesvioEventoTipo = 'creacion' | 'contacto' | 'respuesta' | 'cierre' | 'nota' | 'evidencia' | 'mensaje';
 export type DesvioOrigen = 'auditor' | 'sucursal';
 export type NotificacionTipo = 'mensaje_nuevo' | 'encargado_respondio' | 'estado_cambio' | 'vencimiento_proximo';

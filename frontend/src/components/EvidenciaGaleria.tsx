@@ -122,7 +122,7 @@ export function EvidenciaGaleria({ idGestion, eventos }: EvidenciaGaleriaProps) 
     <section className="rounded-lg bg-white p-6 shadow">
       <h2 className="mb-4 text-lg font-semibold text-gray-900">Galeria de evidencias</h2>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {evidencias.map((item, index) => {
+        {evidencias.map((item) => {
           const url = item.path ? signedUrls[item.path] : item.legacyUrl;
           const badge = item.origen === 'sucursal' ? 'Encargado' : 'Auditor';
           const isImageFile = url && isImage(item.mimeType, url);
