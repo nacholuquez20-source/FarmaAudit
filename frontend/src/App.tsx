@@ -53,7 +53,7 @@ function LoadingGate({ title }: { title: string }) {
               <button
                 type="button"
                 onClick={() => {
-                  window.localStorage.removeItem('farma-audit-auth');
+                  window.sessionStorage.removeItem('farma-audit-auth');
                   window.location.href = '/login';
                 }}
                 className="flex-1 rounded-lg bg-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-400"
@@ -88,7 +88,7 @@ function ProfileError({ message }: { message: string | null }) {
           <button
             type="button"
             onClick={() => {
-              window.localStorage.removeItem('farma-audit-auth');
+              window.sessionStorage.removeItem('farma-audit-auth');
               window.location.href = '/login';
             }}
             className="flex-1 rounded-lg bg-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-400"
