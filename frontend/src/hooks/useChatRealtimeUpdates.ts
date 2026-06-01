@@ -13,7 +13,7 @@ export function useChatRealtimeUpdates(idGestion: string, initialMensajes: Desvi
     if (!idGestion) return;
 
     const subscription = supabase
-      .from('desvio_eventos')
+      .channel(`desvio_eventos_${idGestion}`)
       .on(
         'postgres_changes',
         {
@@ -22,8 +22,8 @@ export function useChatRealtimeUpdates(idGestion: string, initialMensajes: Desvi
           table: 'desvio_eventos',
           filter: `id_gestion=eq.${idGestion}`,
         },
-        (payload) => {
-          const newEvento = payload.new as DesvioEvento;
+        (payload: { new: DesvioEvento }) => {
+          const newEvento = payload.new;
           if (newEvento.tipo === 'mensaje') {
             setMensajes((current) => {
               const exists = current.some((m) => m.id === newEvento.id);

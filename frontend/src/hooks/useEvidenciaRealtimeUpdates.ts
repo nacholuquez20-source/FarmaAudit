@@ -13,7 +13,7 @@ export function useEvidenciaRealtimeUpdates(idGestion: string, initialEventos: D
     if (!idGestion) return;
 
     const subscription = supabase
-      .from('desvio_eventos')
+      .channel(`desvio_eventos_evidencia_${idGestion}`)
       .on(
         'postgres_changes',
         {
@@ -22,8 +22,8 @@ export function useEvidenciaRealtimeUpdates(idGestion: string, initialEventos: D
           table: 'desvio_eventos',
           filter: `id_gestion=eq.${idGestion}`,
         },
-        (payload) => {
-          const newEvento = payload.new as DesvioEvento;
+        (payload: { new: DesvioEvento }) => {
+          const newEvento = payload.new;
           if (newEvento.tipo === 'evidencia') {
             setEventos((current) => {
               const exists = current.some((e) => e.id === newEvento.id);

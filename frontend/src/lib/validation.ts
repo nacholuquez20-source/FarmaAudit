@@ -71,7 +71,7 @@ export function validateResolutionForm(data: unknown) {
     return ResolutionFormSchema.parse(data);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return { error: error.errors[0]?.message || 'Validación fallida.' };
+      return { error: error.issues[0]?.message || 'Validación fallida.' };
     }
     return { error: 'Error validando el formulario.' };
   }
@@ -79,7 +79,7 @@ export function validateResolutionForm(data: unknown) {
 
 export function getValidationError(error: unknown): string | null {
   if (error instanceof z.ZodError) {
-    return error.errors[0]?.message || 'Validation failed';
+    return error.issues[0]?.message || 'Validation failed';
   }
   if (error instanceof Error) {
     return error.message;
