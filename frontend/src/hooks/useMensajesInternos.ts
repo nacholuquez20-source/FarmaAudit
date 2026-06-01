@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { crearNotificacionesDesvio, enviarMensajeInterno } from '../lib/api';
 import { useAuth } from './useAuth';
+import { useChatRealtimeUpdates } from './useChatRealtimeUpdates';
 import type { DesvioEvento, DesvioOrigen } from '../types';
 
 export function useMensajesInternos(idGestion: string, eventos: DesvioEvento[]) {
@@ -10,9 +11,14 @@ export function useMensajesInternos(idGestion: string, eventos: DesvioEvento[]) 
 
   const origen: DesvioOrigen = useMemo(() => (role === 'sucursal' ? 'sucursal' : 'auditor'), [role]);
 
+  const eventosConRealtime = useChatRealtimeUpdates(
+    idGestion,
+    eventos
+  );
+
   const mensajes = useMemo(
-    () => eventos.filter((evento) => evento.tipo === 'mensaje'),
-    [eventos],
+    () => eventosConRealtime.filter((evento) => evento.tipo === 'mensaje'),
+    [eventosConRealtime],
   );
 
   const enviar = async (texto: string): Promise<DesvioEvento> => {

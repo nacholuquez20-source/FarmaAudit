@@ -3,9 +3,11 @@ import { FeedbackState } from './FeedbackState';
 import { ImageLightbox } from './ImageLightbox';
 import { getSignedUrl } from '../lib/api';
 import { formatDateTime } from '../lib/utils';
+import { useEvidenciaRealtimeUpdates } from '../hooks/useEvidenciaRealtimeUpdates';
 import type { DesvioEvento, DesvioOrigen } from '../types';
 
 interface EvidenciaGaleriaProps {
+  idGestion: string;
   eventos: DesvioEvento[];
 }
 
@@ -34,12 +36,14 @@ function isImage(mimeType: string | null, url: string): boolean {
   return /\.(jpe?g|png|webp)(\?|$)/i.test(url);
 }
 
-export function EvidenciaGaleria({ eventos }: EvidenciaGaleriaProps) {
+export function EvidenciaGaleria({ idGestion, eventos }: EvidenciaGaleriaProps) {
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
+  const eventosConRealtime = useEvidenciaRealtimeUpdates(idGestion, eventos);
+
   const evidencias = useMemo<EvidenciaItem[]>(
-    () => eventos
+    () => eventosConRealtime
       .filter((evento) => evento.tipo === 'evidencia')
       .map((evento) => ({
         id: evento.id,
@@ -53,7 +57,7 @@ export function EvidenciaGaleria({ eventos }: EvidenciaGaleriaProps) {
         mimeType: readString(evento.metadata?.mime_type),
       }))
       .filter((item) => item.path || item.legacyUrl),
-    [eventos],
+    [eventosConRealtime],
   );
 
   useEffect(() => {

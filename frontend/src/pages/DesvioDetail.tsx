@@ -336,7 +336,7 @@ export default function DesvioDetail() {
         </div>
 
         <div className="lg:col-span-3">
-          <EvidenciaGaleria eventos={eventos} />
+          <EvidenciaGaleria idGestion={gestion.id_gestion} eventos={eventos} />
         </div>
 
         <DesvioTimeline eventos={eventos} />
