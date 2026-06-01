@@ -9,28 +9,12 @@ if (!supabaseUrl || !supabaseKey) {
   // Still create client so errors bubble up properly
 }
 
-const secureSessionStorage = {
-  getItem: (key: string) => {
-    if (typeof window === 'undefined') return null;
-    return sessionStorage.getItem(key);
-  },
-  setItem: (key: string, value: string) => {
-    if (typeof window === 'undefined') return;
-    sessionStorage.setItem(key, value);
-  },
-  removeItem: (key: string) => {
-    if (typeof window === 'undefined') return;
-    sessionStorage.removeItem(key);
-  },
-};
-
 export const supabase = createClient(supabaseUrl || '', supabaseKey || '', {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
     storageKey: 'farma-audit-auth',
-    storage: secureSessionStorage,
     lock: async (_name, _acquireTimeout, fn) => fn(),
   },
 });

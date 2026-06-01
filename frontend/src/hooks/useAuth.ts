@@ -103,7 +103,7 @@ async function loadProfileWithRetry(userId: string, authUser?: User | null): Pro
 
 function readCachedSessionUser(): User | null {
   try {
-    const raw = window.sessionStorage.getItem(AUTH_STORAGE_KEY);
+    const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as { user?: User; expires_at?: number };
     if (parsed.expires_at && parsed.expires_at * 1000 < Date.now()) return null;
