@@ -1,4 +1,6 @@
-import { formatDate, gestionStateColor, gestionStateLabel, severidadColor } from '../../lib/utils';
+import { formatDate } from '../../lib/utils';
+import { StatusBadge } from '../StatusBadge';
+import { SeverityBadge } from '../SeverityBadge';
 import type { Gestion, Reporte } from '../../types';
 
 interface DesvioInfoCardProps {
@@ -11,12 +13,8 @@ export function DesvioInfoCard({ gestion, reporte, dueState }: DesvioInfoCardPro
   return (
     <section className="rounded-lg bg-white p-6 shadow lg:col-span-2">
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <span className={`rounded px-3 py-1 text-xs font-semibold ${severidadColor(gestion.severidad)}`}>
-          {gestion.severidad}
-        </span>
-        <span className={`rounded px-3 py-1 text-xs font-semibold ${gestionStateColor(gestion.estado)}`}>
-          {gestionStateLabel(gestion.estado)}
-        </span>
+        <SeverityBadge severity={gestion.severidad} size="sm" />
+        <StatusBadge status={gestion.estado} size="sm" />
         <span className={`text-sm font-semibold ${dueState.className}`}>{dueState.label}</span>
       </div>
 
