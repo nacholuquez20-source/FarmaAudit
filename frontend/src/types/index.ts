@@ -301,3 +301,43 @@ export interface TendenciaDia {
   total: number;
   cerrados: number;
 }
+
+export type AuditBloqueId = 'LIMPIEZA' | 'STOCK' | 'OFERTAS' | 'BURBUJAS';
+
+export interface AuditEvidencia {
+  id: string;
+  tipo: 'foto' | 'audio' | 'texto_manual';
+  url?: string;
+  contenido?: string;
+  duracion?: string;
+  timestamp: string;
+  asociado_a?: string;
+}
+
+export interface AuditDesvio {
+  id: string;
+  evidencias: AuditEvidencia[];
+  descripcion: string;
+  timestamp: string;
+}
+
+export interface AuditBloque {
+  id: AuditBloqueId;
+  nombre: string;
+  puntuacion: number | null;
+  desvios: AuditDesvio[];
+  timestamp_inicio?: string;
+  timestamp_fin?: string;
+}
+
+export interface AuditSession {
+  id: string;
+  id_sucursal: string;
+  sucursal: string;
+  auditor_id: string;
+  auditor_nombre: string;
+  bloques: AuditBloque[];
+  estado: 'en_progreso' | 'enviada' | 'procesada';
+  timestamp_inicio: string;
+  timestamp_fin?: string;
+}

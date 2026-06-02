@@ -57,12 +57,18 @@ export default function SucursalDetail() {
 
   return (
     <AppLayout title={sucursal.nombre}>
-      <div className="mb-6">
+      <div className="mb-6 flex justify-between items-center">
         <button
           onClick={() => navigate('/sucursales')}
           className="text-blue-600 hover:text-blue-800 font-medium"
         >
           Volver a Sucursales
+        </button>
+        <button
+          onClick={() => navigate(`/sucursales/${sucursal.id}/auditoria`)}
+          className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium"
+        >
+          + Iniciar Auditoría Perfumería
         </button>
       </div>
 
