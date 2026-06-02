@@ -2934,36 +2934,24 @@ EDITAR → Hacer cambios""",
 
             logger.info(f"Proceeding with session {sesion.id_sesion} for phone {payload.telefono}")
 
-            # Load bloques from memory (stored when session was created)
-            # For now, load default bloques since we're not persisting them
-            bloques_json = {
-                "PRES": {"puntuacion": None, "evidencias": [], "desvios": []},
-                "GOND": {"puntuacion": None, "evidencias": [], "desvios": []},
-                "STOCK": {"puntuacion": None, "evidencias": [], "desvios": []},
-                "REVISTA": {"puntuacion": None, "evidencias": [], "desvios": []},
-                "PERSONAL": {"puntuacion": None, "evidencias": [], "desvios": []},
-                "COND": {"puntuacion": None, "evidencias": [], "desvios": []},
-                "ATENCION": {"puntuacion": None, "evidencias": [], "desvios": []},
-                "EXTRAS": {"puntuacion": None, "evidencias": [], "desvios": []},
-            }
+            # Load block scores from resultados_json
+            resultados = json.loads(sesion.resultados_json) if sesion.resultados_json else {}
+            bloque_scores = resultados.get("bloques", {})
 
+            bloques_ids = ["LIMPIEZA", "STOCK", "OFERTAS", "BURBUJAS"]
             bloque_nombres = {
-                "PRES": "Presentación",
-                "GOND": "Gondolas",
+                "LIMPIEZA": "Limpieza",
                 "STOCK": "Stock",
-                "REVISTA": "Revista",
-                "PERSONAL": "Personal",
-                "COND": "Condiciones",
-                "ATENCION": "Atención",
-                "EXTRAS": "Extras",
+                "OFERTAS": "Ofertas",
+                "BURBUJAS": "Burbujas",
             }
 
             menu = "🏪 Auditoría Perfumería - Flujo Libre\n\n"
             menu += "Selecciona un bloque para auditar:\n\n"
 
-            for i, (bloque_id, bloque_data) in enumerate(bloques_json.items(), 1):
+            for i, bloque_id in enumerate(bloques_ids, 1):
                 nombre = bloque_nombres.get(bloque_id, bloque_id)
-                puntuacion = bloque_data.get("puntuacion")
+                puntuacion = bloque_scores.get(bloque_id)
                 estado = f"✅ ({puntuacion}/5)" if puntuacion else "⏳"
                 menu += f"{i}. {nombre} {estado}\n"
 
@@ -3011,7 +2999,7 @@ EDITAR → Hacer cambios""",
                 return "sesion_not_found"
 
             # Load default bloques structure (blocks are kept in memory, not persisted)
-            bloques_ids = ["PRES", "GOND", "STOCK", "REVISTA", "PERSONAL", "COND", "ATENCION", "EXTRAS"]
+            bloques_ids = ["LIMPIEZA", "STOCK", "OFERTAS", "BURBUJAS"]
 
             # Load scores from resultados_json
             resultados = json.loads(sesion.resultados_json) if sesion.resultados_json else {}
