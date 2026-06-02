@@ -4,9 +4,10 @@ import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { AuditBlocksPanel } from '../components/AuditBlocksPanel';
 import { EvidenceCapture } from '../components/EvidenceCapture';
+import { DesvioCreationDialog } from '../components/DesvioCreationDialog';
 import { Button } from '../components/Button';
 import { getSucursal } from '../lib/api';
-import type { Sucursal, AuditBloqueId, AuditBloque, AuditSession } from '../types';
+import type { Sucursal, AuditBloqueId, AuditBloque, AuditSession, AuditEvidencia } from '../types';
 
 const INITIAL_BLOQUES: AuditBloque[] = [
   {
@@ -45,6 +46,8 @@ export default function AuditPerfumeria() {
   const [activeBloque, setActiveBloque] = useState<AuditBloqueId | null>('LIMPIEZA');
   const [bloques, setBloques] = useState<AuditBloque[]>(INITIAL_BLOQUES);
   const [submitting, setSubmitting] = useState(false);
+  const [showDesvioDialog, setShowDesvioDialog] = useState(false);
+  const [currentDesvioId, setCurrentDesvioId] = useState<string | null>(null);
 
   useEffect(() => {
     const loadSucursal = async () => {
@@ -74,8 +77,10 @@ export default function AuditPerfumeria() {
     );
   };
 
-  const handleAddEvidence = (evidence: any) => {
+  const handleAddEvidence = (evidence: AuditEvidencia) => {
     if (!activeBloque) return;
+
+    let desvioBeingDescribed: string | null = null;
 
     setBloques((prev) =>
       prev.map((bloque) => {
@@ -84,6 +89,7 @@ export default function AuditPerfumeria() {
           const desvio = bloque.desvios.find((d) => !d.descripcion);
 
           if (desvio) {
+            desvioBeingDescribed = desvio.id;
             return {
               ...bloque,
               desvios: bloque.desvios.map((d) =>
@@ -91,6 +97,7 @@ export default function AuditPerfumeria() {
               ),
             };
           } else {
+            desvioBeingDescribed = desvioId;
             return {
               ...bloque,
               desvios: [
@@ -108,6 +115,28 @@ export default function AuditPerfumeria() {
         return bloque;
       })
     );
+
+    if (desvioBeingDescribed) {
+      setCurrentDesvioId(desvioBeingDescribed);
+      setShowDesvioDialog(true);
+    }
+  };
+
+  const handleSaveDesvioDescription = (descripcion: string) => {
+    setBloques((prev) =>
+      prev.map((bloque) =>
+        bloque.id === activeBloque
+          ? {
+              ...bloque,
+              desvios: bloque.desvios.map((d) =>
+                d.id === currentDesvioId ? { ...d, descripcion } : d
+              ),
+            }
+          : bloque
+      )
+    );
+    setShowDesvioDialog(false);
+    setCurrentDesvioId(null);
   };
 
   const handleSubmit = async () => {
@@ -232,6 +261,22 @@ export default function AuditPerfumeria() {
           </Button>
         </div>
       </div>
+
+      {activeBloque && currentDesvioId && (
+        <DesvioCreationDialog
+          isOpen={showDesvioDialog}
+          onClose={() => {
+            setShowDesvioDialog(false);
+            setCurrentDesvioId(null);
+          }}
+          onSave={handleSaveDesvioDescription}
+          evidencias={
+            bloques
+              .find((b) => b.id === activeBloque)
+              ?.desvios.find((d) => d.id === currentDesvioId)?.evidencias || []
+          }
+        />
+      )}
     </AppLayout>
   );
 }

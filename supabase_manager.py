@@ -53,6 +53,30 @@ class SupabaseManager:
         ttl = get_settings().cache_ttl
         return (datetime.utcnow() - timestamp).total_seconds() < ttl
 
+    def verify_tables_accessible(self) -> Dict[str, bool]:
+        """Verify that required tables are accessible."""
+        tables_to_check = [
+            "sucursales",
+            "checklist_perfumeria",
+            "auditores",
+            "sesiones_auditoria",
+            "conversaciones",
+        ]
+        results = {}
+        for table_name in tables_to_check:
+            try:
+                logger.debug(f"Checking table {table_name}...")
+                response = self.client.table(table_name).select("*").execute()
+                row_count = len(response.data) if response.data else 0
+                logger.info(f"✅ Table {table_name} is accessible ({row_count} rows)")
+                results[table_name] = True
+            except Exception as e:
+                logger.error(f"❌ Table {table_name} is NOT accessible: {e}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                results[table_name] = False
+        return results
+
     def _set_cache(self, table_name: str, data: List[Dict]) -> None:
         """Cache table data."""
         self._cache[table_name] = (data, datetime.utcnow())
@@ -172,10 +196,13 @@ class SupabaseManager:
         """Get all facilities (cached)."""
         cached = self._get_cache("sucursales")
         if cached:
+            logger.debug(f"Returning {len(cached)} cached sucursales")
             return [Sucursal(**row) for row in cached]
 
         try:
+            logger.debug("Fetching sucursales from Supabase...")
             response = self.client.table("sucursales").select("*").execute()
+            logger.debug(f"Supabase response: {response}")
             sucursales = [
                 Sucursal(
                     id=row.get("id", ""),
@@ -192,6 +219,9 @@ class SupabaseManager:
             return sucursales
         except Exception as e:
             logger.error(f"Failed to get facilities: {e}")
+            logger.error(f"Exception type: {type(e).__name__}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return []
 
     # ========== Areas ==========
@@ -1041,13 +1071,16 @@ class SupabaseManager:
         """Get perfumery audit checklist grouped by block (cached)."""
         cached = self._get_cache("checklist_perfumeria")
         if cached:
+            logger.debug(f"Returning cached checklist_perfumeria with {len(cached)} bloques")
             return {
                 bloque: [ChecklistPerfumeriaPunto(**item) for item in items]
                 for bloque, items in cached.items()
             }
 
         try:
+            logger.debug("Fetching checklist_perfumeria from Supabase...")
             response = self.client.table("checklist_perfumeria").select("*").execute()
+            logger.debug(f"Supabase response: {response}")
             bloques: Dict[str, List[ChecklistPerfumeriaPunto]] = {}
 
             for row in response.data or []:
@@ -1078,6 +1111,9 @@ class SupabaseManager:
             return bloques
         except Exception as e:
             logger.error(f"Failed to get perfumery checklist: {e}")
+            logger.error(f"Exception type: {type(e).__name__}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return {}
 
     def get_checklist_perfumeria_flat(self) -> List[ChecklistPerfumeriaPunto]:

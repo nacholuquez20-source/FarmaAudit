@@ -2076,7 +2076,14 @@ class ConversationRouter:
                 )
                 return "invalid_number"
 
-            sucursales = self.sheets.get_all_sucursales()
+            try:
+                logger.info("Loading sucursales...")
+                sucursales = self.sheets.get_all_sucursales()
+                logger.info(f"Loaded {len(sucursales)} sucursales")
+            except Exception as e:
+                logger.error(f"Error loading sucursales: {e}")
+                raise
+
             if not sucursales or choice < 1 or choice > len(sucursales):
                 await meta_client.send_text(
                     payload.telefono,
@@ -2087,7 +2094,14 @@ class ConversationRouter:
             sucursal = sucursales[choice - 1]
 
             # Get perfumery checklist
-            bloques_perfumeria = self.sheets.get_checklist_perfumeria()
+            try:
+                logger.info("Loading checklist perfumeria...")
+                bloques_perfumeria = self.sheets.get_checklist_perfumeria()
+                logger.info(f"Loaded {len(bloques_perfumeria)} bloques")
+            except Exception as e:
+                logger.error(f"Error loading checklist perfumeria: {e}")
+                raise
+
             if not bloques_perfumeria:
                 await meta_client.send_text(
                     payload.telefono,
@@ -2098,7 +2112,13 @@ class ConversationRouter:
             # Create audit session
             import uuid
             sesion_id = str(uuid.uuid4())[:12]
-            auditor = self.sheets.get_auditor(payload.telefono)
+            try:
+                logger.info(f"Loading auditor {payload.telefono}...")
+                auditor = self.sheets.get_auditor(payload.telefono)
+                logger.info(f"Loaded auditor: {auditor}")
+            except Exception as e:
+                logger.error(f"Error loading auditor: {e}")
+                raise
 
             # Get first block
             bloques_ordenados = sorted(bloques_perfumeria.keys())
@@ -2163,7 +2183,9 @@ class ConversationRouter:
             return await self._handle_auditoria_perfumeria_libre(mock_payload, mock_conv, meta_client)
 
         except Exception as e:
+            import traceback
             logger.error(f"Error handling sucursal selection: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             await meta_client.send_text(
                 payload.telefono,
                 "❌ Error iniciando auditoría.",
