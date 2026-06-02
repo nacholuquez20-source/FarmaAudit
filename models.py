@@ -192,7 +192,6 @@ class SesionAuditoria:
     stock_items_json: str = "[]"
     desvios_libres_json: str = "[]"
     compromisos_firmados: str = ""
-    bloques_data: str = "{}"
 
 
 @dataclass

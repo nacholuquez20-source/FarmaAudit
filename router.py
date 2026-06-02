@@ -2151,7 +2151,6 @@ class ConversationRouter:
                 stock_items_json="[]",
                 desvios_libres_json="[]",
                 compromisos_firmados="",
-                bloques_data=json.dumps(bloques_json, ensure_ascii=False),
             )
 
             self.sheets.create_sesion(sesion)

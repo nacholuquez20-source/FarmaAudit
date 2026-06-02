@@ -1147,7 +1147,6 @@ class SupabaseManager:
                 "stock_items_json": sesion.stock_items_json,
                 "desvios_libres_json": sesion.desvios_libres_json,
                 "compromisos_firmados": sesion.compromisos_firmados,
-                "bloques_data": sesion.bloques_data,
             }).execute()
 
             logger.info(f"Created sesion {sesion.id_sesion}")
