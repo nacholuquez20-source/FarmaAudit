@@ -2946,16 +2946,22 @@ EDITAR → Hacer cambios""",
                 "BURBUJAS": "Burbujas",
             }
 
-            menu = "🏪 Auditoría Perfumería - Flujo Libre\n\n"
-            menu += "Selecciona un bloque para auditar:\n\n"
+            # Calculate progress
+            scored_count = sum(1 for b in bloques_ids if bloque_scores.get(b))
+            total_count = len(bloques_ids)
+
+            menu = f"🏪 Auditoría Perfumería ({scored_count}/{total_count})\n\n"
+            menu += "Selecciona un bloque:\n\n"
 
             for i, bloque_id in enumerate(bloques_ids, 1):
                 nombre = bloque_nombres.get(bloque_id, bloque_id)
                 puntuacion = bloque_scores.get(bloque_id)
-                estado = f"✅ ({puntuacion}/5)" if puntuacion else "⏳"
+                estado = f"✅ {puntuacion}/5" if puntuacion else "⏳"
                 menu += f"{i}. {nombre} {estado}\n"
 
-            menu += "\n9. Terminar auditoría\n\nResponde con el número."
+            if scored_count == total_count:
+                menu += "\n9. Completar auditoría"
+            menu += "\n\nResponde con el número."
 
             await meta_client.send_text(payload.telefono, menu)
 
@@ -3099,22 +3105,34 @@ EDITAR → Hacer cambios""",
                 resultados_json=json.dumps(resultados, ensure_ascii=False),
             )
 
-            # Ask to capture evidence
-            menu = f"✅ {bloque_id} calificado con {score}/5.\n\n"
-            menu += "¿Quieres agregar evidencia (foto/audio/texto)?\n\n"
-            menu += "1. Sí, agregar evidencia\n"
-            menu += "2. No, siguiente bloque\n\n"
-            menu += "Responde con el número."
+            # If score is low (< 4), automatically ask for evidence; otherwise go to next block
+            if score < 4:
+                menu = f"⚠️ {bloque_id}: {score}/5\n\n"
+                menu += "Agrega evidencia (foto/audio/texto):\n\n"
+                menu += "- Foto 📷\n"
+                menu += "- Audio 🎙️\n"
+                menu += "- Texto 💬\n"
+                menu += "\nO escribe 'listo' para siguiente bloque."
 
-            await meta_client.send_text(payload.telefono, menu)
+                await meta_client.send_text(payload.telefono, menu)
 
-            self.sheets.update_conversacion(
-                telefono=payload.telefono,
-                estado=ConversationState.PERFUMERIA_CAPTURANDO_EVIDENCIA,
-                id_pendiente=conv.id_pendiente,
-                ultimo_mensaje=json.dumps({"bloque_id": bloque_id, "score": score}),
-            )
-            return "score_guardado"
+                self.sheets.update_conversacion(
+                    telefono=payload.telefono,
+                    estado=ConversationState.PERFUMERIA_CAPTURANDO_EVIDENCIA,
+                    id_pendiente=conv.id_pendiente,
+                    ultimo_mensaje=json.dumps({"bloque_id": bloque_id, "score": score}),
+                )
+                return "score_bajo_necesita_evidencia"
+            else:
+                # Score is good (4-5), go back to menu
+                await meta_client.send_text(payload.telefono, f"✅ {bloque_id}: {score}/5")
+
+                self.sheets.update_conversacion(
+                    telefono=payload.telefono,
+                    estado=ConversationState.AUDITORIA_PERFUMERIA_LIBRE,
+                    id_pendiente=conv.id_pendiente,
+                )
+                return await self._handle_auditoria_perfumeria_libre(payload, conv, meta_client)
 
         except Exception as e:
             logger.error(f"Error in _handle_perfumeria_calificacion: {e}", exc_info=True)
@@ -3197,10 +3215,8 @@ EDITAR → Hacer cambios""",
                     await meta_client.send_text(payload.telefono, "⚠️ Error guardando el audio. Intenta de nuevo.")
                     return "audio_error"
 
-                menu = "✅ Audio recibido y guardado.\n\n"
-                menu += "1. Agregar más evidencia\n"
-                menu += "2. Siguiente bloque\n\n"
-                menu += "Responde con el número."
+                menu = "✅ Audio guardado.\n\n"
+                menu += "Continúa agregando evidencia o escribe 'listo' para siguiente."
 
                 await meta_client.send_text(payload.telefono, menu)
 
@@ -3237,11 +3253,8 @@ EDITAR → Hacer cambios""",
                     await meta_client.send_text(payload.telefono, "⚠️ Error guardando la foto. Intenta de nuevo.")
                     return "foto_error"
 
-                menu = "✅ Foto recibida y guardada.\n\n"
-                menu += "¿Quieres describir qué viste en esta foto?\n\n"
-                menu += "1. Sí, describir\n"
-                menu += "2. No, siguiente\n\n"
-                menu += "Responde con el número."
+                menu = "✅ Foto guardada.\n\n"
+                menu += "Describe brevemente el desvío o escribe 'listo' para siguiente:"
 
                 await meta_client.send_text(payload.telefono, menu)
 
@@ -3274,10 +3287,7 @@ EDITAR → Hacer cambios""",
                         timestamp_ultimo_punto=self._utc_now_iso(),
                     )
 
-                menu = "✅ Texto guardado.\n\n"
-                menu += "1. Agregar más evidencia\n"
-                menu += "2. Siguiente bloque\n\n"
-                menu += "Responde con el número."
+                menu = "✅ Guardado.\n\nContinúa o escribe 'listo' para siguiente bloque."
 
                 await meta_client.send_text(payload.telefono, menu)
 
