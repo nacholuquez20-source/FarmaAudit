@@ -2155,6 +2155,7 @@ class ConversationRouter:
             )
 
             self.sheets.create_sesion(sesion)
+            logger.info(f"Created sesion {sesion_id}, preparing to show block menu")
 
             # Update conversation state to new free-form flow
             self.sheets.update_conversacion(
@@ -2168,6 +2169,10 @@ class ConversationRouter:
                 payload.telefono,
                 f"✅ Comenzando auditoría de perfumería en {sucursal.nombre}."
             )
+
+            # Small delay to ensure session is persisted before fetching
+            import asyncio
+            await asyncio.sleep(0.5)
 
             # Show block menu
             mock_payload = WhatsAppPayload(

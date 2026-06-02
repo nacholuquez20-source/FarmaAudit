@@ -1157,38 +1157,53 @@ class SupabaseManager:
             raise
 
     def get_sesion(self, id_sesion: str) -> Optional[SesionAuditoria]:
-        """Get audit session by ID."""
-        try:
-            response = self.client.table("sesiones_auditoria").select("*").eq(
-                "id_sesion", id_sesion
-            ).execute()
-            data = response.data
-            if data:
-                row = data[0]
-                return SesionAuditoria(
-                    id_sesion=row.get("id_sesion", ""),
-                    telefono_auditor=str(row.get("telefono_auditor", "")),
-                    sucursal_id=row.get("sucursal_id", ""),
-                    estado=row.get("estado", "en_curso"),
-                    timestamp_inicio=row.get("timestamp_inicio", ""),
-                    timestamp_ultimo_punto=row.get("timestamp_ultimo_punto", ""),
-                    punto_actual=int(row.get("punto_actual", 0)),
-                    total_puntos=int(row.get("total_puntos", 0)),
-                    hallazgos_json=row.get("hallazgos_json", "[]"),
-                    omitidos_json=row.get("omitidos_json", "[]"),
-                    bloque_actual=row.get("bloque_actual", "A"),
-                    resultados_json=row.get("resultados_json", "{}"),
-                    stock_total=int(row.get("stock_total", 0)),
-                    stock_actual=int(row.get("stock_actual", 0)),
-                    stock_items_json=row.get("stock_items_json", "[]"),
-                    desvios_libres_json=row.get("desvios_libres_json", "[]"),
-                    compromisos_firmados=row.get("compromisos_firmados", ""),
-                    bloques_auditoria_json=row.get("bloques_auditoria_json", "{}"),
-                )
-            return None
-        except Exception as e:
-            logger.error(f"Failed to get sesion {id_sesion}: {e}")
-            return None
+        """Get audit session by ID with retry logic."""
+        import time
+        max_retries = 3
+        retry_delay = 0.2  # seconds
+
+        for attempt in range(max_retries):
+            try:
+                logger.debug(f"get_sesion attempt {attempt + 1}/{max_retries} for {id_sesion}")
+                response = self.client.table("sesiones_auditoria").select("*").eq(
+                    "id_sesion", id_sesion
+                ).execute()
+                logger.debug(f"get_sesion response: {response}")
+                data = response.data
+                if data:
+                    row = data[0]
+                    return SesionAuditoria(
+                        id_sesion=row.get("id_sesion", ""),
+                        telefono_auditor=str(row.get("telefono_auditor", "")),
+                        sucursal_id=row.get("sucursal_id", ""),
+                        estado=row.get("estado", "en_curso"),
+                        timestamp_inicio=row.get("timestamp_inicio", ""),
+                        timestamp_ultimo_punto=row.get("timestamp_ultimo_punto", ""),
+                        punto_actual=int(row.get("punto_actual", 0)),
+                        total_puntos=int(row.get("total_puntos", 0)),
+                        hallazgos_json=row.get("hallazgos_json", "[]"),
+                        omitidos_json=row.get("omitidos_json", "[]"),
+                        bloque_actual=row.get("bloque_actual", "A"),
+                        resultados_json=row.get("resultados_json", "{}"),
+                        stock_total=int(row.get("stock_total", 0)),
+                        stock_actual=int(row.get("stock_actual", 0)),
+                        stock_items_json=row.get("stock_items_json", "[]"),
+                        desvios_libres_json=row.get("desvios_libres_json", "[]"),
+                        compromisos_firmados=row.get("compromisos_firmados", ""),
+                        bloques_auditoria_json=row.get("bloques_auditoria_json", "{}"),
+                    )
+                logger.debug(f"get_sesion: No data found for {id_sesion}")
+                return None
+            except Exception as e:
+                logger.error(f"get_sesion attempt {attempt + 1}/{max_retries} failed: {e}")
+                if attempt < max_retries - 1:
+                    logger.info(f"Retrying get_sesion in {retry_delay}s...")
+                    time.sleep(retry_delay)
+                else:
+                    logger.error(f"All retries exhausted for get_sesion {id_sesion}")
+                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
+                    return None
 
     def update_sesion(
         self,
