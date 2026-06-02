@@ -6,7 +6,8 @@ import { AuditBlocksPanel } from '../components/AuditBlocksPanel';
 import { EvidenceCapture } from '../components/EvidenceCapture';
 import { DesvioCreationDialog } from '../components/DesvioCreationDialog';
 import { Button } from '../components/Button';
-import { getSucursal } from '../lib/api';
+import { getSucursal, submitPerfumeriaAudit } from '../lib/api';
+import { supabase } from '../lib/supabase';
 import type { Sucursal, AuditBloqueId, AuditBloque, AuditSession, AuditEvidencia } from '../types';
 
 const INITIAL_BLOQUES: AuditBloque[] = [
@@ -144,20 +145,44 @@ export default function AuditPerfumeria() {
 
     try {
       setSubmitting(true);
-      const auditData: AuditSession = {
-        id: `audit_${Date.now()}`,
-        id_sucursal: sucursal.id,
-        sucursal: sucursal.nombre,
-        auditor_id: 'current_user_id',
-        auditor_nombre: 'Current User',
-        bloques,
-        estado: 'enviada',
-        timestamp_inicio: new Date().toISOString(),
+
+      // Get current user info
+      const { data } = await supabase.auth.getSession();
+      const user = data.session?.user;
+      const userMetadata = user?.user_metadata || {};
+      const auditorNombre = userMetadata.nombre || user?.email || 'Auditor';
+      const auditorPhone = user?.phone || '';
+
+      // Build bloques_scores array
+      const bloques_scores = bloques.map((bloque) => ({
+        id: bloque.id,
+        nombre: bloque.nombre,
+        puntuacion: bloque.puntuacion || 0,
+      }));
+
+      // Extract deviations (desvios) from bloques
+      const desvios = bloques.flatMap((bloque) =>
+        bloque.desvios
+          .filter((desvio) => desvio.descripcion)
+          .map((desvio) => ({
+            id: desvio.id,
+            bloque: bloque.id,
+            descripcion: desvio.descripcion,
+            foto_url: desvio.evidencias.find((e) => e.tipo === 'foto')?.url || null,
+          }))
+      );
+
+      const payload = {
+        id_sesion: `audit_${Date.now()}`,
+        sucursal_id: sucursal.id,
+        sucursal_nombre: sucursal.nombre,
+        auditor_nombre: auditorNombre,
+        auditor_telefono: auditorPhone,
+        bloques_scores,
+        desvios,
       };
 
-      // TODO: Send to backend
-      console.log('Submitting audit:', auditData);
-
+      await submitPerfumeriaAudit(payload);
       navigate('/sucursales');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al enviar auditoría');

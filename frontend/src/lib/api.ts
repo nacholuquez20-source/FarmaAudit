@@ -952,3 +952,31 @@ export async function getDashboardStats(sucursalId?: string | null): Promise<Das
     throw new Error('Failed to fetch dashboard stats', { cause: error });
   }
 }
+
+export async function submitPerfumeriaAudit(payload: {
+  id_sesion: string;
+  sucursal_id: string;
+  sucursal_nombre: string;
+  auditor_nombre: string;
+  auditor_telefono: string;
+  bloques_scores: Array<{ id: string; nombre: string; puntuacion: number }>;
+  desvios: Array<{ id: string; bloque: string; descripcion: string; foto_url?: string | null }>;
+}): Promise<{ status: string; deviations_created: number }> {
+  const apiUrl = getBotApiUrl();
+  if (!apiUrl) {
+    throw new Error('Falta configurar VITE_API_URL con la URL del bot.');
+  }
+
+  const response = await fetch(`${apiUrl}/api/auditorias-completadas/perfumeria`, {
+    method: 'POST',
+    headers: await getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new Error(errorData.detail || 'No se pudo guardar la auditoría');
+  }
+
+  return response.json();
+}
