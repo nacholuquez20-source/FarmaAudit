@@ -79,6 +79,29 @@ class PanelUserUpdateRequest(BaseModel):
 class DesvioBorradorDiscardRequest(BaseModel):
     reason: str | None = None
 
+
+class BloqueScore(BaseModel):
+    id: str
+    nombre: str
+    puntuacion: int  # 1-5
+
+
+class DesvioItem(BaseModel):
+    id: str
+    bloque: str
+    descripcion: str
+    foto_url: str | None = None
+
+
+class AuditoriaCompletadaPerfumeriaRequest(BaseModel):
+    id_sesion: str
+    sucursal_id: str
+    sucursal_nombre: str
+    auditor_nombre: str
+    auditor_telefono: str
+    bloques_scores: list[BloqueScore]
+    desvios: list[DesvioItem] = []
+
 # Lazy initialization - these will be created on demand
 router = None
 sheets = None
@@ -680,6 +703,82 @@ async def discard_desvio_borrador(
     except Exception as exc:
         logger.error(f"Failed to discard desvio borrador {draft_id}: {exc}", exc_info=True)
         raise HTTPException(status_code=500, detail="No se pudo descartar el borrador")
+
+
+@app.post("/api/auditorias-completadas/perfumeria")
+async def create_perfumeria_deviations(payload: AuditoriaCompletadaPerfumeriaRequest, request: Request):
+    """Receive completed perfumery audit from frontend and create deviation records."""
+    profile = await _require_admin_or_auditor(request)
+    client = _get_supabase_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="Supabase is not configured")
+
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        created_deviations = []
+
+        for desvio in payload.desvios:
+            deviation_record = {
+                "id_sesion": payload.id_sesion,
+                "sucursal_id": payload.sucursal_id,
+                "sucursal_nombre": payload.sucursal_nombre,
+                "bloque": desvio.bloque,
+                "descripcion": desvio.descripcion,
+                "foto_url": desvio.foto_url,
+                "auditor_nombre": payload.auditor_nombre,
+                "auditor_telefono": payload.auditor_telefono,
+                "estado": "abierto",
+                "timestamp_creacion": now,
+                "timestamp_notificacion": now,
+            }
+
+            response = (
+                client.table("desvios_auditoria_perfumeria")
+                .insert(deviation_record)
+                .execute()
+            )
+            if response.data:
+                created_deviations.append(response.data[0])
+
+        # Get sucursal info to find responsable contact
+        sucursal_response = (
+            client.table("sucursales")
+            .select("responsable, tel_responsable")
+            .eq("id", payload.sucursal_id)
+            .maybe_single()
+            .execute()
+        )
+        sucursal_info = sucursal_response.data or {}
+        tel_responsable = sucursal_info.get("tel_responsable")
+
+        # Notify responsable about deviations if phone number exists
+        if tel_responsable and created_deviations:
+            normalized_tel = "".join(ch for ch in tel_responsable if ch.isdigit())
+            if normalized_tel:
+                deviation_count = len(created_deviations)
+                blocques_list = ", ".join({d["bloque"] for d in created_deviations})
+
+                message = (
+                    f"FarmaAudit: Se detectaron {deviation_count} desvío(s) en {payload.sucursal_nombre}\n\n"
+                    f"Bloque(s): {blocques_list}\n\n"
+                    f"Auditor: {payload.auditor_nombre}\n\n"
+                    "Responde este WhatsApp para gestionar los desvíos encontrados."
+                )
+
+                meta_client = MetaClient()
+                sent = await meta_client.send_text(normalized_tel, message)
+                if not sent:
+                    logger.warning(f"Failed to notify responsable {normalized_tel} about deviations")
+
+        logger.info(
+            f"Created {len(created_deviations)} deviations for audit {payload.id_sesion} "
+            f"in sucursal {payload.sucursal_id}"
+        )
+        return {"status": "ok", "deviations_created": len(created_deviations)}
+
+    except Exception as exc:
+        logger.error(f"Failed to create perfumeria deviations: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="No se pudieron crear los desvíos")
 
 
 # @app.get("/sync-now")
