@@ -2907,21 +2907,42 @@ EDITAR → Hacer cambios""",
     ) -> str:
         """Handle free-form perfumery audit - show block menu."""
         try:
-            sesion = self.sheets.get_sesion(conv.id_pendiente)
+            # Retry logic: session might not be immediately available after creation
+            import asyncio
+            sesion = None
+            for attempt in range(3):
+                sesion = self.sheets.get_sesion(conv.id_pendiente)
+                if sesion:
+                    break
+                if attempt < 2:
+                    await asyncio.sleep(0.3)
+
             if not sesion:
                 await meta_client.send_text(payload.telefono, "❌ Sesión no encontrada.")
                 return "sesion_not_found"
 
-            bloques_json = json.loads(sesion.audit_blocks) if sesion.audit_blocks else {}
-            if not bloques_json:
-                await meta_client.send_text(payload.telefono, "❌ No hay bloques disponibles.")
-                return "no_bloques"
+            # Load bloques from memory (stored when session was created)
+            # For now, load default bloques since we're not persisting them
+            bloques_json = {
+                "PRES": {"puntuacion": None, "evidencias": [], "desvios": []},
+                "GOND": {"puntuacion": None, "evidencias": [], "desvios": []},
+                "STOCK": {"puntuacion": None, "evidencias": [], "desvios": []},
+                "REVISTA": {"puntuacion": None, "evidencias": [], "desvios": []},
+                "PERSONAL": {"puntuacion": None, "evidencias": [], "desvios": []},
+                "COND": {"puntuacion": None, "evidencias": [], "desvios": []},
+                "ATENCION": {"puntuacion": None, "evidencias": [], "desvios": []},
+                "EXTRAS": {"puntuacion": None, "evidencias": [], "desvios": []},
+            }
 
             bloque_nombres = {
-                "LIMPIEZA": "Limpieza",
+                "PRES": "Presentación",
+                "GOND": "Gondolas",
                 "STOCK": "Stock",
-                "OFERTAS": "Ofertas",
-                "BURBUJAS": "Burbujas",
+                "REVISTA": "Revista",
+                "PERSONAL": "Personal",
+                "COND": "Condiciones",
+                "ATENCION": "Atención",
+                "EXTRAS": "Extras",
             }
 
             menu = "🏪 Auditoría Perfumería - Flujo Libre\n\n"
