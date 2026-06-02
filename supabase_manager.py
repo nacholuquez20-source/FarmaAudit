@@ -1234,7 +1234,6 @@ class SupabaseManager:
         punto_actual: int = 0,
         hallazgos_json: str = "[]",
         omitidos_json: str = "[]",
-        bloques_auditoria_json: str = "{}",
     ) -> None:
         """Update audit session."""
         try:
@@ -1250,12 +1249,11 @@ class SupabaseManager:
                 "punto_actual": punto_actual,
                 "hallazgos_json": hallazgos_json,
                 "omitidos_json": omitidos_json,
-                "bloques_auditoria_json": bloques_auditoria_json,
             }).eq("id_sesion", id_sesion).execute()
 
             logger.info(f"Updated sesion {id_sesion}")
         except Exception as e:
-            logger.error(f"Failed to update sesion {id_sesion}: {e}")
+            logger.error(f"Failed to update sesion {id_sesion}: {e}", exc_info=True)
             raise
 
     def get_sesiones_activas_expiradas(self, timeout_min: int = 15) -> List[SesionAuditoria]:
