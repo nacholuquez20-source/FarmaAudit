@@ -2154,7 +2154,6 @@ class ConversationRouter:
             )
 
             self.sheets.create_sesion(sesion)
-            self.sheets.create_sesion_bloques(sesion_id, json.dumps(bloques_json, ensure_ascii=False))
             logger.info(f"Created sesion {sesion_id}, preparing to show block menu")
 
             # Update conversation state to new free-form flow
