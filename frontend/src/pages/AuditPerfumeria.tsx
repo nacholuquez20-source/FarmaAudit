@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { AuditBlocksPanel } from '../components/AuditBlocksPanel';
+import { EvidenceCapture } from '../components/EvidenceCapture';
 import { Button } from '../components/Button';
 import { getSucursal } from '../lib/api';
 import type { Sucursal, AuditBloqueId, AuditBloque, AuditSession } from '../types';
@@ -67,9 +68,45 @@ export default function AuditPerfumeria() {
     setBloques((prev) =>
       prev.map((bloque) =>
         bloque.id === bloqueId
-          ? { ...bloque, puntuacion: score }
+          ? { ...bloque, puntuacion: score, timestamp_inicio: new Date().toISOString() }
           : bloque
       )
+    );
+  };
+
+  const handleAddEvidence = (evidence: any) => {
+    if (!activeBloque) return;
+
+    setBloques((prev) =>
+      prev.map((bloque) => {
+        if (bloque.id === activeBloque) {
+          const desvioId = `desvio_${bloque.id}_${bloque.desvios.length + 1}`;
+          const desvio = bloque.desvios.find((d) => !d.descripcion);
+
+          if (desvio) {
+            return {
+              ...bloque,
+              desvios: bloque.desvios.map((d) =>
+                d === desvio ? { ...d, evidencias: [...d.evidencias, evidence] } : d
+              ),
+            };
+          } else {
+            return {
+              ...bloque,
+              desvios: [
+                ...bloque.desvios,
+                {
+                  id: desvioId,
+                  evidencias: [evidence],
+                  descripcion: '',
+                  timestamp: new Date().toISOString(),
+                },
+              ],
+            };
+          }
+        }
+        return bloque;
+      })
     );
   };
 
@@ -150,6 +187,33 @@ export default function AuditPerfumeria() {
           onSelectBloque={setActiveBloque}
           onScoreChange={handleScoreChange}
         />
+
+        {activeBloque && (
+          (() => {
+            const activeBlock = bloques.find((b) => b.id === activeBloque);
+            return activeBlock && activeBlock.puntuacion !== null ? (
+              <div className="mt-8 bg-white rounded-lg shadow p-6">
+                <h3 className="font-semibold text-gray-900 mb-4">Capturar Evidencia</h3>
+                <EvidenceCapture onAddEvidence={handleAddEvidence} />
+                {activeBlock.desvios.length > 0 && (
+                  <div className="mt-6 space-y-3">
+                    <h4 className="font-medium text-gray-800">Desvíos Detectados</h4>
+                    {activeBlock.desvios.map((desvio) => (
+                      <div key={desvio.id} className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                        <div className="text-sm font-medium text-gray-700">
+                          {desvio.evidencias.length} evidencia{desvio.evidencias.length !== 1 ? 's' : ''}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          {desvio.evidencias.map((e) => e.tipo).join(', ')}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : null;
+          })()
+        )}
 
         <div className="mt-8 flex gap-3 justify-end">
           <Button
