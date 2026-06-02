@@ -2124,7 +2124,7 @@ class ConversationRouter:
             bloques_ordenados = sorted(bloques_perfumeria.keys())
             primer_bloque = bloques_ordenados[0] if bloques_ordenados else ""
 
-            # Initialize bloques_auditoria_json with empty structure for each block
+            # Initialize audit_blocks with empty structure for each block
             bloques_json = {}
             for bloque_id in bloques_ordenados:
                 bloques_json[bloque_id] = {
@@ -2151,7 +2151,7 @@ class ConversationRouter:
                 stock_items_json="[]",
                 desvios_libres_json="[]",
                 compromisos_firmados="",
-                # bloques_auditoria_json=json.dumps(bloques_json, ensure_ascii=False),
+                audit_blocks=json.dumps(bloques_json, ensure_ascii=False),
             )
 
             self.sheets.create_sesion(sesion)
@@ -2913,7 +2913,7 @@ EDITAR → Hacer cambios""",
                 await meta_client.send_text(payload.telefono, "❌ Sesión no encontrada.")
                 return "sesion_not_found"
 
-            bloques_json = json.loads(sesion.bloques_auditoria_json) if sesion.bloques_auditoria_json else {}
+            bloques_json = json.loads(sesion.audit_blocks) if sesion.audit_blocks else {}
             if not bloques_json:
                 await meta_client.send_text(payload.telefono, "❌ No hay bloques disponibles.")
                 return "no_bloques"
@@ -2977,7 +2977,7 @@ EDITAR → Hacer cambios""",
                 await meta_client.send_text(payload.telefono, "❌ Sesión no encontrada.")
                 return "sesion_not_found"
 
-            bloques_json = json.loads(sesion.bloques_auditoria_json) if sesion.bloques_auditoria_json else {}
+            bloques_json = json.loads(sesion.audit_blocks) if sesion.audit_blocks else {}
             bloques_ids = list(bloques_json.keys())
 
             if choice < 1 or choice > len(bloques_ids):
@@ -3061,8 +3061,8 @@ EDITAR → Hacer cambios""",
                 await meta_client.send_text(payload.telefono, "❌ Error: bloque no identificado.")
                 return "bloque_not_found"
 
-            # Update bloques_auditoria_json with score
-            bloques_json = json.loads(sesion.bloques_auditoria_json) if sesion.bloques_auditoria_json else {}
+            # Update audit_blocks with score
+            bloques_json = json.loads(sesion.audit_blocks) if sesion.audit_blocks else {}
             if bloque_id in bloques_json:
                 bloques_json[bloque_id]["puntuacion"] = score
 
@@ -3070,7 +3070,7 @@ EDITAR → Hacer cambios""",
                 id_sesion=sesion.id_sesion,
                 estado=sesion.estado,
                 timestamp_ultimo_punto=self._utc_now_iso(),
-                bloques_auditoria_json=json.dumps(bloques_json, ensure_ascii=False),
+                audit_blocks=json.dumps(bloques_json, ensure_ascii=False),
             )
 
             # Ask to capture evidence
@@ -3161,7 +3161,7 @@ EDITAR → Hacer cambios""",
                     # Save audio to session evidence
                     sesion = self.sheets.get_sesion(conv.id_pendiente)
                     if sesion:
-                        bloques_json = json.loads(sesion.bloques_auditoria_json) if sesion.bloques_auditoria_json else {}
+                        bloques_json = json.loads(sesion.audit_blocks) if sesion.audit_blocks else {}
                         if bloque_id in bloques_json:
                             bloques_json[bloque_id]["evidencias"].append({
                                 "tipo": "audio",
@@ -3174,7 +3174,7 @@ EDITAR → Hacer cambios""",
                                 id_sesion=sesion.id_sesion,
                                 estado=sesion.estado,
                                 timestamp_ultimo_punto=self._utc_now_iso(),
-                                bloques_auditoria_json=json.dumps(bloques_json, ensure_ascii=False),
+                                audit_blocks=json.dumps(bloques_json, ensure_ascii=False),
                             )
                 except Exception as e:
                     logger.error(f"Error downloading/saving audio: {e}", exc_info=True)
@@ -3211,7 +3211,7 @@ EDITAR → Hacer cambios""",
                     # Save photo to session evidence
                     sesion = self.sheets.get_sesion(conv.id_pendiente)
                     if sesion:
-                        bloques_json = json.loads(sesion.bloques_auditoria_json) if sesion.bloques_auditoria_json else {}
+                        bloques_json = json.loads(sesion.audit_blocks) if sesion.audit_blocks else {}
                         if bloque_id in bloques_json:
                             bloques_json[bloque_id]["evidencias"].append({
                                 "tipo": "foto",
@@ -3224,7 +3224,7 @@ EDITAR → Hacer cambios""",
                                 id_sesion=sesion.id_sesion,
                                 estado=sesion.estado,
                                 timestamp_ultimo_punto=self._utc_now_iso(),
-                                bloques_auditoria_json=json.dumps(bloques_json, ensure_ascii=False),
+                                audit_blocks=json.dumps(bloques_json, ensure_ascii=False),
                             )
                 except Exception as e:
                     logger.error(f"Error downloading/saving photo: {e}", exc_info=True)
@@ -3262,7 +3262,7 @@ EDITAR → Hacer cambios""",
                 # Save text evidence
                 sesion = self.sheets.get_sesion(conv.id_pendiente)
                 if sesion:
-                    bloques_json = json.loads(sesion.bloques_auditoria_json) if sesion.bloques_auditoria_json else {}
+                    bloques_json = json.loads(sesion.audit_blocks) if sesion.audit_blocks else {}
                     if bloque_id in bloques_json:
                         bloques_json[bloque_id]["evidencias"].append({
                             "tipo": "texto",
@@ -3273,7 +3273,7 @@ EDITAR → Hacer cambios""",
                             id_sesion=sesion.id_sesion,
                             estado=sesion.estado,
                             timestamp_ultimo_punto=self._utc_now_iso(),
-                            bloques_auditoria_json=json.dumps(bloques_json, ensure_ascii=False),
+                            audit_blocks=json.dumps(bloques_json, ensure_ascii=False),
                         )
 
                 menu = "✅ Texto guardado.\n\n"
@@ -3359,7 +3359,7 @@ EDITAR → Hacer cambios""",
                 # Save deviation with evidence reference
                 sesion = self.sheets.get_sesion(conv.id_pendiente)
                 if sesion:
-                    bloques_json = json.loads(sesion.bloques_auditoria_json) if sesion.bloques_auditoria_json else {}
+                    bloques_json = json.loads(sesion.audit_blocks) if sesion.audit_blocks else {}
                     if bloque_id in bloques_json:
                         # Find last evidence (photo) that prompted this description
                         last_evidence_idx = None
@@ -3375,7 +3375,7 @@ EDITAR → Hacer cambios""",
                             id_sesion=sesion.id_sesion,
                             estado=sesion.estado,
                             timestamp_ultimo_punto=self._utc_now_iso(),
-                            bloques_auditoria_json=json.dumps(bloques_json, ensure_ascii=False),
+                            audit_blocks=json.dumps(bloques_json, ensure_ascii=False),
                         )
 
                 await meta_client.send_text(payload.telefono, "✅ Desvío guardado.")
@@ -3414,7 +3414,7 @@ EDITAR → Hacer cambios""",
             auditor_nombre = auditor.nombre if auditor else "Auditor"
 
             # Process deviations and create reporte/gestion for each
-            bloques_json = json.loads(sesion.bloques_auditoria_json) if sesion.bloques_auditoria_json else {}
+            bloques_json = json.loads(sesion.audit_blocks) if sesion.audit_blocks else {}
             bloque_nombres = {
                 "LIMPIEZA": "Limpieza",
                 "STOCK": "Stock",

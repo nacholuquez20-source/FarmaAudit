@@ -192,7 +192,7 @@ class SesionAuditoria:
     stock_items_json: str = "[]"
     desvios_libres_json: str = "[]"
     compromisos_firmados: str = ""
-    bloques_auditoria_json: str = "{}"  # For free-form perfumery: {bloque_id: {puntuacion, evidencias[], desvios[]}}
+    audit_blocks: str = "{}"  # For free-form perfumery: {bloque_id: {puntuacion, evidencias[], desvios[]}}
 
 
 @dataclass
