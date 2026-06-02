@@ -1189,7 +1189,6 @@ class SupabaseManager:
                         stock_items_json=row.get("stock_items_json", "[]"),
                         desvios_libres_json=row.get("desvios_libres_json", "[]"),
                         compromisos_firmados=row.get("compromisos_firmados", ""),
-                        bloques_auditoria_json=row.get("bloques_auditoria_json", "{}"),
                     )
                 logger.debug(f"get_sesion: No data found for {id_sesion}")
                 return None
