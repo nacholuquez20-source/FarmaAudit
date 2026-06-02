@@ -707,7 +707,7 @@ async def discard_desvio_borrador(
 
 @app.post("/api/auditorias-completadas/perfumeria")
 async def create_perfumeria_deviations(payload: AuditoriaCompletadaPerfumeriaRequest, request: Request):
-    """Receive completed perfumery audit from frontend and create deviation records."""
+    """Receive completed perfumery audit from frontend and create Gestion records."""
     profile = await _require_admin_or_auditor(request)
     client = _get_supabase_client()
     if client is None:
@@ -715,52 +715,112 @@ async def create_perfumeria_deviations(payload: AuditoriaCompletadaPerfumeriaReq
 
     try:
         now = datetime.now(timezone.utc).isoformat()
-        created_deviations = []
-
-        for desvio in payload.desvios:
-            deviation_record = {
-                "id_sesion": payload.id_sesion,
-                "sucursal_id": payload.sucursal_id,
-                "sucursal_nombre": payload.sucursal_nombre,
-                "bloque": desvio.bloque,
-                "descripcion": desvio.descripcion,
-                "foto_url": desvio.foto_url,
-                "auditor_nombre": payload.auditor_nombre,
-                "auditor_telefono": payload.auditor_telefono,
-                "estado": "abierto",
-                "timestamp_creacion": now,
-                "timestamp_notificacion": now,
-            }
-
-            response = (
-                client.table("desvios_auditoria_perfumeria")
-                .insert(deviation_record)
-                .execute()
-            )
-            if response.data:
-                created_deviations.append(response.data[0])
+        created_gestiones = []
 
         # Get sucursal info to find responsable contact
         sucursal_response = (
             client.table("sucursales")
-            .select("responsable, tel_responsable")
+            .select("responsable, tel_responsable, zona")
             .eq("id", payload.sucursal_id)
             .maybe_single()
             .execute()
         )
         sucursal_info = sucursal_response.data or {}
-        tel_responsable = sucursal_info.get("tel_responsable")
+        responsable = sucursal_info.get("responsable", "")
+        tel_responsable = sucursal_info.get("tel_responsable", "")
+
+        for desvio in payload.desvios:
+            # Create Reporte record
+            reporte_record = {
+                "fecha": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                "hora": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+                "cuadrilla": "",  # Not applicable for perfumery audits
+                "auditor": payload.auditor_nombre,
+                "id_sucursal": payload.sucursal_id,
+                "sucursal": payload.sucursal_nombre,
+                "area": desvio.bloque,  # Map bloque to area
+                "subitem": "",  # Not applicable for free-form perfumery audits
+                "descripcion": desvio.descripcion,
+                "severidad": "Media",  # Default severity, could be parameterized later
+                "foto_url": desvio.foto_url,
+                "creado_por_audio": False,
+                "timestamp": now,
+            }
+
+            reporte_response = (
+                client.table("reportes")
+                .insert(reporte_record)
+                .execute()
+            )
+
+            if not reporte_response.data:
+                logger.error(f"Failed to create reporte for desvio {desvio.id}")
+                continue
+
+            reporte_id = reporte_response.data[0]["id"]
+
+            # Create Gestion record
+            gestion_record = {
+                "id_reporte": reporte_id,
+                "id_sucursal": payload.sucursal_id,
+                "sucursal": payload.sucursal_nombre,
+                "desvio": desvio.descripcion,
+                "severidad": "Media",
+                "responsable": responsable,
+                "tel_responsable": tel_responsable,
+                "plazo_fecha": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+                "plan_accion": "",  # Empty initially, responsable fills it
+                "estado": "Abierta",
+                "created_at": now,
+                "updated_at": now,
+            }
+
+            gestion_response = (
+                client.table("gestiones")
+                .insert(gestion_record)
+                .execute()
+            )
+
+            if not gestion_response.data:
+                logger.error(f"Failed to create gestion for reporte {reporte_id}")
+                continue
+
+            gestion_id = gestion_response.data[0]["id_gestion"]
+            created_gestiones.append(gestion_response.data[0])
+
+            # Create initial DesvioEvento for creation
+            evento_record = {
+                "id_gestion": gestion_id,
+                "tipo": "creacion",
+                "comentario": f"Desvío detectado en auditoría perfumería - Bloque: {desvio.bloque}",
+                "actor_nombre": payload.auditor_nombre,
+                "actor_id": payload.auditor_telefono,
+                "metadata": {
+                    "bloque": desvio.bloque,
+                    "foto_url": desvio.foto_url,
+                    "id_sesion": payload.id_sesion,
+                },
+                "created_at": now,
+            }
+
+            evento_response = (
+                client.table("desvio_eventos")
+                .insert(evento_record)
+                .execute()
+            )
+
+            if not evento_response.data:
+                logger.warning(f"Failed to create evento for gestion {gestion_id}")
 
         # Notify responsable about deviations if phone number exists
-        if tel_responsable and created_deviations:
+        if tel_responsable and created_gestiones:
             normalized_tel = "".join(ch for ch in tel_responsable if ch.isdigit())
             if normalized_tel:
-                deviation_count = len(created_deviations)
-                blocques_list = ", ".join({d["bloque"] for d in created_deviations})
+                deviation_count = len(created_gestiones)
+                bloques_list = ", ".join({r.get("desvio", "")[:20] for r in created_gestiones if r.get("desvio")})
 
                 message = (
                     f"FarmaAudit: Se detectaron {deviation_count} desvío(s) en {payload.sucursal_nombre}\n\n"
-                    f"Bloque(s): {blocques_list}\n\n"
                     f"Auditor: {payload.auditor_nombre}\n\n"
                     "Responde este WhatsApp para gestionar los desvíos encontrados."
                 )
@@ -771,13 +831,13 @@ async def create_perfumeria_deviations(payload: AuditoriaCompletadaPerfumeriaReq
                     logger.warning(f"Failed to notify responsable {normalized_tel} about deviations")
 
         logger.info(
-            f"Created {len(created_deviations)} deviations for audit {payload.id_sesion} "
+            f"Created {len(created_gestiones)} gestiones for audit {payload.id_sesion} "
             f"in sucursal {payload.sucursal_id}"
         )
-        return {"status": "ok", "deviations_created": len(created_deviations)}
+        return {"status": "ok", "deviations_created": len(created_gestiones)}
 
     except Exception as exc:
-        logger.error(f"Failed to create perfumeria deviations: {exc}", exc_info=True)
+        logger.error(f"Failed to create perfumeria gestiones: {exc}", exc_info=True)
         raise HTTPException(status_code=500, detail="No se pudieron crear los desvíos")
 
 
