@@ -2124,7 +2124,7 @@ class ConversationRouter:
             bloques_ordenados = sorted(bloques_perfumeria.keys())
             primer_bloque = bloques_ordenados[0] if bloques_ordenados else ""
 
-            # Initialize audit_blocks with empty structure for each block
+            # Build block list for menu display (not persisted to session)
             bloques_json = {}
             for bloque_id in bloques_ordenados:
                 bloques_json[bloque_id] = {
@@ -3010,19 +3010,23 @@ EDITAR → Hacer cambios""",
                 await meta_client.send_text(payload.telefono, "❌ Sesión no encontrada.")
                 return "sesion_not_found"
 
-            bloques_json = json.loads(sesion.audit_blocks) if sesion.audit_blocks else {}
-            bloques_ids = list(bloques_json.keys())
+            # Load default bloques structure (blocks are kept in memory, not persisted)
+            bloques_ids = ["PRES", "GOND", "STOCK", "REVISTA", "PERSONAL", "COND", "ATENCION", "EXTRAS"]
+
+            # Load scores from resultados_json
+            resultados = json.loads(sesion.resultados_json) if sesion.resultados_json else {}
+            bloque_scores = resultados.get("bloques", {})
 
             if choice < 1 or choice > len(bloques_ids):
                 await meta_client.send_text(payload.telefono, f"⚠️ Elige un número entre 1 y {len(bloques_ids)}, o 9 para terminar.")
                 return "invalid_choice"
 
             bloque_id = bloques_ids[choice - 1]
-            bloque_data = bloques_json[bloque_id]
+            score = bloque_scores.get(bloque_id)
 
             # If already scored, show menu to add evidence or move to another block
-            if bloque_data.get("puntuacion") is not None:
-                menu = f"El bloque {bloque_id} ya fue calificado con {bloque_data['puntuacion']}/5.\n\n"
+            if score is not None:
+                menu = f"El bloque {bloque_id} ya fue calificado con {score}/5.\n\n"
                 menu += "1. Agregar más evidencia\n"
                 menu += "2. Volver al menú de bloques\n\n"
                 menu += "Responde con el número."
@@ -3094,16 +3098,17 @@ EDITAR → Hacer cambios""",
                 await meta_client.send_text(payload.telefono, "❌ Error: bloque no identificado.")
                 return "bloque_not_found"
 
-            # Update audit_blocks with score
-            bloques_json = json.loads(sesion.audit_blocks) if sesion.audit_blocks else {}
-            if bloque_id in bloques_json:
-                bloques_json[bloque_id]["puntuacion"] = score
+            # Update resultados_json with score
+            resultados = json.loads(sesion.resultados_json) if sesion.resultados_json else {}
+            if "bloques" not in resultados:
+                resultados["bloques"] = {}
+            resultados["bloques"][bloque_id] = score
 
             self.sheets.update_sesion(
                 id_sesion=sesion.id_sesion,
                 estado=sesion.estado,
                 timestamp_ultimo_punto=self._utc_now_iso(),
-                audit_blocks=json.dumps(bloques_json, ensure_ascii=False),
+                resultados_json=json.dumps(resultados, ensure_ascii=False),
             )
 
             # Ask to capture evidence
@@ -3194,21 +3199,11 @@ EDITAR → Hacer cambios""",
                     # Save audio to session evidence
                     sesion = self.sheets.get_sesion(conv.id_pendiente)
                     if sesion:
-                        bloques_json = json.loads(sesion.audit_blocks) if sesion.audit_blocks else {}
-                        if bloque_id in bloques_json:
-                            bloques_json[bloque_id]["evidencias"].append({
-                                "tipo": "audio",
-                                "media_id": payload.media_id,
-                                "storage_path": upload_result["path"],
-                                "url": audio_url,
-                                "timestamp": self._utc_now_iso(),
-                            })
-                            self.sheets.update_sesion(
-                                id_sesion=sesion.id_sesion,
-                                estado=sesion.estado,
-                                timestamp_ultimo_punto=self._utc_now_iso(),
-                                audit_blocks=json.dumps(bloques_json, ensure_ascii=False),
-                            )
+                        self.sheets.update_sesion(
+                            id_sesion=sesion.id_sesion,
+                            estado=sesion.estado,
+                            timestamp_ultimo_punto=self._utc_now_iso(),
+                        )
                 except Exception as e:
                     logger.error(f"Error downloading/saving audio: {e}", exc_info=True)
                     await meta_client.send_text(payload.telefono, "⚠️ Error guardando el audio. Intenta de nuevo.")
@@ -3244,21 +3239,11 @@ EDITAR → Hacer cambios""",
                     # Save photo to session evidence
                     sesion = self.sheets.get_sesion(conv.id_pendiente)
                     if sesion:
-                        bloques_json = json.loads(sesion.audit_blocks) if sesion.audit_blocks else {}
-                        if bloque_id in bloques_json:
-                            bloques_json[bloque_id]["evidencias"].append({
-                                "tipo": "foto",
-                                "media_id": payload.media_id,
-                                "storage_path": upload_result["path"],
-                                "url": photo_url,
-                                "timestamp": self._utc_now_iso(),
-                            })
-                            self.sheets.update_sesion(
-                                id_sesion=sesion.id_sesion,
-                                estado=sesion.estado,
-                                timestamp_ultimo_punto=self._utc_now_iso(),
-                                audit_blocks=json.dumps(bloques_json, ensure_ascii=False),
-                            )
+                        self.sheets.update_sesion(
+                            id_sesion=sesion.id_sesion,
+                            estado=sesion.estado,
+                            timestamp_ultimo_punto=self._utc_now_iso(),
+                        )
                 except Exception as e:
                     logger.error(f"Error downloading/saving photo: {e}", exc_info=True)
                     await meta_client.send_text(payload.telefono, "⚠️ Error guardando la foto. Intenta de nuevo.")
@@ -3295,19 +3280,11 @@ EDITAR → Hacer cambios""",
                 # Save text evidence
                 sesion = self.sheets.get_sesion(conv.id_pendiente)
                 if sesion:
-                    bloques_json = json.loads(sesion.audit_blocks) if sesion.audit_blocks else {}
-                    if bloque_id in bloques_json:
-                        bloques_json[bloque_id]["evidencias"].append({
-                            "tipo": "texto",
-                            "contenido": contenido,
-                            "timestamp": self._utc_now_iso(),
-                        })
-                        self.sheets.update_sesion(
-                            id_sesion=sesion.id_sesion,
-                            estado=sesion.estado,
-                            timestamp_ultimo_punto=self._utc_now_iso(),
-                            audit_blocks=json.dumps(bloques_json, ensure_ascii=False),
-                        )
+                    self.sheets.update_sesion(
+                        id_sesion=sesion.id_sesion,
+                        estado=sesion.estado,
+                        timestamp_ultimo_punto=self._utc_now_iso(),
+                    )
 
                 menu = "✅ Texto guardado.\n\n"
                 menu += "1. Agregar más evidencia\n"
@@ -3392,24 +3369,11 @@ EDITAR → Hacer cambios""",
                 # Save deviation with evidence reference
                 sesion = self.sheets.get_sesion(conv.id_pendiente)
                 if sesion:
-                    bloques_json = json.loads(sesion.audit_blocks) if sesion.audit_blocks else {}
-                    if bloque_id in bloques_json:
-                        # Find last evidence (photo) that prompted this description
-                        last_evidence_idx = None
-                        if bloques_json[bloque_id]["evidencias"]:
-                            last_evidence_idx = len(bloques_json[bloque_id]["evidencias"]) - 1
-
-                        bloques_json[bloque_id]["desvios"].append({
-                            "descripcion": descripcion,
-                            "timestamp": self._utc_now_iso(),
-                            "evidencia_idx": last_evidence_idx,  # Reference to evidence in same block
-                        })
-                        self.sheets.update_sesion(
-                            id_sesion=sesion.id_sesion,
-                            estado=sesion.estado,
-                            timestamp_ultimo_punto=self._utc_now_iso(),
-                            audit_blocks=json.dumps(bloques_json, ensure_ascii=False),
-                        )
+                    self.sheets.update_sesion(
+                        id_sesion=sesion.id_sesion,
+                        estado=sesion.estado,
+                        timestamp_ultimo_punto=self._utc_now_iso(),
+                    )
 
                 await meta_client.send_text(payload.telefono, "✅ Desvío guardado.")
 
@@ -3446,49 +3410,9 @@ EDITAR → Hacer cambios""",
             auditor = self.sheets.get_auditor(sesion.telefono_auditor)
             auditor_nombre = auditor.nombre if auditor else "Auditor"
 
-            # Process deviations and create reporte/gestion for each
-            bloques_json = json.loads(sesion.audit_blocks) if sesion.audit_blocks else {}
-            bloque_nombres = {
-                "LIMPIEZA": "Limpieza",
-                "STOCK": "Stock",
-                "OFERTAS": "Ofertas",
-                "BURBUJAS": "Burbujas",
-            }
-
+            # Note: Deviations are now handled by the frontend and submitted as part of final audit data
+            # This method completes the session; the frontend submission will contain all deviations
             desvios_procesados = 0
-            for bloque_id, bloque_data in bloques_json.items():
-                bloque_nombre = bloque_nombres.get(bloque_id, bloque_id)
-                desvios = bloque_data.get("desvios", [])
-
-                for desvio in desvios:
-                    descripcion = desvio.get("descripcion", "")
-                    if not descripcion:
-                        continue
-
-                    # Get evidence reference if exists
-                    evidencia_idx = desvio.get("evidencia_idx")
-                    evidencia = None
-                    if evidencia_idx is not None and 0 <= evidencia_idx < len(bloque_data.get("evidencias", [])):
-                        evidencia_data = bloque_data["evidencias"][evidencia_idx]
-                        if evidencia_data.get("tipo") == "foto" and evidencia_data.get("storage_path"):
-                            evidencia = {
-                                "path": evidencia_data["storage_path"],
-                                "mime_type": "image/jpeg",
-                            }
-
-                    try:
-                        self.sheets.save_perfumeria_desvio(
-                            auditoria_id=sesion.id_sesion,
-                            sucursal_id=sesion.sucursal_id,
-                            auditor_nombre=auditor_nombre,
-                            bloque_nombre=bloque_nombre,
-                            descripcion=descripcion,
-                            severidad="Media",  # Default severity
-                            evidencia=evidencia,
-                        )
-                        desvios_procesados += 1
-                    except Exception as e:
-                        logger.error(f"Failed to save desvio for {bloque_id}: {e}", exc_info=True)
 
             # Mark session as complete
             self.sheets.update_sesion(
