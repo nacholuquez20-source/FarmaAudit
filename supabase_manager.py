@@ -1158,16 +1158,16 @@ class SupabaseManager:
     def get_sesion(self, id_sesion: str) -> Optional[SesionAuditoria]:
         """Get audit session by ID with retry logic."""
         import time
-        max_retries = 3
-        retry_delay = 0.2  # seconds
+        max_retries = 5
+        retry_delay = 0.5  # seconds
 
         for attempt in range(max_retries):
             try:
-                logger.debug(f"get_sesion attempt {attempt + 1}/{max_retries} for {id_sesion}")
+                logger.info(f"get_sesion attempt {attempt + 1}/{max_retries} for {id_sesion}")
                 response = self.client.table("sesiones_auditoria").select("*").eq(
                     "id_sesion", id_sesion
                 ).execute()
-                logger.debug(f"get_sesion response: {response}")
+                logger.info(f"get_sesion response data count: {len(response.data) if response.data else 0}")
                 data = response.data
                 if data:
                     row = data[0]
