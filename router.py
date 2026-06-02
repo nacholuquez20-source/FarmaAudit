@@ -302,6 +302,26 @@ class ConversationRouter:
 
                 return await self._handle_edition_state(payload, conv, meta_client)
 
+            elif conv.estado_actual == ConversationState.AUDITORIA_PERFUMERIA_LIBRE:
+
+                return await self._handle_auditoria_perfumeria_libre(payload, conv, meta_client)
+
+            elif conv.estado_actual == ConversationState.PERFUMERIA_SELECCIONANDO_BLOQUE:
+
+                return await self._handle_perfumeria_seleccion_bloque(payload, conv, meta_client)
+
+            elif conv.estado_actual == ConversationState.PERFUMERIA_ESPERANDO_CALIFICACION:
+
+                return await self._handle_perfumeria_calificacion(payload, conv, meta_client)
+
+            elif conv.estado_actual == ConversationState.PERFUMERIA_CAPTURANDO_EVIDENCIA:
+
+                return await self._handle_perfumeria_evidencia(payload, conv, meta_client)
+
+            elif conv.estado_actual == ConversationState.PERFUMERIA_DESCRIBIENDO_DESVIO:
+
+                return await self._handle_perfumeria_descripcion_desvio(payload, conv, meta_client)
+
             else:
 
                 await meta_client.send_text(payload.telefono, "⚠️ Estado desconocido")
@@ -2084,6 +2104,15 @@ class ConversationRouter:
             bloques_ordenados = sorted(bloques_perfumeria.keys())
             primer_bloque = bloques_ordenados[0] if bloques_ordenados else ""
 
+            # Initialize bloques_auditoria_json with empty structure for each block
+            bloques_json = {}
+            for bloque_id in bloques_ordenados:
+                bloques_json[bloque_id] = {
+                    "puntuacion": None,
+                    "evidencias": [],
+                    "desvios": []
+                }
+
             sesion = SesionAuditoria(
                 id_sesion=sesion_id,
                 telefono_auditor=payload.telefono,
@@ -2102,34 +2131,36 @@ class ConversationRouter:
                 stock_items_json="[]",
                 desvios_libres_json="[]",
                 compromisos_firmados="",
+                bloques_auditoria_json=json.dumps(bloques_json, ensure_ascii=False),
             )
 
             self.sheets.create_sesion(sesion)
 
-            # Update conversation state
+            # Update conversation state to new free-form flow
             self.sheets.update_conversacion(
                 telefono=payload.telefono,
-                estado=ConversationState.EN_BLOQUE_PERFUMERIA,
+                estado=ConversationState.AUDITORIA_PERFUMERIA_LIBRE,
                 id_pendiente=sesion_id,
             )
 
-            # Send welcome message
+            # Send welcome message and show block menu
             await meta_client.send_text(
                 payload.telefono,
-                f"✅ Comenzando auditoría de perfumería en {sucursal.nombre}\n\nResponde las siguientes preguntas."
+                f"✅ Comenzando auditoría de perfumería en {sucursal.nombre}."
             )
 
-            puntos_bloque = bloques_perfumeria.get(primer_bloque, [])
-            bloque_nombre = puntos_bloque[0].bloque_nombre if puntos_bloque else primer_bloque
-            await self._send_perfumeria_block_prompt(
-                meta_client,
-                payload.telefono,
-                sesion,
-                primer_bloque,
-                bloque_nombre,
-                puntos_bloque,
+            # Show block menu
+            mock_payload = WhatsAppPayload(
+                telefono=payload.telefono,
+                tipo="text",
+                contenido="",
             )
-            return "sesion_created"
+            mock_conv = Conversacion(
+                telefono=payload.telefono,
+                estado_actual=ConversationState.AUDITORIA_PERFUMERIA_LIBRE,
+                id_pendiente=sesion_id,
+            )
+            return await self._handle_auditoria_perfumeria_libre(mock_payload, mock_conv, meta_client)
 
         except Exception as e:
             logger.error(f"Error handling sucursal selection: {e}")
@@ -2841,6 +2872,591 @@ EDITAR → Hacer cambios""",
             )
             return "error"
 
+
+    async def _handle_auditoria_perfumeria_libre(
+        self,
+        payload: WhatsAppPayload,
+        conv: Conversacion,
+        meta_client: MetaClient,
+    ) -> str:
+        """Handle free-form perfumery audit - show block menu."""
+        try:
+            sesion = self.sheets.get_sesion(conv.id_pendiente)
+            if not sesion:
+                await meta_client.send_text(payload.telefono, "❌ Sesión no encontrada.")
+                return "sesion_not_found"
+
+            bloques_json = json.loads(sesion.bloques_auditoria_json) if sesion.bloques_auditoria_json else {}
+            if not bloques_json:
+                await meta_client.send_text(payload.telefono, "❌ No hay bloques disponibles.")
+                return "no_bloques"
+
+            bloque_nombres = {
+                "LIMPIEZA": "Limpieza",
+                "STOCK": "Stock",
+                "OFERTAS": "Ofertas",
+                "BURBUJAS": "Burbujas",
+            }
+
+            menu = "🏪 Auditoría Perfumería - Flujo Libre\n\n"
+            menu += "Selecciona un bloque para auditar:\n\n"
+
+            for i, (bloque_id, bloque_data) in enumerate(bloques_json.items(), 1):
+                nombre = bloque_nombres.get(bloque_id, bloque_id)
+                puntuacion = bloque_data.get("puntuacion")
+                estado = f"✅ ({puntuacion}/5)" if puntuacion else "⏳"
+                menu += f"{i}. {nombre} {estado}\n"
+
+            menu += "\n9. Terminar auditoría\n\nResponde con el número."
+
+            await meta_client.send_text(payload.telefono, menu)
+
+            self.sheets.update_conversacion(
+                telefono=payload.telefono,
+                estado=ConversationState.PERFUMERIA_SELECCIONANDO_BLOQUE,
+                id_pendiente=conv.id_pendiente,
+            )
+            return "menu_bloques_enviado"
+
+        except Exception as e:
+            logger.error(f"Error in _handle_auditoria_perfumeria_libre: {e}", exc_info=True)
+            await meta_client.send_text(payload.telefono, "❌ Error procesando tu solicitud.")
+            return "error"
+
+    async def _handle_perfumeria_seleccion_bloque(
+        self,
+        payload: WhatsAppPayload,
+        conv: Conversacion,
+        meta_client: MetaClient,
+    ) -> str:
+        """Handle block selection in free-form perfumery audit."""
+        try:
+            if not payload.contenido:
+                await meta_client.send_text(payload.telefono, "⚠️ Responde con un número.")
+                return "empty_choice"
+
+            try:
+                choice = int(payload.contenido.strip())
+            except ValueError:
+                await meta_client.send_text(payload.telefono, "⚠️ Responde con un número válido.")
+                return "invalid_number"
+
+            # Option 9: finish audit
+            if choice == 9:
+                return await self._finalizar_auditoria_perfumeria_libre(payload, conv, meta_client)
+
+            sesion = self.sheets.get_sesion(conv.id_pendiente)
+            if not sesion:
+                await meta_client.send_text(payload.telefono, "❌ Sesión no encontrada.")
+                return "sesion_not_found"
+
+            bloques_json = json.loads(sesion.bloques_auditoria_json) if sesion.bloques_auditoria_json else {}
+            bloques_ids = list(bloques_json.keys())
+
+            if choice < 1 or choice > len(bloques_ids):
+                await meta_client.send_text(payload.telefono, f"⚠️ Elige un número entre 1 y {len(bloques_ids)}, o 9 para terminar.")
+                return "invalid_choice"
+
+            bloque_id = bloques_ids[choice - 1]
+            bloque_data = bloques_json[bloque_id]
+
+            # If already scored, show menu to add evidence or move to another block
+            if bloque_data.get("puntuacion") is not None:
+                menu = f"El bloque {bloque_id} ya fue calificado con {bloque_data['puntuacion']}/5.\n\n"
+                menu += "1. Agregar más evidencia\n"
+                menu += "2. Volver al menú de bloques\n\n"
+                menu += "Responde con el número."
+                await meta_client.send_text(payload.telefono, menu)
+
+                self.sheets.update_conversacion(
+                    telefono=payload.telefono,
+                    estado=ConversationState.PERFUMERIA_CAPTURANDO_EVIDENCIA,
+                    id_pendiente=conv.id_pendiente,
+                    ultimo_mensaje=json.dumps({"bloque_id": bloque_id, "opcion": "menu"}),
+                )
+                return "bloque_ya_calificado"
+
+            # Ask for score (1-5)
+            menu = f"📋 {bloque_id}\n\n"
+            menu += "Califica este bloque (1 = muy malo, 5 = excelente):\n\n"
+            menu += "1. Muy malo\n"
+            menu += "2. Malo\n"
+            menu += "3. Regular\n"
+            menu += "4. Bueno\n"
+            menu += "5. Excelente\n\n"
+            menu += "Responde con el número (1-5)."
+
+            await meta_client.send_text(payload.telefono, menu)
+
+            self.sheets.update_conversacion(
+                telefono=payload.telefono,
+                estado=ConversationState.PERFUMERIA_ESPERANDO_CALIFICACION,
+                id_pendiente=conv.id_pendiente,
+                ultimo_mensaje=json.dumps({"bloque_id": bloque_id}),
+            )
+            return "esperando_calificacion"
+
+        except Exception as e:
+            logger.error(f"Error in _handle_perfumeria_seleccion_bloque: {e}", exc_info=True)
+            await meta_client.send_text(payload.telefono, "❌ Error procesando tu selección.")
+            return "error"
+
+    async def _handle_perfumeria_calificacion(
+        self,
+        payload: WhatsAppPayload,
+        conv: Conversacion,
+        meta_client: MetaClient,
+    ) -> str:
+        """Handle block score (1-5) in free-form perfumery audit."""
+        try:
+            if not payload.contenido:
+                await meta_client.send_text(payload.telefono, "⚠️ Responde con un número del 1 al 5.")
+                return "empty_score"
+
+            try:
+                score = int(payload.contenido.strip())
+            except ValueError:
+                await meta_client.send_text(payload.telefono, "⚠️ Responde con un número válido (1-5).")
+                return "invalid_score"
+
+            if score < 1 or score > 5:
+                await meta_client.send_text(payload.telefono, "⚠️ Elige un número entre 1 y 5.")
+                return "score_out_of_range"
+
+            sesion = self.sheets.get_sesion(conv.id_pendiente)
+            if not sesion:
+                await meta_client.send_text(payload.telefono, "❌ Sesión no encontrada.")
+                return "sesion_not_found"
+
+            context = json.loads(conv.ultimo_mensaje) if conv.ultimo_mensaje else {}
+            bloque_id = context.get("bloque_id")
+            if not bloque_id:
+                await meta_client.send_text(payload.telefono, "❌ Error: bloque no identificado.")
+                return "bloque_not_found"
+
+            # Update bloques_auditoria_json with score
+            bloques_json = json.loads(sesion.bloques_auditoria_json) if sesion.bloques_auditoria_json else {}
+            if bloque_id in bloques_json:
+                bloques_json[bloque_id]["puntuacion"] = score
+
+            self.sheets.update_sesion(
+                id_sesion=sesion.id_sesion,
+                estado=sesion.estado,
+                timestamp_ultimo_punto=self._utc_now_iso(),
+                bloques_auditoria_json=json.dumps(bloques_json, ensure_ascii=False),
+            )
+
+            # Ask to capture evidence
+            menu = f"✅ {bloque_id} calificado con {score}/5.\n\n"
+            menu += "¿Quieres agregar evidencia (foto/audio/texto)?\n\n"
+            menu += "1. Sí, agregar evidencia\n"
+            menu += "2. No, siguiente bloque\n\n"
+            menu += "Responde con el número."
+
+            await meta_client.send_text(payload.telefono, menu)
+
+            self.sheets.update_conversacion(
+                telefono=payload.telefono,
+                estado=ConversationState.PERFUMERIA_CAPTURANDO_EVIDENCIA,
+                id_pendiente=conv.id_pendiente,
+                ultimo_mensaje=json.dumps({"bloque_id": bloque_id, "score": score}),
+            )
+            return "score_guardado"
+
+        except Exception as e:
+            logger.error(f"Error in _handle_perfumeria_calificacion: {e}", exc_info=True)
+            await meta_client.send_text(payload.telefono, "❌ Error guardando la calificación.")
+            return "error"
+
+    async def _handle_perfumeria_evidencia(
+        self,
+        payload: WhatsAppPayload,
+        conv: Conversacion,
+        meta_client: MetaClient,
+    ) -> str:
+        """Handle evidence capture in free-form perfumery audit."""
+        try:
+            context = json.loads(conv.ultimo_mensaje) if conv.ultimo_mensaje else {}
+            bloque_id = context.get("bloque_id")
+            opcion = context.get("opcion")
+
+            # If previous menu asked to add evidence or move on
+            if opcion == "menu":
+                if not payload.contenido or payload.contenido.strip() not in {"1", "2"}:
+                    await meta_client.send_text(payload.telefono, "⚠️ Responde con 1 o 2.")
+                    return "invalid_menu_choice"
+
+                if payload.contenido.strip() == "2":
+                    # Return to block menu
+                    self.sheets.update_conversacion(
+                        telefono=payload.telefono,
+                        estado=ConversationState.AUDITORIA_PERFUMERIA_LIBRE,
+                        id_pendiente=conv.id_pendiente,
+                    )
+                    return await self._handle_auditoria_perfumeria_libre(payload, conv, meta_client)
+                # Option 1: continue to evidence capture
+
+            # If option was "Sí, agregar evidencia"
+            elif payload.contenido and payload.contenido.strip() == "2":
+                # Return to block menu
+                self.sheets.update_conversacion(
+                    telefono=payload.telefono,
+                    estado=ConversationState.AUDITORIA_PERFUMERIA_LIBRE,
+                    id_pendiente=conv.id_pendiente,
+                )
+                return await self._handle_auditoria_perfumeria_libre(payload, conv, meta_client)
+
+            elif payload.contenido and payload.contenido.strip() == "1":
+                # Show evidence options
+                menu = f"📸 Agregando evidencia a {bloque_id}.\n\n"
+                menu += "Envia:\n"
+                menu += "- Una foto 📷\n"
+                menu += "- Un audio 🎙️\n"
+                menu += "- Un mensaje de texto 💬\n"
+                menu += "\nO escribe 'listo' para terminar este bloque.\n"
+
+                await meta_client.send_text(payload.telefono, menu)
+                return "esperando_evidencia_input"
+
+            # Handle evidence input (photo, audio, or text)
+            if payload.tipo == "audio" and payload.media_id:
+                # Download and save audio from Meta
+                try:
+                    audio_bytes, mime_type = await meta_client.download_media_with_metadata(payload.media_id)
+                    upload_result = self.sheets.upload_perfumeria_audit_evidence(
+                        id_sesion=conv.id_pendiente,
+                        bloque_id=bloque_id,
+                        content=audio_bytes,
+                        mime_type=mime_type
+                    )
+                    audio_url = self.sheets.create_signed_perfumeria_evidence_url(upload_result["path"])
+
+                    # Save audio to session evidence
+                    sesion = self.sheets.get_sesion(conv.id_pendiente)
+                    if sesion:
+                        bloques_json = json.loads(sesion.bloques_auditoria_json) if sesion.bloques_auditoria_json else {}
+                        if bloque_id in bloques_json:
+                            bloques_json[bloque_id]["evidencias"].append({
+                                "tipo": "audio",
+                                "media_id": payload.media_id,
+                                "storage_path": upload_result["path"],
+                                "url": audio_url,
+                                "timestamp": self._utc_now_iso(),
+                            })
+                            self.sheets.update_sesion(
+                                id_sesion=sesion.id_sesion,
+                                estado=sesion.estado,
+                                timestamp_ultimo_punto=self._utc_now_iso(),
+                                bloques_auditoria_json=json.dumps(bloques_json, ensure_ascii=False),
+                            )
+                except Exception as e:
+                    logger.error(f"Error downloading/saving audio: {e}", exc_info=True)
+                    await meta_client.send_text(payload.telefono, "⚠️ Error guardando el audio. Intenta de nuevo.")
+                    return "audio_error"
+
+                menu = "✅ Audio recibido y guardado.\n\n"
+                menu += "1. Agregar más evidencia\n"
+                menu += "2. Siguiente bloque\n\n"
+                menu += "Responde con el número."
+
+                await meta_client.send_text(payload.telefono, menu)
+
+                self.sheets.update_conversacion(
+                    telefono=payload.telefono,
+                    estado=ConversationState.PERFUMERIA_CAPTURANDO_EVIDENCIA,
+                    id_pendiente=conv.id_pendiente,
+                    ultimo_mensaje=json.dumps({"bloque_id": bloque_id}),
+                )
+                return "audio_recibido"
+
+            elif payload.tipo == "image" and payload.media_id:
+                # Download and save photo from Meta
+                try:
+                    photo_bytes, mime_type = await meta_client.download_media_with_metadata(payload.media_id)
+                    upload_result = self.sheets.upload_perfumeria_audit_evidence(
+                        id_sesion=conv.id_pendiente,
+                        bloque_id=bloque_id,
+                        content=photo_bytes,
+                        mime_type=mime_type
+                    )
+                    photo_url = self.sheets.create_signed_perfumeria_evidence_url(upload_result["path"])
+
+                    # Save photo to session evidence
+                    sesion = self.sheets.get_sesion(conv.id_pendiente)
+                    if sesion:
+                        bloques_json = json.loads(sesion.bloques_auditoria_json) if sesion.bloques_auditoria_json else {}
+                        if bloque_id in bloques_json:
+                            bloques_json[bloque_id]["evidencias"].append({
+                                "tipo": "foto",
+                                "media_id": payload.media_id,
+                                "storage_path": upload_result["path"],
+                                "url": photo_url,
+                                "timestamp": self._utc_now_iso(),
+                            })
+                            self.sheets.update_sesion(
+                                id_sesion=sesion.id_sesion,
+                                estado=sesion.estado,
+                                timestamp_ultimo_punto=self._utc_now_iso(),
+                                bloques_auditoria_json=json.dumps(bloques_json, ensure_ascii=False),
+                            )
+                except Exception as e:
+                    logger.error(f"Error downloading/saving photo: {e}", exc_info=True)
+                    await meta_client.send_text(payload.telefono, "⚠️ Error guardando la foto. Intenta de nuevo.")
+                    return "foto_error"
+
+                menu = "✅ Foto recibida y guardada.\n\n"
+                menu += "¿Quieres describir qué viste en esta foto?\n\n"
+                menu += "1. Sí, describir\n"
+                menu += "2. No, siguiente\n\n"
+                menu += "Responde con el número."
+
+                await meta_client.send_text(payload.telefono, menu)
+
+                self.sheets.update_conversacion(
+                    telefono=payload.telefono,
+                    estado=ConversationState.PERFUMERIA_DESCRIBIENDO_DESVIO,
+                    id_pendiente=conv.id_pendiente,
+                    ultimo_mensaje=json.dumps({"bloque_id": bloque_id, "evidencia_tipo": "foto", "media_id": payload.media_id}),
+                )
+                return "foto_recibida"
+
+            elif payload.contenido:
+                contenido = payload.contenido.strip()
+
+                if contenido.lower() == "listo":
+                    # Return to block menu
+                    self.sheets.update_conversacion(
+                        telefono=payload.telefono,
+                        estado=ConversationState.AUDITORIA_PERFUMERIA_LIBRE,
+                        id_pendiente=conv.id_pendiente,
+                    )
+                    return await self._handle_auditoria_perfumeria_libre(payload, conv, meta_client)
+
+                # Save text evidence
+                sesion = self.sheets.get_sesion(conv.id_pendiente)
+                if sesion:
+                    bloques_json = json.loads(sesion.bloques_auditoria_json) if sesion.bloques_auditoria_json else {}
+                    if bloque_id in bloques_json:
+                        bloques_json[bloque_id]["evidencias"].append({
+                            "tipo": "texto",
+                            "contenido": contenido,
+                            "timestamp": self._utc_now_iso(),
+                        })
+                        self.sheets.update_sesion(
+                            id_sesion=sesion.id_sesion,
+                            estado=sesion.estado,
+                            timestamp_ultimo_punto=self._utc_now_iso(),
+                            bloques_auditoria_json=json.dumps(bloques_json, ensure_ascii=False),
+                        )
+
+                menu = "✅ Texto guardado.\n\n"
+                menu += "1. Agregar más evidencia\n"
+                menu += "2. Siguiente bloque\n\n"
+                menu += "Responde con el número."
+
+                await meta_client.send_text(payload.telefono, menu)
+
+                self.sheets.update_conversacion(
+                    telefono=payload.telefono,
+                    estado=ConversationState.PERFUMERIA_CAPTURANDO_EVIDENCIA,
+                    id_pendiente=conv.id_pendiente,
+                    ultimo_mensaje=json.dumps({"bloque_id": bloque_id}),
+                )
+                return "evidencia_guardada"
+
+            await meta_client.send_text(payload.telefono, "⚠️ Envia una foto, audio, texto, o escribe 'listo'.")
+            return "invalid_evidence"
+
+        except Exception as e:
+            logger.error(f"Error in _handle_perfumeria_evidencia: {e}", exc_info=True)
+            await meta_client.send_text(payload.telefono, "❌ Error guardando evidencia.")
+            return "error"
+
+    async def _handle_perfumeria_descripcion_desvio(
+        self,
+        payload: WhatsAppPayload,
+        conv: Conversacion,
+        meta_client: MetaClient,
+    ) -> str:
+        """Handle deviation description in free-form perfumery audit."""
+        try:
+            context = json.loads(conv.ultimo_mensaje) if conv.ultimo_mensaje else {}
+            bloque_id = context.get("bloque_id")
+
+            # Handle "Sí, describir" or "No, siguiente" response
+            if payload.contenido:
+                choice = payload.contenido.strip()
+
+                if choice == "1":
+                    # Ask for description
+                    menu = f"📝 Describe el desvío encontrado en {bloque_id}:\n\n"
+                    menu += "Opciones rápidas:\n"
+                    menu += "1. Polvo en góndolas\n"
+                    menu += "2. Desorden general\n"
+                    menu += "3. Falta de reposición\n"
+                    menu += "4. Precios incorrectos\n"
+                    menu += "5. Displays dañados\n"
+                    menu += "6. Productos vencidos\n"
+                    menu += "7. Otra descripción\n\n"
+                    menu += "Responde con el número o escribe tu propia descripción."
+
+                    await meta_client.send_text(payload.telefono, menu)
+                    return "esperando_descripcion"
+
+                elif choice == "2":
+                    # Return to block menu
+                    self.sheets.update_conversacion(
+                        telefono=payload.telefono,
+                        estado=ConversationState.AUDITORIA_PERFUMERIA_LIBRE,
+                        id_pendiente=conv.id_pendiente,
+                    )
+                    return await self._handle_auditoria_perfumeria_libre(payload, conv, meta_client)
+
+            # Handle description input
+            if payload.contenido:
+                descripcion = payload.contenido.strip()
+
+                # Map quick templates
+                templates = {
+                    "1": "Polvo en góndolas",
+                    "2": "Desorden general",
+                    "3": "Falta de reposición",
+                    "4": "Precios incorrectos",
+                    "5": "Displays dañados",
+                    "6": "Productos vencidos",
+                }
+
+                if descripcion in templates:
+                    descripcion = templates[descripcion]
+
+                # Save deviation with evidence reference
+                sesion = self.sheets.get_sesion(conv.id_pendiente)
+                if sesion:
+                    bloques_json = json.loads(sesion.bloques_auditoria_json) if sesion.bloques_auditoria_json else {}
+                    if bloque_id in bloques_json:
+                        # Find last evidence (photo) that prompted this description
+                        last_evidence_idx = None
+                        if bloques_json[bloque_id]["evidencias"]:
+                            last_evidence_idx = len(bloques_json[bloque_id]["evidencias"]) - 1
+
+                        bloques_json[bloque_id]["desvios"].append({
+                            "descripcion": descripcion,
+                            "timestamp": self._utc_now_iso(),
+                            "evidencia_idx": last_evidence_idx,  # Reference to evidence in same block
+                        })
+                        self.sheets.update_sesion(
+                            id_sesion=sesion.id_sesion,
+                            estado=sesion.estado,
+                            timestamp_ultimo_punto=self._utc_now_iso(),
+                            bloques_auditoria_json=json.dumps(bloques_json, ensure_ascii=False),
+                        )
+
+                await meta_client.send_text(payload.telefono, "✅ Desvío guardado.")
+
+                # Return to block menu
+                self.sheets.update_conversacion(
+                    telefono=payload.telefono,
+                    estado=ConversationState.AUDITORIA_PERFUMERIA_LIBRE,
+                    id_pendiente=conv.id_pendiente,
+                )
+                return await self._handle_auditoria_perfumeria_libre(payload, conv, meta_client)
+
+            await meta_client.send_text(payload.telefono, "⚠️ Describe el desvío o responde con un número.")
+            return "invalid_description"
+
+        except Exception as e:
+            logger.error(f"Error in _handle_perfumeria_descripcion_desvio: {e}", exc_info=True)
+            await meta_client.send_text(payload.telefono, "❌ Error guardando descripción.")
+            return "error"
+
+    async def _finalizar_auditoria_perfumeria_libre(
+        self,
+        payload: WhatsAppPayload,
+        conv: Conversacion,
+        meta_client: MetaClient,
+    ) -> str:
+        """Finalize free-form perfumery audit and save results."""
+        try:
+            sesion = self.sheets.get_sesion(conv.id_pendiente)
+            if not sesion:
+                await meta_client.send_text(payload.telefono, "❌ Sesión no encontrada.")
+                return "sesion_not_found"
+
+            # Get auditor name
+            auditor = self.sheets.get_auditor(sesion.telefono_auditor)
+            auditor_nombre = auditor.nombre if auditor else "Auditor"
+
+            # Process deviations and create reporte/gestion for each
+            bloques_json = json.loads(sesion.bloques_auditoria_json) if sesion.bloques_auditoria_json else {}
+            bloque_nombres = {
+                "LIMPIEZA": "Limpieza",
+                "STOCK": "Stock",
+                "OFERTAS": "Ofertas",
+                "BURBUJAS": "Burbujas",
+            }
+
+            desvios_procesados = 0
+            for bloque_id, bloque_data in bloques_json.items():
+                bloque_nombre = bloque_nombres.get(bloque_id, bloque_id)
+                desvios = bloque_data.get("desvios", [])
+
+                for desvio in desvios:
+                    descripcion = desvio.get("descripcion", "")
+                    if not descripcion:
+                        continue
+
+                    # Get evidence reference if exists
+                    evidencia_idx = desvio.get("evidencia_idx")
+                    evidencia = None
+                    if evidencia_idx is not None and 0 <= evidencia_idx < len(bloque_data.get("evidencias", [])):
+                        evidencia_data = bloque_data["evidencias"][evidencia_idx]
+                        if evidencia_data.get("tipo") == "foto" and evidencia_data.get("storage_path"):
+                            evidencia = {
+                                "path": evidencia_data["storage_path"],
+                                "mime_type": "image/jpeg",
+                            }
+
+                    try:
+                        self.sheets.save_perfumeria_desvio(
+                            auditoria_id=sesion.id_sesion,
+                            sucursal_id=sesion.sucursal_id,
+                            auditor_nombre=auditor_nombre,
+                            bloque_nombre=bloque_nombre,
+                            descripcion=descripcion,
+                            severidad="Media",  # Default severity
+                            evidencia=evidencia,
+                        )
+                        desvios_procesados += 1
+                    except Exception as e:
+                        logger.error(f"Failed to save desvio for {bloque_id}: {e}", exc_info=True)
+
+            # Mark session as complete
+            self.sheets.update_sesion(
+                id_sesion=sesion.id_sesion,
+                estado="completa",
+                timestamp_ultimo_punto=self._utc_now_iso(),
+            )
+
+            # Reset conversation state
+            self.sheets.update_conversacion(
+                telefono=payload.telefono,
+                estado=ConversationState.IDLE,
+                id_pendiente="",
+            )
+
+            mensaje = f"✅ Auditoría completada y guardada en FarmaAudit.\n\n"
+            if desvios_procesados > 0:
+                mensaje += f"Se registraron {desvios_procesados} desvío{'s' if desvios_procesados != 1 else ''}.\n\n"
+            mensaje += "Gracias por tu trabajo."
+
+            await meta_client.send_text(payload.telefono, mensaje)
+
+            return "auditoria_completa"
+
+        except Exception as e:
+            logger.error(f"Error in _finalizar_auditoria_perfumeria_libre: {e}", exc_info=True)
+            await meta_client.send_text(payload.telefono, "❌ Error finalizando auditoría.")
+            return "error"
 
     def _build_tema_pregunta(self, bloque_id: str, bloque_nombre: str, puntos: list) -> str:
         """Build thematic question with context of all points in block."""

@@ -1111,6 +1111,7 @@ class SupabaseManager:
                 "stock_items_json": sesion.stock_items_json,
                 "desvios_libres_json": sesion.desvios_libres_json,
                 "compromisos_firmados": sesion.compromisos_firmados,
+                "bloques_auditoria_json": sesion.bloques_auditoria_json,
             }).execute()
 
             logger.info(f"Created sesion {sesion.id_sesion}")
@@ -1146,6 +1147,7 @@ class SupabaseManager:
                     stock_items_json=row.get("stock_items_json", "[]"),
                     desvios_libres_json=row.get("desvios_libres_json", "[]"),
                     compromisos_firmados=row.get("compromisos_firmados", ""),
+                    bloques_auditoria_json=row.get("bloques_auditoria_json", "{}"),
                 )
             return None
         except Exception as e:
@@ -1166,6 +1168,7 @@ class SupabaseManager:
         punto_actual: int = 0,
         hallazgos_json: str = "[]",
         omitidos_json: str = "[]",
+        bloques_auditoria_json: str = "{}",
     ) -> None:
         """Update audit session."""
         try:
@@ -1181,6 +1184,7 @@ class SupabaseManager:
                 "punto_actual": punto_actual,
                 "hallazgos_json": hallazgos_json,
                 "omitidos_json": omitidos_json,
+                "bloques_auditoria_json": bloques_auditoria_json,
             }).eq("id_sesion", id_sesion).execute()
 
             logger.info(f"Updated sesion {id_sesion}")
@@ -1560,4 +1564,53 @@ class SupabaseManager:
             return getattr(response, "signed_url", "") or getattr(response, "signedURL", "")
         except Exception as e:
             logger.warning(f"Failed to create signed audit response URL for {path}: {e}")
+            return ""
+
+    def upload_perfumeria_audit_evidence(self, id_sesion: str, bloque_id: str, content: bytes, mime_type: str) -> Dict[str, str]:
+        """Upload perfumeria audit evidence photo to Storage with thumbnail."""
+        ext_by_mime = {
+            "image/jpeg": "jpg",
+            "image/png": "png",
+            "image/webp": "webp",
+        }
+        ext = ext_by_mime.get(mime_type, "jpg")
+        uuid_hex = uuid.uuid4().hex
+        path = f"perfumeria/{id_sesion}/{bloque_id}/{uuid_hex}.{ext}"
+
+        self.client.storage.from_("auditoria-respuestas").upload(
+            path,
+            content,
+            {"content-type": mime_type, "upsert": "false"},
+        )
+
+        thumb_path = None
+        if mime_type.startswith("image/"):
+            thumb_content = self._generate_thumbnail(content, mime_type)
+            if thumb_content:
+                thumb_path = f"perfumeria/{id_sesion}/{bloque_id}/{uuid_hex}-thumb.jpg"
+                try:
+                    self.client.storage.from_("auditoria-respuestas").upload(
+                        thumb_path,
+                        thumb_content,
+                        {"content-type": "image/jpeg", "upsert": "false"},
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to upload perfumeria thumbnail: {e}")
+                    thumb_path = None
+
+        return {
+            "path": path,
+            "thumb_path": thumb_path,
+            "bucket": "auditoria-respuestas",
+        }
+
+    def create_signed_perfumeria_evidence_url(self, path: str, expires_seconds: int = 86400) -> str:
+        """Create signed URL for perfumeria audit evidence."""
+        try:
+            response = self.client.storage.from_("auditoria-respuestas").create_signed_url(path, expires_seconds)
+            if isinstance(response, dict):
+                return response.get("signedURL") or response.get("signedUrl") or ""
+            return getattr(response, "signed_url", "") or getattr(response, "signedURL", "")
+        except Exception as e:
+            logger.warning(f"Failed to create signed perfumeria evidence URL for {path}: {e}")
             return ""

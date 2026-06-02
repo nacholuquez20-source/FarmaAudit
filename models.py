@@ -32,6 +32,11 @@ class ConversationState(str, Enum):
     RECOLECTANDO_RESPUESTA = "recolectando_respuesta"
     ENCARGADO_SELECCIONANDO_DESVIO = "encargado_seleccionando_desvio"
     ENCARGADO_ESPERANDO_RESPUESTA = "encargado_esperando_respuesta"
+    AUDITORIA_PERFUMERIA_LIBRE = "auditoria_perfumeria_libre"
+    PERFUMERIA_SELECCIONANDO_BLOQUE = "perfumeria_seleccionando_bloque"
+    PERFUMERIA_ESPERANDO_CALIFICACION = "perfumeria_esperando_calificacion"
+    PERFUMERIA_CAPTURANDO_EVIDENCIA = "perfumeria_capturando_evidencia"
+    PERFUMERIA_DESCRIBIENDO_DESVIO = "perfumeria_describiendo_desvio"
 
 
 class Severidad(str, Enum):
@@ -168,7 +173,7 @@ class PuntoEvalResult:
 
 @dataclass
 class SesionAuditoria:
-    """Active guided audit session."""
+    """Active audit session (supports both guided and free-form perfumery audits)."""
 
     id_sesion: str
     telefono_auditor: str
@@ -187,6 +192,7 @@ class SesionAuditoria:
     stock_items_json: str = "[]"
     desvios_libres_json: str = "[]"
     compromisos_firmados: str = ""
+    bloques_auditoria_json: str = "{}"  # For free-form perfumery: {bloque_id: {puntuacion, evidencias[], desvios[]}}
 
 
 @dataclass
