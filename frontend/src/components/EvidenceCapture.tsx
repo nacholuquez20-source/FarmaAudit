@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
-import { Camera, Mic, Type, X, Plus } from 'lucide-react';
+import { Camera, Mic, Type, X, Plus, Play } from 'lucide-react';
 import { Button } from './Button';
+import { useAudioRecorder } from '../hooks/useAudioRecorder';
 import type { AuditEvidencia } from '../types';
 
 interface EvidenceCaptureProps {
@@ -13,10 +14,12 @@ export function EvidenceCapture({ onAddEvidence, disabled = false }: EvidenceCap
   const [selectedPhoto, setSelectedPhoto] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [showActions, setShowActions] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordingDuration, setRecordingDuration] = useState(0);
   const [showTextInput, setShowTextInput] = useState(false);
   const [textContent, setTextContent] = useState('');
+  const [recordingError, setRecordingError] = useState<string | null>(null);
+
+  const { isRecording, duration, audioBlob, startRecording, stopRecording, resetRecording } =
+    useAudioRecorder();
 
   const handlePhotoSelect = (file: File) => {
     setSelectedPhoto(file);
@@ -54,17 +57,23 @@ export function EvidenceCapture({ onAddEvidence, disabled = false }: EvidenceCap
     setTextContent('');
   };
 
-  const handleAddAudio = () => {
+  const handleAddAudio = async () => {
+    if (!audioBlob) {
+      setRecordingError('No hay audio grabado');
+      return;
+    }
+
+    const audioUrl = URL.createObjectURL(audioBlob);
     const evidence: AuditEvidencia = {
       id: `audio_${Date.now()}`,
       tipo: 'audio',
-      url: 'placeholder_audio',
-      duracion: `${recordingDuration}s`,
+      url: audioUrl,
+      duracion: `${duration}s`,
       timestamp: new Date().toISOString(),
     };
     onAddEvidence(evidence);
-    setIsRecording(false);
-    setRecordingDuration(0);
+    resetRecording();
+    setRecordingError(null);
   };
 
   const handleAddText = () => {
@@ -86,8 +95,8 @@ export function EvidenceCapture({ onAddEvidence, disabled = false }: EvidenceCap
     setShowActions(false);
     setShowTextInput(false);
     setTextContent('');
-    setIsRecording(false);
-    setRecordingDuration(0);
+    resetRecording();
+    setRecordingError(null);
   };
 
   return (
@@ -103,7 +112,15 @@ export function EvidenceCapture({ onAddEvidence, disabled = false }: EvidenceCap
         </button>
 
         <button
-          onClick={() => setIsRecording(!isRecording)}
+          onClick={() => {
+            if (isRecording) {
+              stopRecording();
+            } else {
+              startRecording().catch((err) => {
+                setRecordingError(`Error al acceder al micrófono: ${err.message}`);
+              });
+            }
+          }}
           disabled={disabled || showActions || showTextInput}
           className={`p-4 rounded-lg border-2 transition flex flex-col items-center gap-2 font-medium text-sm ${
             isRecording
@@ -128,22 +145,38 @@ export function EvidenceCapture({ onAddEvidence, disabled = false }: EvidenceCap
       {isRecording && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center gap-3">
           <div className="flex-1">
-            <div className="text-2xl font-bold text-red-600">{recordingDuration}s</div>
+            <div className="text-2xl font-bold text-red-600">{duration}s</div>
             <p className="text-sm text-red-700">Grabando audio...</p>
           </div>
-          <Button variant="danger" size="sm" onClick={handleAddAudio}>
-            Guardar
+          <Button variant="danger" size="sm" onClick={stopRecording}>
+            Detener
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setIsRecording(false);
-              setRecordingDuration(0);
-            }}
-          >
+          <Button variant="outline" size="sm" onClick={resetRecording}>
             Cancelar
           </Button>
+        </div>
+      )}
+
+      {audioBlob && !isRecording && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Play className="w-5 h-5 text-blue-600" />
+            <span className="text-sm font-medium text-blue-900">Audio grabado: {duration}s</span>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={resetRecording}>
+              Grabar de nuevo
+            </Button>
+            <Button variant="primary" size="sm" onClick={handleAddAudio}>
+              Guardar audio
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {recordingError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+          <p className="text-sm text-red-700">{recordingError}</p>
         </div>
       )}
 
@@ -181,7 +214,15 @@ export function EvidenceCapture({ onAddEvidence, disabled = false }: EvidenceCap
                 <Type className="w-4 h-4 mr-1" />
                 Texto
               </Button>
-              <Button variant="outline" size="sm" onClick={() => setIsRecording(true)}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  startRecording().catch((err) => {
+                    setRecordingError(`Error al acceder al micrófono: ${err.message}`);
+                  });
+                }}
+              >
                 <Mic className="w-4 h-4 mr-1" />
                 Audio
               </Button>
