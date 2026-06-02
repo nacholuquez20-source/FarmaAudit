@@ -2162,16 +2162,20 @@ class ConversationRouter:
                 estado=ConversationState.AUDITORIA_PERFUMERIA_LIBRE,
                 id_pendiente=sesion_id,
             )
+            logger.info(f"Updated conversation state for {payload.telefono} to AUDITORIA_PERFUMERIA_LIBRE with session {sesion_id}")
 
             # Send welcome message and show block menu
             await meta_client.send_text(
                 payload.telefono,
                 f"✅ Comenzando auditoría de perfumería en {sucursal.nombre}."
             )
+            logger.info(f"Sent welcome message for session {sesion_id}")
 
             # Wait for session to be persisted before fetching (Supabase can be slow)
             import asyncio
-            await asyncio.sleep(1.0)
+            logger.info(f"Waiting 2.0 seconds for session {sesion_id} to be persisted...")
+            await asyncio.sleep(2.0)
+            logger.info(f"Wait complete for session {sesion_id}, now attempting to fetch...")
 
             # Show block menu
             mock_payload = WhatsAppPayload(
@@ -2910,16 +2914,25 @@ EDITAR → Hacer cambios""",
             # Retry logic: session might not be immediately available after creation
             import asyncio
             sesion = None
+            logger.info(f"_handle_auditoria_perfumeria_libre: Attempting to fetch session {conv.id_pendiente}")
+
             for attempt in range(3):
+                logger.info(f"_handle_auditoria_perfumeria_libre: Attempt {attempt + 1}/3 to fetch session {conv.id_pendiente}")
                 sesion = self.sheets.get_sesion(conv.id_pendiente)
                 if sesion:
+                    logger.info(f"Successfully fetched session {conv.id_pendiente} on attempt {attempt + 1}")
                     break
+                logger.warning(f"Failed to fetch session {conv.id_pendiente} on attempt {attempt + 1}")
                 if attempt < 2:
+                    logger.info(f"Waiting 0.3 seconds before retry...")
                     await asyncio.sleep(0.3)
 
             if not sesion:
+                logger.error(f"Could not find session {conv.id_pendiente} after all retries")
                 await meta_client.send_text(payload.telefono, "❌ Sesión no encontrada.")
                 return "sesion_not_found"
+
+            logger.info(f"Proceeding with session {sesion.id_sesion} for phone {payload.telefono}")
 
             # Load bloques from memory (stored when session was created)
             # For now, load default bloques since we're not persisting them

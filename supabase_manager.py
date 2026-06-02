@@ -1129,7 +1129,7 @@ class SupabaseManager:
     def create_sesion(self, sesion: SesionAuditoria) -> str:
         """Create guided audit session."""
         try:
-            self.client.table("sesiones_auditoria").insert({
+            data_to_insert = {
                 "id_sesion": sesion.id_sesion,
                 "telefono_auditor": sesion.telefono_auditor,
                 "sucursal_id": sesion.sucursal_id,
@@ -1147,12 +1147,14 @@ class SupabaseManager:
                 "stock_items_json": sesion.stock_items_json,
                 "desvios_libres_json": sesion.desvios_libres_json,
                 "compromisos_firmados": sesion.compromisos_firmados,
-            }).execute()
+            }
+            logger.info(f"Creating sesion {sesion.id_sesion} with data: {data_to_insert}")
 
-            logger.info(f"Created sesion {sesion.id_sesion}")
+            response = self.client.table("sesiones_auditoria").insert(data_to_insert).execute()
+            logger.info(f"Created sesion {sesion.id_sesion}, response: {response}")
             return sesion.id_sesion
         except Exception as e:
-            logger.error(f"Failed to create sesion: {e}")
+            logger.error(f"Failed to create sesion {sesion.id_sesion}: {e}", exc_info=True)
             raise
 
     def get_sesion(self, id_sesion: str) -> Optional[SesionAuditoria]:
@@ -1160,6 +1162,7 @@ class SupabaseManager:
         import time
         max_retries = 5
         retry_delay = 0.5  # seconds
+        logger.info(f"get_sesion: Starting search for session {id_sesion}")
 
         for attempt in range(max_retries):
             try:
@@ -1167,10 +1170,20 @@ class SupabaseManager:
                 response = self.client.table("sesiones_auditoria").select("*").eq(
                     "id_sesion", id_sesion
                 ).execute()
-                logger.info(f"get_sesion response data count: {len(response.data) if response.data else 0}")
+
+                if response is None:
+                    logger.warning(f"get_sesion: response is None on attempt {attempt + 1}")
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                    continue
+
+                logger.info(f"get_sesion response count: {len(response.data) if response.data else 0}")
+                logger.debug(f"get_sesion raw response data: {response.data}")
+
                 data = response.data
-                if data:
+                if data and len(data) > 0:
                     row = data[0]
+                    logger.info(f"Found session {id_sesion} on attempt {attempt + 1}")
                     return SesionAuditoria(
                         id_sesion=row.get("id_sesion", ""),
                         telefono_auditor=str(row.get("telefono_auditor", "")),
@@ -1190,18 +1203,22 @@ class SupabaseManager:
                         desvios_libres_json=row.get("desvios_libres_json", "[]"),
                         compromisos_firmados=row.get("compromisos_firmados", ""),
                     )
-                logger.debug(f"get_sesion: No data found for {id_sesion}")
-                return None
+
+                logger.info(f"get_sesion: No data found for {id_sesion} on attempt {attempt + 1}")
+                if attempt < max_retries - 1:
+                    logger.info(f"Retrying get_sesion in {retry_delay}s...")
+                    time.sleep(retry_delay)
+
             except Exception as e:
-                logger.error(f"get_sesion attempt {attempt + 1}/{max_retries} failed: {e}")
+                logger.error(f"get_sesion attempt {attempt + 1}/{max_retries} failed: {e}", exc_info=True)
                 if attempt < max_retries - 1:
                     logger.info(f"Retrying get_sesion in {retry_delay}s...")
                     time.sleep(retry_delay)
                 else:
                     logger.error(f"All retries exhausted for get_sesion {id_sesion}")
-                    import traceback
-                    logger.error(f"Traceback: {traceback.format_exc()}")
-                    return None
+
+        logger.error(f"get_sesion: Failed to find session {id_sesion} after {max_retries} retries")
+        return None
 
     def update_sesion(
         self,
