@@ -1147,24 +1147,13 @@ class SupabaseManager:
                 "stock_items_json": sesion.stock_items_json,
                 "desvios_libres_json": sesion.desvios_libres_json,
                 "compromisos_firmados": sesion.compromisos_firmados,
+                "bloques_data": sesion.bloques_data,
             }).execute()
 
             logger.info(f"Created sesion {sesion.id_sesion}")
             return sesion.id_sesion
         except Exception as e:
             logger.error(f"Failed to create sesion: {e}")
-            raise
-
-    def create_sesion_bloques(self, id_sesion: str, bloques_json: str) -> None:
-        """Store audit blocks in separate table to avoid PostgREST schema cache issues."""
-        try:
-            self.client.table("sesiones_auditoria_bloques").insert({
-                "id_sesion": id_sesion,
-                "bloques_json": bloques_json,
-            }).execute()
-            logger.info(f"Created bloques for sesion {id_sesion}")
-        except Exception as e:
-            logger.error(f"Failed to create bloques: {e}")
             raise
 
     def get_sesion(self, id_sesion: str) -> Optional[SesionAuditoria]:
