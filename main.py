@@ -768,7 +768,7 @@ async def create_perfumeria_deviations(payload: AuditoriaCompletadaPerfumeriaReq
                 "severidad": "Media",
                 "responsable": responsable,
                 "tel_responsable": tel_responsable,
-                "plazo_fecha": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+                "plazo_fecha": (datetime.now(timezone.utc) + timedelta(days=7)).strftime("%Y-%m-%d"),
                 "plan_accion": "",  # Empty initially, responsable fills it
                 "estado": "Abierta",
                 "created_at": now,
@@ -817,7 +817,6 @@ async def create_perfumeria_deviations(payload: AuditoriaCompletadaPerfumeriaReq
             normalized_tel = "".join(ch for ch in tel_responsable if ch.isdigit())
             if normalized_tel:
                 deviation_count = len(created_gestiones)
-                bloques_list = ", ".join({r.get("desvio", "")[:20] for r in created_gestiones if r.get("desvio")})
 
                 message = (
                     f"FarmaAudit: Se detectaron {deviation_count} desvío(s) en {payload.sucursal_nombre}\n\n"
