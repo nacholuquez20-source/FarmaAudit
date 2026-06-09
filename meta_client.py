@@ -266,6 +266,64 @@ Severidad: {severidad}
 Acción requerida inmediatamente."""
         return await self.send_text(phone, text)
 
+    async def send_quick_reply(
+        self,
+        phone: str,
+        body: str,
+        buttons: List[Dict[str, str]]
+    ) -> bool:
+        """Send quick reply message with button options.
+
+        Args:
+            phone: Phone number
+            body: Message body text
+            buttons: List of dicts with 'id' and 'title' keys
+                    Example: [{'id': 'si', 'title': 'Sí'}, {'id': 'no', 'title': 'No'}]
+        """
+        try:
+            to_number = self._normalize_whatsapp_number(phone)
+            url = f"{self.BASE_URL}/{self.phone_number_id}/messages"
+
+            # Build quick reply buttons
+            quick_reply_buttons = []
+            for btn in buttons[:3]:  # Max 3 buttons for quick reply
+                quick_reply_buttons.append({
+                    "type": "text",
+                    "text": {
+                        "body": btn.get("title", "")[:20]
+                    }
+                })
+
+            payload = {
+                "messaging_product": "whatsapp",
+                "to": to_number,
+                "type": "interactive",
+                "interactive": {
+                    "type": "button",
+                    "body": {
+                        "text": body
+                    },
+                    "action": {
+                        "buttons": quick_reply_buttons
+                    }
+                }
+            }
+
+            headers = {"Authorization": f"Bearer {self.access_token}"}
+
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json=payload, headers=headers, timeout=30)
+                if response.status_code == 200:
+                    logger.info(f"Sent quick reply message to {phone} with {len(buttons)} buttons")
+                    return True
+                else:
+                    logger.error(f"Failed to send quick reply to {phone}: Status {response.status_code}")
+                    logger.error(f"Response: {response.text}")
+                    return False
+        except Exception as e:
+            logger.error(f"Failed to send quick reply to {phone}: {e}")
+            return False
+
     async def send_list_message(
         self,
         phone: str,

@@ -193,6 +193,36 @@ async def save_audit_to_database(
         raise
 
 
+async def get_previous_audit(sucursal_id: str) -> Optional[Dict]:
+    """Get the most recent previous audit for a sucursal.
+
+    Returns dict with bloque scores from last audit, or None if no previous audit.
+    """
+    try:
+        db = SupabaseManager()
+
+        # Query for most recent reporte for this sucursal
+        response = db.client.table("reporte").select(
+            "id, sucursal_id, puntuaciones"
+        ).eq("sucursal_id", sucursal_id).order(
+            "created_at", desc=True
+        ).limit(2).execute()
+
+        records = response.data if response.data else []
+
+        # Return the second most recent (skip current if in progress)
+        if len(records) >= 2:
+            prev_audit = records[1]
+            puntuaciones = prev_audit.get("puntuaciones", {})
+            return puntuaciones
+
+        return None
+
+    except Exception as e:
+        logger.warning(f"Could not fetch previous audit for {sucursal_id}: {e}")
+        return None
+
+
 async def send_manager_notification(
     telefono: str, sucursal_id: str, meta_client: MetaClient
 ) -> bool:

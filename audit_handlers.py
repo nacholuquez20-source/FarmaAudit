@@ -17,10 +17,43 @@ from audit_session import (
 from models import WhatsAppPayload
 from meta_client import MetaClient
 from photo_validator import PhotoValidator, PhotoValidationResult
-from audit_database import save_audit_to_database, send_manager_notification
+from audit_database import save_audit_to_database, send_manager_notification, get_previous_audit
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
+
+
+# Predefined notes templates by bloque
+NOTES_TEMPLATES = {
+    "LIMPIEZA": [
+        {"id": "1", "title": "Góndolas desorganizadas"},
+        {"id": "2", "title": "Polvo/suciedad en estantes"},
+        {"id": "3", "title": "Falta de reposición"},
+        {"id": "4", "title": "Desorden en piso"},
+        {"id": "5", "title": "Señalización sucia/faltante"},
+    ],
+    "STOCK": [
+        {"id": "1", "title": "Productos vencidos"},
+        {"id": "2", "title": "Falta de stock"},
+        {"id": "3", "title": "Exceso de inventario"},
+        {"id": "4", "title": "Productos mal ubicados"},
+        {"id": "5", "title": "Falta rotulación de precios"},
+    ],
+    "OFERTAS": [
+        {"id": "1", "title": "Promociones incorrectas"},
+        {"id": "2", "title": "Precios no actualizados"},
+        {"id": "3", "title": "Exhibición desordenada"},
+        {"id": "4", "title": "Falta de material promocional"},
+        {"id": "5", "title": "Marcas no destacadas"},
+    ],
+    "BURBUJAS": [
+        {"id": "1", "title": "Displays dañados"},
+        {"id": "2", "title": "Señalización ilegible"},
+        {"id": "3", "title": "Falta de displays"},
+        {"id": "4", "title": "Material vencido/desgastado"},
+        {"id": "5", "title": "Ubicación incorrecta"},
+    ],
+}
 
 
 class AuditConversationHandler:
@@ -190,9 +223,25 @@ class AuditConversationHandler:
         # Get description of what to look for
         bloque_desc = BLOQUE_DESCRIPTIONS.get(current_bloque, "")
 
+        # Get historical comparison
+        prev_scores = await get_previous_audit(session.sucursal_id)
+        prev_score = prev_scores.get(current_bloque) if prev_scores else None
+
+        # Build comparison message
+        comparison = ""
+        if prev_score:
+            diff = score - prev_score
+            if diff > 0:
+                trend = f"⬆️ +{diff} (antes: {prev_score}/5)"
+            elif diff < 0:
+                trend = f"⬇️ {diff} (antes: {prev_score}/5)"
+            else:
+                trend = f"➡️ igual que antes ({prev_score}/5)"
+            comparison = f"\n{trend}"
+
         await meta_client.send_text(
             payload.telefono,
-            f"✓ {bloque_label}: {score}/5\n\n"
+            f"✓ {bloque_label}: {score}/5{comparison}\n\n"
             f"Documenta lo que observas 📸🎙️📝\n"
             f"(fotos, audios, textos)\n\n"
             f"{bloque_desc}\n\n"
@@ -269,6 +318,24 @@ class AuditConversationHandler:
 
             return "note_saved"
 
+        # Check if user is selecting from predefined notes
+        if payload.tipo == "text":
+            texto_lower = payload.contenido.lower().strip()
+
+            # Check if message is asking for note templates
+            if any(word in texto_lower for word in ["problema", "nota", "problema", "template", "plantilla"]):
+                templates = NOTES_TEMPLATES.get(current_bloque, [])
+                if templates:
+                    await meta_client.send_list_message(
+                        payload.telefono,
+                        header=f"Problemas comunes en {bloque_label}",
+                        body=f"Selecciona un problema o escribe uno personalizado:\n\n{bloque_label}",
+                        footer="O envía 'SIGUIENTE' para continuar",
+                        button_text="Selecciona un problema",
+                        options=templates
+                    )
+                    return "showing_templates"
+
         elif payload.tipo == "image":
             # Handle photo
             if not payload.media_id:
@@ -309,8 +376,20 @@ class AuditConversationHandler:
                 await meta_client.send_text(
                     payload.telefono,
                     f"✓ Foto guardada en {bloque_label}\n\n"
-                    f"¿Algo más? (foto, audio, texto, o 'SIGUIENTE')"
+                    f"¿Algo más?"
                 )
+
+                # Offer predefined notes for this bloque
+                templates = NOTES_TEMPLATES.get(current_bloque, [])
+                if templates:
+                    await meta_client.send_list_message(
+                        payload.telefono,
+                        header=f"Describe el problema",
+                        body=f"Problemas comunes en {bloque_label}:",
+                        footer="O envía tu propia descripción",
+                        button_text="Selecciona o agrega",
+                        options=templates + [{"id": "otro", "title": "Escribir otro..."}]
+                    )
 
                 return "photo_received"
 
@@ -333,8 +412,20 @@ class AuditConversationHandler:
                 await meta_client.send_text(
                     payload.telefono,
                     f"✓ Audio guardado en {bloque_label}\n\n"
-                    f"¿Algo más? (foto, audio, texto, o 'SIGUIENTE')"
+                    f"¿Algo más?"
                 )
+
+                # Offer predefined notes
+                templates = NOTES_TEMPLATES.get(current_bloque, [])
+                if templates:
+                    await meta_client.send_list_message(
+                        payload.telefono,
+                        header=f"Describe el problema",
+                        body=f"Problemas comunes en {bloque_label}:",
+                        footer="O envía 'SIGUIENTE'",
+                        button_text="Agregar problema",
+                        options=templates[:4] + [{"id": "siguiente", "title": "Siguiente bloque"}]
+                    )
 
                 return "audio_received"
 
@@ -576,9 +667,18 @@ class AuditConversationHandler:
         if session.fotos:
             summary += f"\n📷 FOTOS: {len(session.fotos)}\n"
 
-        summary += f"\n¿Confirmas envío?\n\n1. Sí, enviar\n2. No, editar"
+        summary += f"\n¿Confirmas envío?"
 
+        # Send summary with quick reply buttons for confirmation
         await meta_client.send_text(telefono, summary)
+        await meta_client.send_quick_reply(
+            telefono,
+            "¿Enviar auditoría?",
+            [
+                {"id": "si", "title": "✅ Sí, enviar"},
+                {"id": "no", "title": "❌ No, editar"}
+            ]
+        )
 
         return "summary_sent"
 
@@ -595,8 +695,8 @@ class AuditConversationHandler:
 
         texto = payload.contenido.lower().strip()
 
-        # Accept "1" or words like "si", "yes", etc.
-        if texto == "1" or any(word in texto for word in ["sí", "si", "yes", "confirmo", "ok"]):
+        # Accept "si", "✅ sí, enviar", "1" or other affirmative words
+        if any(word in texto for word in ["sí", "si", "yes", "confirmo", "ok", "✅"]):
             # Save to DB
             try:
                 await save_audit_to_database(session, meta_client)
@@ -635,7 +735,7 @@ class AuditConversationHandler:
 
             return "audit_saved"
 
-        elif texto == "2" or any(word in texto for word in ["no", "editar", "cambiar", "modificar"]):
+        elif any(word in texto for word in ["no", "editar", "cambiar", "modificar", "❌"]):
             # Ask what to change
             await meta_client.send_text(
                 payload.telefono,
