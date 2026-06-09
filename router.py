@@ -2220,26 +2220,28 @@ class ConversationRouter:
             save_session(audit_session_v2)
             logger.info(f"Created v2 audit session {audit_session_v2.id_sesion} for {payload.telefono} in SCORING state")
 
-            # Send welcome message
+            # Send welcome message with list options
             primer_bloque = BLOQUE_ORDER[0]
             bloque_label = BLOQUE_LABELS.get(primer_bloque, primer_bloque)
             bloque_desc = BLOQUE_DESCRIPTIONS.get(primer_bloque, "")
 
-            await meta_client.send_text(
+            score_options = [
+                {"id": "1", "title": "Muy malo", "description": "Crítico, acción inmediata"},
+                {"id": "2", "title": "Malo", "description": "Problemas significativos"},
+                {"id": "3", "title": "Regular", "description": "Necesita mejora"},
+                {"id": "4", "title": "Bueno", "description": "Bien, algunos detalles"},
+                {"id": "5", "title": "Excelente", "description": "Cumple perfectamente"},
+            ]
+
+            await meta_client.send_list_message(
                 payload.telefono,
-                f"✅ Comenzando auditoría de perfumería en {sucursal.nombre}.\n\n"
-                f"🏪 Auditoría Perfumería (0/4)\n\n"
-                f"Paso 1 de 4: {bloque_label}\n"
-                f"{bloque_desc}\n\n"
-                f"¿Cuál es tu puntuación?\n\n"
-                f"1. Muy malo\n"
-                f"2. Malo\n"
-                f"3. Regular\n"
-                f"4. Bueno\n"
-                f"5. Excelente\n\n"
-                f"⏳ Responde: 1, 2, 3, 4 o 5"
+                header=f"Paso 1 de 4: {bloque_label}",
+                body=f"✅ Comenzando auditoría de perfumería en {sucursal.nombre}.\n\nAuditoría Perfumería (0/4)\n\n{bloque_desc}\n\n¿Cuál es tu puntuación?",
+                footer="",
+                button_text="Selecciona una opción",
+                options=score_options
             )
-            logger.info(f"Sent welcome message for v2 session {audit_session_v2.id_sesion}")
+            logger.info(f"Sent welcome message with list options for v2 session {audit_session_v2.id_sesion}")
 
             return "v2_audit_started"
 

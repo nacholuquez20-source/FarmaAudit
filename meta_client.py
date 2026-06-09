@@ -266,6 +266,86 @@ Severidad: {severidad}
 Acción requerida inmediatamente."""
         return await self.send_text(phone, text)
 
+    async def send_list_message(
+        self,
+        phone: str,
+        header: str,
+        body: str,
+        footer: str,
+        button_text: str,
+        options: List[Dict[str, str]]
+    ) -> bool:
+        """Send interactive list message with selectable options.
+
+        Args:
+            phone: Phone number
+            header: Message header (max 60 chars)
+            body: Message body text
+            footer: Footer text (optional, max 60 chars)
+            button_text: Button label (max 20 chars)
+            options: List of dicts with 'id' and 'title' keys
+                    Example: [{'id': '1', 'title': 'Muy malo'}, ...]
+        """
+        try:
+            to_number = self._normalize_whatsapp_number(phone)
+            url = f"{self.BASE_URL}/{self.phone_number_id}/messages"
+
+            # Build rows from options
+            rows = []
+            for opt in options:
+                rows.append({
+                    "id": opt.get("id", ""),
+                    "title": opt.get("title", "")[:24],  # Max 24 chars
+                    "description": opt.get("description", "")[:72]  # Max 72 chars
+                })
+
+            payload = {
+                "messaging_product": "whatsapp",
+                "to": to_number,
+                "type": "interactive",
+                "interactive": {
+                    "type": "list",
+                    "header": {
+                        "type": "text",
+                        "text": header[:60]
+                    },
+                    "body": {
+                        "text": body
+                    },
+                    "footer": {
+                        "text": footer[:60]
+                    } if footer else None,
+                    "action": {
+                        "button": button_text[:20],
+                        "sections": [
+                            {
+                                "title": "Opciones",
+                                "rows": rows
+                            }
+                        ]
+                    }
+                }
+            }
+
+            # Remove footer if empty
+            if not footer:
+                del payload["interactive"]["footer"]
+
+            headers = {"Authorization": f"Bearer {self.access_token}"}
+
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json=payload, headers=headers, timeout=30)
+                if response.status_code == 200:
+                    logger.info(f"Sent list message to {phone} with {len(options)} options")
+                    return True
+                else:
+                    logger.error(f"Failed to send list message to {phone}: Status {response.status_code}")
+                    logger.error(f"Response: {response.text}")
+                    return False
+        except Exception as e:
+            logger.error(f"Failed to send list message to {phone}: {e}")
+            return False
+
 
 async def get_meta_client() -> MetaClient:
     """Get Meta WhatsApp client (dependency injection)."""

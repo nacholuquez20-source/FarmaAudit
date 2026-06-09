@@ -103,23 +103,26 @@ class AuditConversationHandler:
         session.started_at = datetime.now(timezone.utc).isoformat()
         save_session(session)
 
-        # Send first scoring question
+        # Send first scoring question with list message
         primer_bloque = BLOQUE_ORDER[0]
         bloque_label = BLOQUE_LABELS.get(primer_bloque, primer_bloque)
         bloque_desc = BLOQUE_DESCRIPTIONS.get(primer_bloque, "")
 
-        await meta_client.send_text(
+        score_options = [
+            {"id": "1", "title": "Muy malo", "description": "Crítico, acción inmediata"},
+            {"id": "2", "title": "Malo", "description": "Problemas significativos"},
+            {"id": "3", "title": "Regular", "description": "Necesita mejora"},
+            {"id": "4", "title": "Bueno", "description": "Bien, algunos detalles"},
+            {"id": "5", "title": "Excelente", "description": "Cumple perfectamente"},
+        ]
+
+        await meta_client.send_list_message(
             telefono,
-            f"✓ Auditoría iniciada: {sucursal_id}\n\n"
-            f"Paso 1 de 4: {bloque_label}\n"
-            f"{bloque_desc}\n\n"
-            f"¿Cuál es tu puntuación?\n\n"
-            f"1. Muy malo\n"
-            f"2. Malo\n"
-            f"3. Regular\n"
-            f"4. Bueno\n"
-            f"5. Excelente\n\n"
-            f"⏳ Responde: 1, 2, 3, 4 o 5"
+            header=f"Paso 1 de 4: {bloque_label}",
+            body=f"✓ Auditoría iniciada: {sucursal_id}\n\n{bloque_desc}\n\n¿Cuál es tu puntuación?",
+            footer=f"({bloque_desc})",
+            button_text="Selecciona una opción",
+            options=score_options
         )
 
         return "audit_started"
@@ -161,18 +164,21 @@ class AuditConversationHandler:
             primer_brand = BRAND_ORDER[0]
             brand_label = BRAND_LABELS.get(primer_brand, primer_brand)
 
-            await meta_client.send_text(
+            score_options = [
+                {"id": "1", "title": "Muy malo", "description": "Crítico"},
+                {"id": "2", "title": "Malo", "description": "Problemas"},
+                {"id": "3", "title": "Regular", "description": "Mejora necesaria"},
+                {"id": "4", "title": "Bueno", "description": "Bien"},
+                {"id": "5", "title": "Excelente", "description": "Perfecto"},
+            ]
+
+            await meta_client.send_list_message(
                 payload.telefono,
-                f"✓ Ofertas: {score}/5\n\n"
-                f"Desglose por marca:\n"
-                f"Marca 1/4: {brand_label}\n"
-                f"(Exhibición, disponibilidad, precios)\n\n"
-                f"¿Cuál es tu puntuación?\n\n"
-                f"1. Muy malo\n"
-                f"2. Malo\n"
-                f"3. Regular\n"
-                f"4. Bueno\n"
-                f"5. Excelente"
+                header="Marca 1/4: " + brand_label,
+                body=f"✓ Ofertas: {score}/5\n\nDesglose por marca\n(Exhibición, disponibilidad, precios)\n\n¿Cuál es tu puntuación?",
+                footer="Marca: " + brand_label,
+                button_text="Selecciona una opción",
+                options=score_options
             )
 
             return "moved_to_brands"
@@ -223,17 +229,23 @@ class AuditConversationHandler:
                     session.estado = AuditState.SCORING
                     save_session(session)
 
-                    await meta_client.send_text(
+                    score_options = [
+                        {"id": "1", "title": "Muy malo", "description": "Crítico"},
+                        {"id": "2", "title": "Malo", "description": "Problemas"},
+                        {"id": "3", "title": "Regular", "description": "Mejora necesaria"},
+                        {"id": "4", "title": "Bueno", "description": "Bien"},
+                        {"id": "5", "title": "Excelente", "description": "Perfecto"},
+                    ]
+
+                    # Send confirmation + new scoring list in one flow
+                    await meta_client.send_text(payload.telefono, summary_msg)
+                    await meta_client.send_list_message(
                         payload.telefono,
-                        summary_msg +
-                        f"Paso {session.current_bloque_index + 1} de 4: {next_label}\n"
-                        f"{next_desc}\n\n"
-                        f"¿Cuál es tu puntuación?\n\n"
-                        f"1. Muy malo\n"
-                        f"2. Malo\n"
-                        f"3. Regular\n"
-                        f"4. Bueno\n"
-                        f"5. Excelente"
+                        header=f"Paso {session.current_bloque_index + 1} de 4: {next_label}",
+                        body=f"{next_desc}\n\n¿Cuál es tu puntuación?",
+                        footer="",
+                        button_text="Selecciona una opción",
+                        options=score_options
                     )
 
                     return "next_bloque"
@@ -363,16 +375,21 @@ class AuditConversationHandler:
 
             save_session(session)
 
-            await meta_client.send_text(
+            score_options = [
+                {"id": "1", "title": "Muy malo", "description": "Crítico"},
+                {"id": "2", "title": "Malo", "description": "Problemas"},
+                {"id": "3", "title": "Regular", "description": "Mejora necesaria"},
+                {"id": "4", "title": "Bueno", "description": "Bien"},
+                {"id": "5", "title": "Excelente", "description": "Perfecto"},
+            ]
+
+            await meta_client.send_list_message(
                 payload.telefono,
-                f"✓ {BRAND_LABELS.get(current_brand, current_brand)}: {score}/5\n\n"
-                f"Marca {brand_num}/4: {next_label}\n\n"
-                f"¿Cuál es tu puntuación?\n\n"
-                f"1. Muy malo\n"
-                f"2. Malo\n"
-                f"3. Regular\n"
-                f"4. Bueno\n"
-                f"5. Excelente"
+                header=f"Marca {brand_num}/4: {next_label}",
+                body=f"✓ {BRAND_LABELS.get(current_brand, current_brand)}: {score}/5\n\n¿Cuál es tu puntuación?",
+                footer=f"Marca: {next_label}",
+                button_text="Selecciona una opción",
+                options=score_options
             )
 
             return "next_brand"
