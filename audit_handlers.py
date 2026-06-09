@@ -17,6 +17,7 @@ from audit_session import (
 from models import WhatsAppPayload
 from meta_client import MetaClient
 from photo_validator import PhotoValidator, PhotoValidationResult
+from audit_database import save_audit_to_database, send_manager_notification
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -112,7 +113,12 @@ class AuditConversationHandler:
             f"✓ Auditoría iniciada: {sucursal_id}\n\n"
             f"Paso 1 de 4: {bloque_label}\n"
             f"{bloque_desc}\n\n"
-            f"Puntúa de 1 (Muy malo) a 5 (Excelente)\n"
+            f"¿Cuál es tu puntuación?\n\n"
+            f"1. Muy malo\n"
+            f"2. Malo\n"
+            f"3. Regular\n"
+            f"4. Bueno\n"
+            f"5. Excelente\n\n"
             f"⏳ Responde: 1, 2, 3, 4 o 5"
         )
 
@@ -160,7 +166,12 @@ class AuditConversationHandler:
                 f"Desglose por marca:\n"
                 f"Marca 1/4: {brand_label}\n"
                 f"(Exhibición, disponibilidad, precios)\n\n"
-                f"Responde: 1-5"
+                f"¿Cuál es tu puntuación?\n\n"
+                f"1. Muy malo\n"
+                f"2. Malo\n"
+                f"3. Regular\n"
+                f"4. Bueno\n"
+                f"5. Excelente"
             )
 
             return "moved_to_brands"
@@ -178,7 +189,12 @@ class AuditConversationHandler:
                 f"✓ {BLOQUE_LABELS.get(current_bloque, current_bloque)}: {score}/5\n\n"
                 f"Paso {session.current_bloque_index + 1} de 4: {next_label}\n"
                 f"{next_desc}\n\n"
-                f"Responde: 1-5"
+                f"¿Cuál es tu puntuación?\n\n"
+                f"1. Muy malo\n"
+                f"2. Malo\n"
+                f"3. Regular\n"
+                f"4. Bueno\n"
+                f"5. Excelente"
             )
 
             return "next_bloque"
@@ -238,8 +254,13 @@ class AuditConversationHandler:
             await meta_client.send_text(
                 payload.telefono,
                 f"✓ {BRAND_LABELS.get(current_brand, current_brand)}: {score}/5\n\n"
-                f"Marca {brand_num}/4: {next_label}\n"
-                f"Responde: 1-5"
+                f"Marca {brand_num}/4: {next_label}\n\n"
+                f"¿Cuál es tu puntuación?\n\n"
+                f"1. Muy malo\n"
+                f"2. Malo\n"
+                f"3. Regular\n"
+                f"4. Bueno\n"
+                f"5. Excelente"
             )
 
             return "next_brand"
@@ -258,7 +279,12 @@ class AuditConversationHandler:
             f"✓ {BRAND_LABELS.get(current_brand, current_brand)}: {score}/5\n\n"
             f"Paso 4 de 4: {next_label}\n"
             f"{next_desc}\n\n"
-            f"Responde: 1-5"
+            f"¿Cuál es tu puntuación?\n\n"
+            f"1. Muy malo\n"
+            f"2. Malo\n"
+            f"3. Regular\n"
+            f"4. Bueno\n"
+            f"5. Excelente"
         )
 
         return "back_to_scoring"
@@ -280,10 +306,19 @@ class AuditConversationHandler:
 
             # Check if it's a bloque selection after photo
             bloque_match = None
-            for bloque in BLOQUE_ORDER:
-                if bloque.lower() in texto:
-                    bloque_match = bloque
-                    break
+
+            # Try to match by number (1-4)
+            if texto.isdigit():
+                bloque_num = int(texto)
+                if 1 <= bloque_num <= 4:
+                    bloque_match = BLOQUE_ORDER[bloque_num - 1]
+
+            # If not matched by number, try by name
+            if not bloque_match:
+                for bloque in BLOQUE_ORDER:
+                    if bloque.lower() in texto:
+                        bloque_match = bloque
+                        break
 
             if bloque_match and session.fotos:
                 # User is specifying the bloque for the last photo
@@ -361,7 +396,11 @@ class AuditConversationHandler:
                 await meta_client.send_text(
                     payload.telefono,
                     f"✓ Foto guardada correctamente.\n\n"
-                    f"¿De qué área es? (Limpieza, Stock, Ofertas, Burbujas)"
+                    f"¿De qué área es?\n\n"
+                    f"1. Limpieza\n"
+                    f"2. Stock\n"
+                    f"3. Ofertas\n"
+                    f"4. Burbujas"
                 )
 
                 return "photo_received"
@@ -415,7 +454,7 @@ class AuditConversationHandler:
         if session.fotos:
             summary += f"\n📷 FOTOS: {len(session.fotos)}\n"
 
-        summary += f"\n¿Confirmas envío? (Sí/No)"
+        summary += f"\n¿Confirmas envío?\n\n1. Sí, enviar\n2. No, editar"
 
         await meta_client.send_text(telefono, summary)
 
@@ -428,28 +467,53 @@ class AuditConversationHandler:
         if payload.tipo != "text":
             await meta_client.send_text(
                 payload.telefono,
-                "Por favor responde 'Sí' para confirmar o 'No' para editar"
+                "Por favor responde:\n1. Sí, enviar\n2. No, editar"
             )
             return "invalid_input"
 
         texto = payload.contenido.lower().strip()
 
-        if any(word in texto for word in ["sí", "si", "yes", "confirmo", "ok", "yes"]):
+        # Accept "1" or words like "si", "yes", etc.
+        if texto == "1" or any(word in texto for word in ["sí", "si", "yes", "confirmo", "ok"]):
             # Save to DB
+            try:
+                await save_audit_to_database(session, meta_client)
+                logger.info(f"Audit session {session.id_sesion} saved to database")
+
+                # Try to send manager notification (non-blocking)
+                try:
+                    await send_manager_notification(
+                        payload.telefono, session.sucursal_id, meta_client
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send manager notification: {e}")
+
+            except Exception as e:
+                logger.error(f"Error saving audit to database: {e}")
+                await meta_client.send_text(
+                    payload.telefono,
+                    "⚠️ Error guardando en BD, pero tu auditoría fue registrada.\n"
+                    f"ID: {session.id_sesion}"
+                )
+                return "audit_saved_local_only"
+
+            # Mark as complete
             session.estado = AuditState.DONE
             save_session(session)
 
-            # TODO: Call create_audit_records(session) to save to BD
+            desvio_count = len(session.desvios)
             await meta_client.send_text(
                 payload.telefono,
                 f"✅ ¡Auditoría guardada!\n\n"
                 f"ID: {session.id_sesion}\n"
-                f"Gerente notificado de {len(session.desvios)} desvío(s)"
+                f"Fotos: {len(session.fotos)}\n"
+                f"Desvíos: {desvio_count}\n\n"
+                f"Gerente notificado de {desvio_count} hallazgo(s)"
             )
 
             return "audit_saved"
 
-        elif any(word in texto for word in ["no", "editar", "cambiar", "modificar"]):
+        elif texto == "2" or any(word in texto for word in ["no", "editar", "cambiar", "modificar"]):
             # Ask what to change
             await meta_client.send_text(
                 payload.telefono,
@@ -462,6 +526,6 @@ class AuditConversationHandler:
         else:
             await meta_client.send_text(
                 payload.telefono,
-                "Por favor responde 'Sí' para confirmar o 'No' para editar"
+                "Por favor responde:\n1. Sí, enviar\n2. No, editar"
             )
             return "invalid_input"
