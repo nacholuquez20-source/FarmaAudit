@@ -58,11 +58,11 @@ class AuditConversationHandler:
         elif session.estado == AuditState.SCORING:
             return await AuditConversationHandler.handle_score(payload, meta_client, session)
 
+        elif session.estado == AuditState.BLOQUE_EVIDENCE_COLLECTION:
+            return await AuditConversationHandler.handle_bloque_evidence(payload, meta_client, session)
+
         elif session.estado == AuditState.SCORING_BRANDS:
             return await AuditConversationHandler.handle_brand_score(payload, meta_client, session)
-
-        elif session.estado == AuditState.EVIDENCE:
-            return await AuditConversationHandler.handle_evidence(payload, meta_client, session)
 
         elif session.estado == AuditState.SUMMARY:
             return await AuditConversationHandler.handle_confirmation(payload, meta_client, session)
@@ -126,7 +126,7 @@ class AuditConversationHandler:
 
     @staticmethod
     async def handle_score(payload: WhatsAppPayload, meta_client: MetaClient, session: AuditSession) -> str:
-        """Handle bloque score input."""
+        """Handle bloque score input and transition to evidence collection."""
 
         if payload.tipo != "text":
             await meta_client.send_text(
@@ -147,6 +147,7 @@ class AuditConversationHandler:
 
         score = int(texto)
         current_bloque = session.get_current_bloque()
+        bloque_label = BLOQUE_LABELS.get(current_bloque, current_bloque)
 
         # Save score
         session.set_bloque_score(current_bloque, score)
@@ -176,45 +177,156 @@ class AuditConversationHandler:
 
             return "moved_to_brands"
 
-        # Move to next bloque
-        if session.move_to_next_bloque():
-            next_bloque = session.get_current_bloque()
-            next_label = BLOQUE_LABELS.get(next_bloque, next_bloque)
-            next_desc = BLOQUE_DESCRIPTIONS.get(next_bloque, "")
+        # For non-OFERTAS bloques: move to evidence collection for this bloque
+        session.estado = AuditState.BLOQUE_EVIDENCE_COLLECTION
+        save_session(session)
 
+        # Get description of what to look for
+        bloque_desc = BLOQUE_DESCRIPTIONS.get(current_bloque, "")
+
+        await meta_client.send_text(
+            payload.telefono,
+            f"✓ {bloque_label}: {score}/5\n\n"
+            f"Documenta lo que observas 📸🎙️📝\n"
+            f"(fotos, audios, textos)\n\n"
+            f"{bloque_desc}\n\n"
+            f"Escribe 'SIGUIENTE' cuando termines este bloque"
+        )
+
+        return "evidence_collection_started"
+
+    @staticmethod
+    async def handle_bloque_evidence(payload: WhatsAppPayload, meta_client: MetaClient, session: AuditSession) -> str:
+        """Handle evidence collection for current bloque (fotos, audios, textos)."""
+
+        current_bloque = session.get_current_bloque()
+        bloque_label = BLOQUE_LABELS.get(current_bloque, current_bloque)
+
+        # Check for "SIGUIENTE" to move to next bloque
+        if payload.tipo == "text":
+            texto = payload.contenido.upper().strip()
+
+            if "SIGUIENTE" in texto or "NEXT" in texto:
+                # Count evidence collected
+                bloque_fotos = len([f for f in session.fotos if f.bloque == current_bloque])
+                bloque_audios = len([a for a in session.desvios if a.bloque == current_bloque and "[AUDIO]" in a.descripcion])
+                bloque_notas = len([d for d in session.desvios if d.bloque == current_bloque and "[AUDIO]" not in d.descripcion])
+
+                summary_msg = f"✓ {bloque_label} completado!\n📸 {bloque_fotos} foto(s) · 🎙️ {bloque_audios} audio(s) · 📝 {bloque_notas} nota(s)\n\n"
+
+                # Check if there are more bloques to score
+                if session.move_to_next_bloque():
+                    next_bloque = session.get_current_bloque()
+                    next_label = BLOQUE_LABELS.get(next_bloque, next_bloque)
+                    next_desc = BLOQUE_DESCRIPTIONS.get(next_bloque, "")
+
+                    session.estado = AuditState.SCORING
+                    save_session(session)
+
+                    await meta_client.send_text(
+                        payload.telefono,
+                        summary_msg +
+                        f"Paso {session.current_bloque_index + 1} de 4: {next_label}\n"
+                        f"{next_desc}\n\n"
+                        f"¿Cuál es tu puntuación?\n\n"
+                        f"1. Muy malo\n"
+                        f"2. Malo\n"
+                        f"3. Regular\n"
+                        f"4. Bueno\n"
+                        f"5. Excelente"
+                    )
+
+                    return "next_bloque"
+
+                # All bloques completed → move to SUMMARY
+                session.estado = AuditState.SUMMARY
+                save_session(session)
+
+                return await AuditConversationHandler.send_summary(payload.telefono, meta_client, session)
+
+            # Text without "SIGUIENTE" → save as note/desvio for this bloque
+            texto = payload.contenido.strip()
+            session.add_desvio(bloque=current_bloque, descripcion=texto)
             save_session(session)
 
             await meta_client.send_text(
                 payload.telefono,
-                f"✓ {BLOQUE_LABELS.get(current_bloque, current_bloque)}: {score}/5\n\n"
-                f"Paso {session.current_bloque_index + 1} de 4: {next_label}\n"
-                f"{next_desc}\n\n"
-                f"¿Cuál es tu puntuación?\n\n"
-                f"1. Muy malo\n"
-                f"2. Malo\n"
-                f"3. Regular\n"
-                f"4. Bueno\n"
-                f"5. Excelente"
+                f"✓ Nota guardada en {bloque_label}\n\n"
+                f"¿Algo más? (foto, audio, texto, o 'SIGUIENTE')"
             )
 
-            return "next_bloque"
+            return "note_saved"
 
-        # All bloques scored → move to EVIDENCE
-        session.estado = AuditState.EVIDENCE
-        save_session(session)
+        elif payload.tipo == "image":
+            # Handle photo
+            if not payload.media_id:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "❌ No puedo procesar esa imagen. Por favor intenta de nuevo."
+                )
+                return "no_media_id"
 
-        await meta_client.send_text(
-            payload.telefono,
-            f"✓ {BLOQUE_LABELS.get(current_bloque, current_bloque)}: {score}/5\n\n"
-            f"✅ Auditoría de puntuaciones completada!\n\n"
-            f"Ahora necesito fotos de los problemas encontrados.\n\n"
-            f"Áreas con problemas (3-4):\n"
-            + "\n".join([f"  • {BLOQUE_LABELS.get(b, b)} ({s}/5)"
-                        for b, s in session.bloques.items() if s <= 3])
-            + f"\n\nEnvía fotos o escribe 'Listo' cuando termines"
-        )
+            try:
+                # Download and validate photo
+                media_bytes, mime_type = await meta_client.download_media_with_metadata(
+                    payload.media_id
+                )
 
-        return "moved_to_evidence"
+                validation = PhotoValidator.validate_media_bytes(media_bytes, mime_type)
+
+                if not validation.is_valid:
+                    await meta_client.send_text(
+                        payload.telefono,
+                        validation.message + "\n\nIntenta de nuevo o escribe 'SIGUIENTE' para continuar."
+                    )
+                    return "photo_invalid"
+
+                # Photo is valid - store it for this bloque
+                foto = FotoEvidence(
+                    id=f"foto_{int(datetime.now(timezone.utc).timestamp())}",
+                    media_id=payload.media_id,
+                    media_url=payload.media_url,
+                    bloque=current_bloque,
+                    descripcion=payload.contenido or "",
+                    validated=True,
+                )
+
+                session.add_foto(foto)
+                save_session(session)
+
+                await meta_client.send_text(
+                    payload.telefono,
+                    f"✓ Foto guardada en {bloque_label}\n\n"
+                    f"¿Algo más? (foto, audio, texto, o 'SIGUIENTE')"
+                )
+
+                return "photo_received"
+
+            except Exception as e:
+                logger.error(f"Error downloading/validating photo: {e}")
+                await meta_client.send_text(
+                    payload.telefono,
+                    "❌ Error procesando la foto. Por favor intenta de nuevo."
+                )
+                return "photo_download_error"
+
+        elif payload.tipo == "audio":
+            # Handle audio message
+            if payload.media_id:
+                # Create a note marking it as audio
+                audio_description = f"[AUDIO] {payload.contenido or 'Sin transcripción'}"
+                session.add_desvio(bloque=current_bloque, descripcion=audio_description)
+                save_session(session)
+
+                await meta_client.send_text(
+                    payload.telefono,
+                    f"✓ Audio guardado en {bloque_label}\n\n"
+                    f"¿Algo más? (foto, audio, texto, o 'SIGUIENTE')"
+                )
+
+                return "audio_received"
+
+        return "unsupported_media"
 
     @staticmethod
     async def handle_brand_score(payload: WhatsAppPayload, meta_client: MetaClient, session: AuditSession) -> str:
@@ -265,29 +377,22 @@ class AuditConversationHandler:
 
             return "next_brand"
 
-        # All brands scored → move to next bloque (BURBUJAS)
-        session.estado = AuditState.SCORING
-        session.move_to_next_bloque()
-        next_bloque = session.get_current_bloque()
-        next_label = BLOQUE_LABELS.get(next_bloque, next_bloque)
-        next_desc = BLOQUE_DESCRIPTIONS.get(next_bloque, "")
-
+        # All brands scored → move to evidence collection for OFERTAS
+        session.estado = AuditState.BLOQUE_EVIDENCE_COLLECTION
         save_session(session)
+
+        bloque_desc = BLOQUE_DESCRIPTIONS.get(BloqueType.OFERTAS.value, "")
 
         await meta_client.send_text(
             payload.telefono,
             f"✓ {BRAND_LABELS.get(current_brand, current_brand)}: {score}/5\n\n"
-            f"Paso 4 de 4: {next_label}\n"
-            f"{next_desc}\n\n"
-            f"¿Cuál es tu puntuación?\n\n"
-            f"1. Muy malo\n"
-            f"2. Malo\n"
-            f"3. Regular\n"
-            f"4. Bueno\n"
-            f"5. Excelente"
+            f"Documenta lo que observas en Ofertas 📸🎙️📝\n"
+            f"(fotos, audios, textos)\n\n"
+            f"{bloque_desc}\n\n"
+            f"Escribe 'SIGUIENTE' cuando termines este bloque"
         )
 
-        return "back_to_scoring"
+        return "ofertas_evidence_collection_started"
 
     @staticmethod
     async def handle_evidence(payload: WhatsAppPayload, meta_client: MetaClient, session: AuditSession) -> str:
