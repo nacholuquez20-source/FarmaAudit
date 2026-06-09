@@ -40,6 +40,13 @@ from drive import DriveManager
 
 from meta_client import MetaClient
 
+# NEW: Imports for perfumery audit v2 (structured flow)
+from audit_session import (
+    AuditSession, AuditState, create_session, get_session, save_session,
+    BloqueType, BrandType, BLOQUE_ORDER, BRAND_ORDER,
+    BLOQUE_LABELS, BLOQUE_DESCRIPTIONS
+)
+from audit_handlers import AuditConversationHandler
 
 
 logger = logging.getLogger(__name__)
@@ -157,6 +164,30 @@ class ConversationRouter:
             return await self._handle_message_locked(payload, meta_client)
 
 
+    async def handle_perfumeria_audit(
+        self,
+        payload: WhatsAppPayload,
+        meta_client: MetaClient,
+    ) -> str:
+        """Handle perfumery audit v2 (structured conversational flow)."""
+
+        # Acquire lock for this phone
+        lock = await self._get_conversation_lock(payload.telefono)
+
+        async with lock:
+            try:
+                result = await AuditConversationHandler.handle_message(
+                    payload, meta_client
+                )
+                return result
+            except Exception as e:
+                logger.error(f"Error in perfumery audit v2 handler: {e}")
+                await meta_client.send_text(
+                    payload.telefono,
+                    "❌ Error en la auditoría. Por favor intenta de nuevo."
+                )
+                return "error"
+
 
     async def _handle_message_locked(
 
@@ -196,6 +227,19 @@ class ConversationRouter:
 
                 return "auditor_not_found"
 
+
+            # NEW: Check for perfumery audit v2 flow
+            # If user has active v2 session OR explicitly triggers it, use new handlers
+            session = get_session(payload.telefono)
+            if session and session.estado != AuditState.DONE:
+                # User has active audit session: route to v2 handlers
+                return await self.handle_perfumeria_audit(payload, meta_client)
+
+            # Check if message triggers v2 audit
+            if payload.tipo == "text" and payload.contenido:
+                trigger = payload.contenido.lower().strip()
+                if any(word in trigger for word in ["auditar perfume", "auditoria perfumeria", "perfumeria v2", "audit v2"]):
+                    return await self.handle_perfumeria_audit(payload, meta_client)
 
 
             # Get conversation state
@@ -2164,31 +2208,40 @@ class ConversationRouter:
             )
             logger.info(f"Updated conversation state for {payload.telefono} to AUDITORIA_PERFUMERIA_LIBRE with session {sesion_id}")
 
-            # Send welcome message and show block menu
+            # NEW: Create v2 audit session (in-memory)
+            audit_session_v2 = create_session(
+                telefono=payload.telefono,
+                sucursal_id=sucursal.id,
+                auditor_nombre=auditor.nombre if auditor else None
+            )
+            # Transition directly to SCORING state (skip IDLE)
+            audit_session_v2.estado = AuditState.SCORING
+            audit_session_v2.started_at = datetime.now(timezone.utc).isoformat()
+            save_session(audit_session_v2)
+            logger.info(f"Created v2 audit session {audit_session_v2.id_sesion} for {payload.telefono} in SCORING state")
+
+            # Send welcome message
+            primer_bloque = BLOQUE_ORDER[0]
+            bloque_label = BLOQUE_LABELS.get(primer_bloque, primer_bloque)
+            bloque_desc = BLOQUE_DESCRIPTIONS.get(primer_bloque, "")
+
             await meta_client.send_text(
                 payload.telefono,
-                f"✅ Comenzando auditoría de perfumería en {sucursal.nombre}."
+                f"✅ Comenzando auditoría de perfumería en {sucursal.nombre}.\n\n"
+                f"🏪 Auditoría Perfumería (0/4)\n\n"
+                f"Paso 1 de 4: {bloque_label}\n"
+                f"{bloque_desc}\n\n"
+                f"¿Cuál es tu puntuación?\n\n"
+                f"1. Muy malo\n"
+                f"2. Malo\n"
+                f"3. Regular\n"
+                f"4. Bueno\n"
+                f"5. Excelente\n\n"
+                f"⏳ Responde: 1, 2, 3, 4 o 5"
             )
-            logger.info(f"Sent welcome message for session {sesion_id}")
+            logger.info(f"Sent welcome message for v2 session {audit_session_v2.id_sesion}")
 
-            # Wait for session to be persisted before fetching (Supabase can be slow)
-            import asyncio
-            logger.info(f"Waiting 2.0 seconds for session {sesion_id} to be persisted...")
-            await asyncio.sleep(2.0)
-            logger.info(f"Wait complete for session {sesion_id}, now attempting to fetch...")
-
-            # Show block menu
-            mock_payload = WhatsAppPayload(
-                telefono=payload.telefono,
-                tipo="text",
-                contenido="",
-            )
-            mock_conv = Conversacion(
-                telefono=payload.telefono,
-                estado_actual=ConversationState.AUDITORIA_PERFUMERIA_LIBRE,
-                id_pendiente=sesion_id,
-            )
-            return await self._handle_auditoria_perfumeria_libre(mock_payload, mock_conv, meta_client)
+            return "v2_audit_started"
 
         except Exception as e:
             import traceback

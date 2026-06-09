@@ -22,6 +22,9 @@ from meta_client import MetaClient
 from supabase_manager import SupabaseManager
 from init_supabase import init_supabase_schema
 
+# NEW: Imports for perfumery audit v2
+from audit_session import AuditState, get_session
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -953,7 +956,13 @@ async def webhook(request: Request):
 
         meta_client = MetaClient()
         route = get_router()
-        result = await route.handle_message(payload, meta_client)
+
+        # NEW: Try perfumery audit v2 first if user has active session
+        session = get_session(payload.telefono)
+        if session and session.estado != AuditState.DONE:
+            result = await route.handle_perfumeria_audit(payload, meta_client)
+        else:
+            result = await route.handle_message(payload, meta_client)
 
         # Mark message as processed (after successful processing)
         if message_id:
