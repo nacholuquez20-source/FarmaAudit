@@ -937,6 +937,21 @@ async def webhook(request: Request):
                 # TODO: Download image from Meta API using media_id
                 # media_url = await _get_meta_media_url(media_id)
                 pass
+        elif tipo == "interactive":
+            # Handle interactive messages (list selections, button clicks)
+            interactive = msg.get("interactive", {})
+
+            # List reply (from list message)
+            if "list_reply" in interactive:
+                contenido = interactive["list_reply"].get("id", "")
+                tipo = "text"  # Treat as text for downstream handlers
+            # Button reply (from quick reply buttons)
+            elif "button_reply" in interactive:
+                contenido = interactive["button_reply"].get("id", "")
+                tipo = "text"  # Treat as text for downstream handlers
+            else:
+                contenido = ""
+                tipo = "text"
 
         payload = WhatsAppPayload(
             telefono=telefono,
