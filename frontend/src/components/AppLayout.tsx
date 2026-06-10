@@ -1,6 +1,19 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
+import {
+  AlertTriangle,
+  Bell,
+  ClipboardCheck,
+  ClipboardList,
+  FileText,
+  Home,
+  LayoutDashboard,
+  LogOut,
+  Settings,
+  Store,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { useAuth, logout } from '../hooks/useAuth';
 import { useNotificaciones } from '../hooks/useNotificaciones';
 import { hasModuleAccess } from '../lib/permissions';
@@ -10,6 +23,12 @@ interface AppLayoutProps {
   title: string;
   showAdmin?: boolean;
   contentClassName?: string;
+}
+
+interface NavItem {
+  to: string;
+  label: string;
+  icon: LucideIcon;
 }
 
 export function AppLayout({ children, title, showAdmin = true, contentClassName }: AppLayoutProps) {
@@ -35,116 +54,111 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
 
   const canAccessAdmin = showAdmin && role === 'admin' && hasModuleAccess(profile, 'admin');
 
+  const navItems: NavItem[] = [];
+  if (role === 'admin') {
+    if (hasModuleAccess(profile, 'dashboard'))
+      navItems.push({ to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard });
+    if (hasModuleAccess(profile, 'gestion_desvios'))
+      navItems.push({ to: '/gestion-desvios', label: 'Gestion', icon: ClipboardList });
+    if (hasModuleAccess(profile, 'revision_desvios'))
+      navItems.push({ to: '/revision-desvios', label: 'Revision', icon: ClipboardCheck });
+    if (hasModuleAccess(profile, 'sucursales'))
+      navItems.push({ to: '/sucursales', label: 'Sucursales', icon: Store });
+    navItems.push({ to: '/fichas', label: 'Fichas', icon: FileText });
+    if (canAccessAdmin) navItems.push({ to: '/admin', label: 'Admin', icon: Settings });
+  } else if (role === 'auditor') {
+    if (hasModuleAccess(profile, 'gestion_desvios'))
+      navItems.push({ to: '/gestion-desvios', label: 'Gestion', icon: ClipboardList });
+    if (hasModuleAccess(profile, 'revision_desvios'))
+      navItems.push({ to: '/revision-desvios', label: 'Revision', icon: ClipboardCheck });
+    if (hasModuleAccess(profile, 'sucursales'))
+      navItems.push({ to: '/sucursales', label: 'Sucursales', icon: Store });
+    navItems.push({ to: '/fichas', label: 'Fichas', icon: FileText });
+  } else if (role === 'sucursal') {
+    if (hasModuleAccess(profile, 'dashboard'))
+      navItems.push({ to: '/dashboard', label: 'Resumen', icon: Home });
+    if (hasModuleAccess(profile, 'mis_desvios'))
+      navItems.push({ to: '/mis-desvios', label: 'Desvios', icon: AlertTriangle });
+    if (hasModuleAccess(profile, 'sucursales'))
+      navItems.push({
+        to: profile?.id_sucursal ? `/sucursales/${profile.id_sucursal}` : '/sucursales',
+        label: 'Mi sucursal',
+        icon: Store,
+      });
+  }
+
+  const navLinkClasses = ({ isActive }: { isActive: boolean }) =>
+    `flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+      isActive
+        ? 'bg-primary-navy/10 text-primary-navy'
+        : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+    }`;
+
+  const userInitial = (user?.email || '?').charAt(0).toUpperCase();
+
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="border-b border-gray-200 bg-white shadow-sm">
-        <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <h1 className="text-2xl font-bold text-gray-900">{title}</h1>
+      <header className="relative z-30 border-b border-gray-200 bg-white shadow-sm">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="flex h-16 items-center justify-between gap-4">
+            {/* Brand */}
+            <NavLink to="/" className="flex shrink-0 items-center gap-2.5">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-navy text-white shadow-sm">
+                <ClipboardCheck className="h-5 w-5" />
+              </span>
+              <span className="hidden text-lg font-bold tracking-tight text-primary-navy sm:block">
+                Farma<span className="text-primary-orange">Audit</span>
+              </span>
+            </NavLink>
 
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:gap-6">
-              <nav className="flex flex-wrap gap-4 text-sm">
-                {role === 'admin' && (
-                  <>
-                    {hasModuleAccess(profile, 'dashboard') && (
-                      <Link to="/dashboard" className="text-gray-600 hover:text-gray-900 hover:underline">
-                        Dashboard
-                      </Link>
-                    )}
-                    {hasModuleAccess(profile, 'gestion_desvios') && (
-                      <Link to="/gestion-desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
-                        Gestion
-                      </Link>
-                    )}
-                    {hasModuleAccess(profile, 'revision_desvios') && (
-                      <Link to="/revision-desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
-                        Revision
-                      </Link>
-                    )}
-                    {hasModuleAccess(profile, 'sucursales') && (
-                      <Link to="/sucursales" className="text-gray-600 hover:text-gray-900 hover:underline">
-                        Sucursales
-                      </Link>
-                    )}
-                    <Link to="/fichas" className="text-gray-600 hover:text-gray-900 hover:underline">
-                      Fichas
-                    </Link>
-                    {canAccessAdmin && (
-                      <Link to="/admin" className="text-gray-600 hover:text-gray-900 hover:underline">
-                        Admin
-                      </Link>
-                    )}
-                  </>
-                )}
-                {role === 'auditor' && (
-                  <>
-                    {hasModuleAccess(profile, 'gestion_desvios') && (
-                      <Link to="/gestion-desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
-                        Gestion
-                      </Link>
-                    )}
-                    {hasModuleAccess(profile, 'revision_desvios') && (
-                      <Link to="/revision-desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
-                        Revision
-                      </Link>
-                    )}
-                    {hasModuleAccess(profile, 'sucursales') && (
-                      <Link to="/sucursales" className="text-gray-600 hover:text-gray-900 hover:underline">
-                        Sucursales
-                      </Link>
-                    )}
-                    <Link to="/fichas" className="text-gray-600 hover:text-gray-900 hover:underline">
-                      Fichas
-                    </Link>
-                  </>
-                )}
-                {role === 'sucursal' && (
-                  <>
-                    {hasModuleAccess(profile, 'dashboard') && (
-                      <Link to="/dashboard" className="text-gray-600 hover:text-gray-900 hover:underline">
-                        Resumen
-                      </Link>
-                    )}
-                    {hasModuleAccess(profile, 'mis_desvios') && (
-                      <Link to="/mis-desvios" className="text-gray-600 hover:text-gray-900 hover:underline">
-                        Desvios
-                      </Link>
-                    )}
-                    {hasModuleAccess(profile, 'sucursales') && (
-                      <Link
-                        to={profile?.id_sucursal ? `/sucursales/${profile.id_sucursal}` : '/sucursales'}
-                        className="text-gray-600 hover:text-gray-900 hover:underline"
-                      >
-                        Mi sucursal
-                      </Link>
-                    )}
-                  </>
-                )}
-              </nav>
+            {/* Nav (desktop) */}
+            <nav className="hidden flex-1 items-center gap-1 md:flex">
+              {navItems.map((item) => (
+                <NavLink key={item.to} to={item.to} className={navLinkClasses}>
+                  <item.icon className="h-4 w-4" />
+                  {item.label}
+                </NavLink>
+              ))}
+            </nav>
 
-              <div className="flex flex-wrap items-center gap-4">
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setNotificationsOpen((current) => !current)}
-                    className="relative rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
-                    aria-label="Notificaciones"
-                  >
-                    Notificaciones
-                    {unreadCount > 0 && (
-                      <span className="absolute -right-2 -top-2 min-w-5 rounded-full bg-red-600 px-1.5 py-0.5 text-xs font-bold text-white">
-                        {unreadCount}
-                      </span>
-                    )}
-                  </button>
+            {/* Actions */}
+            <div className="flex items-center gap-2 sm:gap-3">
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setNotificationsOpen((current) => !current)}
+                  className={`relative rounded-lg p-2 transition-colors ${
+                    notificationsOpen
+                      ? 'bg-primary-navy/10 text-primary-navy'
+                      : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+                  }`}
+                  aria-label="Notificaciones"
+                >
+                  <Bell className="h-5 w-5" />
+                  {unreadCount > 0 && (
+                    <span className="absolute -right-0.5 -top-0.5 flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-severity-critico px-1 text-[10px] font-bold text-white">
+                      {unreadCount > 9 ? '9+' : unreadCount}
+                    </span>
+                  )}
+                </button>
 
-                  {notificationsOpen && (
-                    <div className="absolute right-0 z-20 mt-2 w-80 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg">
-                      <div className="border-b border-gray-200 px-4 py-3 text-sm font-semibold text-gray-900">
-                        Notificaciones
+                {notificationsOpen && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setNotificationsOpen(false)} />
+                    <div className="absolute right-0 z-20 mt-2 w-80 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg animate-fade-in">
+                      <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+                        <span className="text-sm font-semibold text-gray-900">Notificaciones</span>
+                        {unreadCount > 0 && (
+                          <span className="rounded-full bg-primary-navy/10 px-2 py-0.5 text-xs font-medium text-primary-navy">
+                            {unreadCount} sin leer
+                          </span>
+                        )}
                       </div>
                       {notificaciones.length === 0 ? (
-                        <div className="px-4 py-6 text-center text-sm text-gray-500">No hay pendientes.</div>
+                        <div className="flex flex-col items-center gap-2 px-4 py-8 text-center">
+                          <Bell className="h-8 w-8 text-gray-300" />
+                          <p className="text-sm text-gray-500">No hay pendientes.</p>
+                        </div>
                       ) : (
                         <div className="max-h-80 overflow-y-auto">
                           {notificaciones.slice(0, 8).map((notificacion) => (
@@ -152,33 +166,64 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
                               key={notificacion.id}
                               type="button"
                               onClick={() => void handleNotificationClick(notificacion.id, notificacion.id_gestion)}
-                              className="block w-full border-b border-gray-100 px-4 py-3 text-left text-sm hover:bg-gray-50"
+                              className="flex w-full items-start gap-3 border-b border-gray-100 px-4 py-3 text-left transition-colors hover:bg-gray-50"
                             >
-                              <div className="font-medium text-gray-900">
-                                {notificacion.tipo === 'mensaje_nuevo' || notificacion.tipo === 'encargado_respondio'
-                                  ? 'Nueva actividad en desvio'
-                                  : 'Notificacion de desvio'}
-                              </div>
-                              <div className="text-xs text-gray-500">{notificacion.id_gestion}</div>
+                              <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary-orange/10">
+                                <AlertTriangle className="h-3.5 w-3.5 text-primary-orange" />
+                              </span>
+                              <span>
+                                <span className="block text-sm font-medium text-gray-900">
+                                  {notificacion.tipo === 'mensaje_nuevo' || notificacion.tipo === 'encargado_respondio'
+                                    ? 'Nueva actividad en desvio'
+                                    : 'Notificacion de desvio'}
+                                </span>
+                                <span className="block text-xs text-gray-500">{notificacion.id_gestion}</span>
+                              </span>
                             </button>
                           ))}
                         </div>
                       )}
                     </div>
-                  )}
-                </div>
+                  </>
+                )}
+              </div>
 
-                <span className="text-sm text-gray-600 lg:border-l lg:border-gray-200 lg:pl-6">{user?.email}</span>
-                <button onClick={handleLogout} className="text-sm font-medium text-red-600 hover:text-red-800">
-                  Logout
+              <div className="flex items-center gap-2 border-l border-gray-200 pl-2 sm:pl-3">
+                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary-navy text-sm font-semibold text-white">
+                  {userInitial}
+                </span>
+                <span className="hidden max-w-40 truncate text-sm text-gray-600 lg:block">{user?.email}</span>
+                <button
+                  onClick={handleLogout}
+                  className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600"
+                  aria-label="Cerrar sesion"
+                  title="Cerrar sesion"
+                >
+                  <LogOut className="h-4.5 w-4.5" />
                 </button>
               </div>
             </div>
           </div>
-        </div>
-      </div>
 
-      <div className={contentClassName || 'mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8'}>{children}</div>
+          {/* Nav (mobile) */}
+          <nav className="-mx-1 flex items-center gap-1 overflow-x-auto pb-2 md:hidden">
+            {navItems.map((item) => (
+              <NavLink key={item.to} to={item.to} className={navLinkClasses}>
+                <item.icon className="h-4 w-4" />
+                {item.label}
+              </NavLink>
+            ))}
+          </nav>
+        </div>
+      </header>
+
+      {!contentClassName && (
+        <div className="mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">
+          <h1 className="text-2xl font-bold tracking-tight text-gray-900">{title}</h1>
+        </div>
+      )}
+
+      <div className={contentClassName || 'mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8'}>{children}</div>
       <Toaster position="bottom-right" richColors />
     </div>
   );
