@@ -11,8 +11,8 @@ import logging
 from typing import Optional, Tuple
 from audit_session import (
     AuditSession, AuditState, create_session, get_session, save_session,
-    BloqueType, BrandType, BLOQUE_ORDER, BRAND_ORDER, BLOQUE_LABELS,
-    BRAND_LABELS, BLOQUE_DESCRIPTIONS, BRAND_ORDER, FotoEvidence
+    delete_session, BloqueType, BrandType, BLOQUE_ORDER, BRAND_ORDER,
+    BLOQUE_LABELS, BRAND_LABELS, BLOQUE_DESCRIPTIONS, FotoEvidence
 )
 from models import WhatsAppPayload
 from meta_client import MetaClient
@@ -102,6 +102,9 @@ class AuditConversationHandler:
         if session.estado == AuditState.IDLE:
             return await AuditConversationHandler.handle_init(payload, meta_client)
 
+        elif session.estado == AuditState.VERIFY_SELECT_SUCURSAL:
+            return await AuditConversationHandler.handle_verify_sucursal_selection(payload, meta_client, session)
+
         elif session.estado == AuditState.VERIFY_PREVIOUS:
             return await AuditConversationHandler.handle_verification(payload, meta_client, session)
 
@@ -168,6 +171,106 @@ class AuditConversationHandler:
         )
 
     @staticmethod
+    def _queue_from_gestiones(gestiones: list) -> list:
+        """Build the in-session verification queue from gestion rows."""
+        return [
+            {
+                "id_gestion": g.get("id_gestion"),
+                "desvio": g.get("desvio") or "",
+                "severidad": g.get("severidad") or "Media",
+                "estado": g.get("estado") or "Abierta",
+                "plazo_fecha": g.get("plazo_fecha") or "",
+                "bloque": g.get("bloque"),
+            }
+            for g in gestiones
+        ]
+
+    @staticmethod
+    async def start_desvio_management(payload: WhatsAppPayload, meta_client: MetaClient, auditor_nombre: str = "") -> str:
+        """Standalone WhatsApp flow: verify active desvíos without running an audit."""
+        telefono = payload.telefono
+
+        try:
+            db = SupabaseManager()
+            sucursales = db.get_sucursales_con_pendientes()
+        except Exception as e:
+            logger.error(f"Error fetching sucursales con pendientes: {e}")
+            await meta_client.send_text(telefono, "❌ No pude consultar los desvíos activos. Intentá de nuevo.")
+            return "desvio_management_error"
+
+        if not sucursales:
+            await meta_client.send_text(telefono, "🎉 No hay desvíos activos en ninguna sucursal.")
+            return "no_active_desvios"
+
+        delete_session(telefono)
+        session = create_session(telefono, "", auditor_nombre or "Auditor")
+        session.verification_only = True
+        session.verification_menu = sucursales
+        session.estado = AuditState.VERIFY_SELECT_SUCURSAL
+        save_session(session)
+
+        menu = "📋 Gestión de desvíos activos\n\nSucursales con desvíos pendientes:\n\n"
+        for i, s in enumerate(sucursales, 1):
+            menu += f"{i}. {s['sucursal']} ({s['count']})\n"
+        menu += "\nResponde con el número de la sucursal, o 'cancelar' para salir."
+
+        await meta_client.send_text(telefono, menu)
+        return "desvio_management_menu_sent"
+
+    @staticmethod
+    async def handle_verify_sucursal_selection(payload: WhatsAppPayload, meta_client: MetaClient, session: AuditSession) -> str:
+        """Handle sucursal choice in standalone desvío management."""
+        telefono = payload.telefono
+        texto = (payload.contenido or "").strip().lower() if payload.tipo == "text" else ""
+
+        if texto in {"cancelar", "salir", "cancel"}:
+            delete_session(telefono)
+            await meta_client.send_text(telefono, "Gestión de desvíos cancelada. Escribí 'hola' para volver al menú.")
+            return "desvio_management_cancelled"
+
+        if not texto.isdigit() or not (1 <= int(texto) <= len(session.verification_menu)):
+            await meta_client.send_text(telefono, "⚠️ Respondé con el número de la sucursal, o 'cancelar' para salir.")
+            return "verify_sucursal_invalid_input"
+
+        elegida = session.verification_menu[int(texto) - 1]
+        session.sucursal_id = elegida["id_sucursal"]
+
+        try:
+            db = SupabaseManager()
+            pendientes = db.get_gestiones_pendientes_sucursal(session.sucursal_id)
+        except Exception as e:
+            logger.error(f"Error fetching pendientes for {session.sucursal_id}: {e}")
+            pendientes = []
+
+        if not pendientes:
+            delete_session(telefono)
+            await meta_client.send_text(telefono, f"🎉 {elegida['sucursal']} ya no tiene desvíos activos.")
+            return "no_active_desvios"
+
+        # Urgency order: vencidos first, then severity Alta→Baja, then oldest plazo
+        sev_order = {"Alta": 0, "Media": 1, "Baja": 2}
+        pendientes.sort(key=lambda g: (
+            0 if g.get("estado") == "Vencida" else 1,
+            sev_order.get(g.get("severidad"), 1),
+            g.get("plazo_fecha") or "9999-12-31",
+        ))
+
+        session.pending_verifications = AuditConversationHandler._queue_from_gestiones(pendientes)
+        session.current_verification_index = 0
+        session.awaiting_verification_photo = False
+        session.verification_menu = []
+        session.estado = AuditState.VERIFY_PREVIOUS
+        save_session(session)
+
+        await meta_client.send_text(
+            telefono,
+            f"📋 {elegida['sucursal']}: {len(pendientes)} desvío(s) activo(s).\n"
+            f"Vamos uno por uno (primero los más urgentes)."
+        )
+        await AuditConversationHandler._send_current_verification(meta_client, session)
+        return "verification_started"
+
+    @staticmethod
     async def enter_bloque(meta_client: MetaClient, session: AuditSession, intro_msg: str = "") -> str:
         """Enter current bloque: verify pending desvíos from previous audits, then scoring."""
         telefono = session.telefono
@@ -189,16 +292,7 @@ class AuditConversationHandler:
             await AuditConversationHandler._send_scoring_list(meta_client, telefono, session)
             return "scoring_started"
 
-        session.pending_verifications = [
-            {
-                "id_gestion": g.get("id_gestion"),
-                "desvio": g.get("desvio") or "",
-                "severidad": g.get("severidad") or "Media",
-                "estado": g.get("estado") or "Abierta",
-                "plazo_fecha": g.get("plazo_fecha") or "",
-            }
-            for g in pendientes
-        ]
+        session.pending_verifications = AuditConversationHandler._queue_from_gestiones(pendientes)
         session.current_verification_index = 0
         session.awaiting_verification_photo = False
         session.estado = AuditState.VERIFY_PREVIOUS
@@ -225,10 +319,14 @@ class AuditConversationHandler:
         desvio_txt = (verif.get("desvio") or "")[:300]
         plazo = verif.get("plazo_fecha") or "sin plazo"
         vencido = " ⏰ vencido" if verif.get("estado") == "Vencida" else ""
+        bloque_line = ""
+        if session.verification_only and verif.get("bloque"):
+            bloque_line = f"Bloque: {BLOQUE_LABELS.get(verif['bloque'], verif['bloque'])}\n"
 
         await meta_client.send_quick_reply(
             session.telefono,
             f"{idx}/{total} · {desvio_txt}\n"
+            f"{bloque_line}"
             f"Severidad: {verif.get('severidad')} · Plazo: {plazo}{vencido}\n\n"
             f"¿Cómo está hoy?",
             [
@@ -288,6 +386,11 @@ class AuditConversationHandler:
         # Expect a button reply (or its typed equivalent)
         respuesta = (payload.contenido or "").lower().strip() if payload.tipo == "text" else ""
 
+        if session.verification_only and respuesta in {"cancelar", "salir", "cancel"}:
+            delete_session(telefono)
+            await meta_client.send_text(telefono, "Gestión de desvíos cancelada. Escribí 'hola' para volver al menú.")
+            return "desvio_management_cancelled"
+
         if respuesta == "verif_resuelto" or "resuelto" in respuesta:
             session.awaiting_verification_photo = True
             save_session(session)
@@ -314,12 +417,12 @@ class AuditConversationHandler:
     async def _mark_resuelto(meta_client: MetaClient, session: AuditSession, verif: dict, evidencia: Optional[dict]) -> str:
         """Mark gestion as Resuelta with verification event (+ optional photo evidence)."""
         actor = session.auditor_nombre or "Auditor"
-        bloque = session.get_current_bloque()
+        bloque = verif.get("bloque") if session.verification_only else session.get_current_bloque()
 
         try:
             db = SupabaseManager()
             metadata = {
-                "origen": "auditoria_v2",
+                "origen": "gestion_desvios_wsp" if session.verification_only else "auditoria_v2",
                 "bloque": bloque,
                 "id_sesion": session.id_sesion,
                 "canal": "whatsapp",
@@ -358,7 +461,7 @@ class AuditConversationHandler:
     async def _mark_persiste(meta_client: MetaClient, session: AuditSession, verif: dict) -> str:
         """Record recurrence event and escalate severity one level."""
         actor = session.auditor_nombre or "Auditor"
-        bloque = session.get_current_bloque()
+        bloque = verif.get("bloque") if session.verification_only else session.get_current_bloque()
         severidad_actual = verif.get("severidad") or "Media"
         nueva_severidad = SEVERITY_ESCALATION.get(severidad_actual, severidad_actual)
 
@@ -373,7 +476,7 @@ class AuditConversationHandler:
                 ),
                 actor_nombre=actor,
                 metadata={
-                    "origen": "auditoria_v2",
+                    "origen": "gestion_desvios_wsp" if session.verification_only else "auditoria_v2",
                     "bloque": bloque,
                     "id_sesion": session.id_sesion,
                     "severidad_anterior": severidad_actual,
@@ -411,7 +514,7 @@ class AuditConversationHandler:
 
     @staticmethod
     async def _finish_verifications(meta_client: MetaClient, session: AuditSession) -> str:
-        """Close verification queue for this bloque and move on to scoring."""
+        """Close verification queue: back to scoring (audit) or end (standalone)."""
         resumen = ""
         if session.pending_verifications:
             resueltos = sum(1 for v in session.pending_verifications if v.get("resultado") == "resuelto")
@@ -421,6 +524,16 @@ class AuditConversationHandler:
             if omitidos:
                 partes.append(f"⏭️ {omitidos} omitido(s)")
             resumen = "✓ Verificación completada: " + " · ".join(partes)
+
+        if session.verification_only:
+            delete_session(session.telefono)
+            if resumen:
+                await meta_client.send_text(session.telefono, resumen)
+            await meta_client.send_text(
+                session.telefono,
+                "Listo 👍 Escribí 'desvios' para gestionar otra sucursal u 'hola' para el menú."
+            )
+            return "verification_management_done"
 
         session.pending_verifications = []
         session.current_verification_index = 0

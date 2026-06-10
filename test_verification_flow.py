@@ -296,6 +296,113 @@ async def test_input_invalido():
     delete_session(telefono)
 
 
+async def test_desvio_management_sin_activos():
+    """'desvios' command with no active desvíos anywhere: friendly message, no session."""
+    telefono = "+5491100000020"
+    delete_session(telefono)
+    meta = MockMetaClient()
+    db = make_db_mock()
+    db.get_sucursales_con_pendientes.return_value = []
+
+    with patch("audit_handlers.SupabaseManager", return_value=db):
+        result = await AuditConversationHandler.start_desvio_management(
+            make_payload(telefono, contenido="desvios"), meta, "Test Auditor"
+        )
+
+    assert result == "no_active_desvios"
+    assert get_session(telefono) is None
+    assert any("No hay desvíos activos" in t for t in meta.texts)
+
+
+async def test_desvio_management_menu_y_seleccion():
+    """'desvios' shows sucursal menu; valid pick loads urgency-sorted queue."""
+    telefono = "+5491100000021"
+    delete_session(telefono)
+    meta = MockMetaClient()
+    db = make_db_mock()
+    db.get_sucursales_con_pendientes.return_value = [
+        {"id_sucursal": "SUC015", "sucursal": "Plazoleta Roca", "count": 3},
+        {"id_sucursal": "SUC016", "sucursal": "Plazoleta San Martín", "count": 2},
+    ]
+    db.get_gestiones_pendientes_sucursal.return_value = [
+        {"id_gestion": "g_baja", "desvio": "Detalle menor", "severidad": "Baja",
+         "estado": "Abierta", "plazo_fecha": "2026-06-20", "bloque": "LIMPIEZA"},
+        {"id_gestion": "g_vencida", "desvio": "Vencido viejo", "severidad": "Baja",
+         "estado": "Vencida", "plazo_fecha": "2026-05-01", "bloque": None},
+        {"id_gestion": "g_alta", "desvio": "Crítico", "severidad": "Alta",
+         "estado": "Abierta", "plazo_fecha": "2026-06-25", "bloque": "STOCK"},
+    ]
+
+    with patch("audit_handlers.SupabaseManager", return_value=db):
+        result = await AuditConversationHandler.start_desvio_management(
+            make_payload(telefono, contenido="desvios"), meta, "Test Auditor"
+        )
+        assert result == "desvio_management_menu_sent"
+        session = get_session(telefono)
+        assert session.estado == AuditState.VERIFY_SELECT_SUCURSAL
+        assert session.verification_only is True
+        assert "Plazoleta Roca (3)" in meta.texts[-1]
+
+        # Invalid input re-prompts
+        result = await AuditConversationHandler.handle_verify_sucursal_selection(
+            make_payload(telefono, contenido="99"), meta, session
+        )
+        assert result == "verify_sucursal_invalid_input"
+
+        result = await AuditConversationHandler.handle_verify_sucursal_selection(
+            make_payload(telefono, contenido="1"), meta, session
+        )
+
+    assert result == "verification_started"
+    assert session.estado == AuditState.VERIFY_PREVIOUS
+    assert session.sucursal_id == "SUC015"
+    orden = [v["id_gestion"] for v in session.pending_verifications]
+    assert orden == ["g_vencida", "g_alta", "g_baja"], f"Urgency order wrong: {orden}"
+    # First quick reply shows bloque line for standalone when available
+    assert len(meta.quick_replies) == 1
+    delete_session(telefono)
+
+
+async def test_desvio_management_finaliza_sin_scoring():
+    """Standalone queue exhausted: session deleted, no scoring list sent."""
+    telefono = "+5491100000022"
+    session = make_verifying_session(telefono, pendientes_fixture()[:1])
+    session.verification_only = True
+    save_session(session)
+    meta = MockMetaClient()
+    db = make_db_mock()
+
+    with patch("audit_handlers.SupabaseManager", return_value=db):
+        result = await AuditConversationHandler.handle_verification(
+            make_payload(telefono, contenido="verif_persiste"), meta, session
+        )
+
+    assert result == "verification_management_done", f"Expected done, got {result}"
+    assert get_session(telefono) is None
+    assert len(meta.lists) == 0, "No scoring list in standalone mode"
+    evento_kwargs = db.save_encargado_evento.call_args.kwargs
+    assert evento_kwargs["metadata"]["origen"] == "gestion_desvios_wsp"
+
+
+async def test_desvio_management_cancelar():
+    """'cancelar' during standalone verification deletes the session."""
+    telefono = "+5491100000023"
+    session = make_verifying_session(telefono, pendientes_fixture())
+    session.verification_only = True
+    save_session(session)
+    meta = MockMetaClient()
+    db = make_db_mock()
+
+    with patch("audit_handlers.SupabaseManager", return_value=db):
+        result = await AuditConversationHandler.handle_verification(
+            make_payload(telefono, contenido="cancelar"), meta, session
+        )
+
+    assert result == "desvio_management_cancelled"
+    assert get_session(telefono) is None
+    db.save_encargado_evento.assert_not_called()
+
+
 TESTS = [
     test_enter_bloque_sin_pendientes,
     test_enter_bloque_con_pendientes,
@@ -307,6 +414,10 @@ TESTS = [
     test_serializacion_round_trip,
     test_error_db_no_bloquea,
     test_input_invalido,
+    test_desvio_management_sin_activos,
+    test_desvio_management_menu_y_seleccion,
+    test_desvio_management_finaliza_sin_scoring,
+    test_desvio_management_cancelar,
 ]
 
 

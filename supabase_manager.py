@@ -833,6 +833,28 @@ class SupabaseManager:
             logger.error(f"Failed to get pending gestiones for {id_sucursal}/{bloque}: {e}")
             return []
 
+    def get_sucursales_con_pendientes(self) -> List[Dict[str, Any]]:
+        """List sucursales that have active gestiones, with counts."""
+        try:
+            response = (
+                self.client.table("gestion")
+                .select("id_sucursal, sucursal")
+                .in_("estado", ["Abierta", "En_proceso", "Vencida"])
+                .execute()
+            )
+            agg: Dict[str, Dict[str, Any]] = {}
+            for g in response.data or []:
+                sid = g.get("id_sucursal")
+                if not sid:
+                    continue
+                if sid not in agg:
+                    agg[sid] = {"id_sucursal": sid, "sucursal": g.get("sucursal") or sid, "count": 0}
+                agg[sid]["count"] += 1
+            return sorted(agg.values(), key=lambda x: (-x["count"], x["sucursal"]))
+        except Exception as e:
+            logger.error(f"Failed to get sucursales con pendientes: {e}")
+            return []
+
     def update_gestion_fields(self, id_gestion: str, fields: Dict[str, Any]) -> bool:
         """Update arbitrary fields of a gestion record."""
         try:

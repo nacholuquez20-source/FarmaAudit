@@ -11,6 +11,7 @@ import uuid
 class AuditState(Enum):
     """State machine for audit conversation flow."""
     IDLE = "idle"                              # No audit in progress
+    VERIFY_SELECT_SUCURSAL = "verify_select_sucursal"  # Choosing sucursal for standalone desvío management
     VERIFY_PREVIOUS = "verify_previous"        # Verifying open desvíos from previous audits
     SCORING = "scoring"                        # Collecting area scores (1-5)
     BLOQUE_EVIDENCE_COLLECTION = "bloque_evidence"  # Collecting evidence for current bloque
@@ -133,6 +134,10 @@ class AuditSession:
     verified_resueltos: int = 0
     verified_persisten: int = 0
 
+    # Standalone desvío management (no scoring, queue spans all bloques)
+    verification_only: bool = False
+    verification_menu: List[Dict[str, Any]] = field(default_factory=list)
+
     # Timestamps
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     started_at: Optional[str] = None
@@ -165,6 +170,8 @@ class AuditSession:
             'awaiting_verification_photo': self.awaiting_verification_photo,
             'verified_resueltos': self.verified_resueltos,
             'verified_persisten': self.verified_persisten,
+            'verification_only': self.verification_only,
+            'verification_menu': self.verification_menu,
             'created_at': self.created_at,
             'started_at': self.started_at,
             'last_message_at': self.last_message_at,

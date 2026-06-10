@@ -240,6 +240,10 @@ class ConversationRouter:
                 trigger = payload.contenido.lower().strip()
                 if any(word in trigger for word in ["auditar perfume", "auditoria perfumeria", "perfumeria v2", "audit v2"]):
                     return await self.handle_perfumeria_audit(payload, meta_client)
+                if trigger in {"desvios", "desvíos", "gestionar desvios", "gestionar desvíos"}:
+                    return await AuditConversationHandler.start_desvio_management(
+                        payload, meta_client, auditor_nombre=auditor.nombre
+                    )
 
 
             # Get conversation state
@@ -2629,6 +2633,7 @@ EDITAR → Hacer cambios""",
             for i, s in enumerate(sucursales, 1):
                 menu += f"{i}. {s.nombre} ({s.zona})\n"
             menu += "\nResponde con el número de la sucursal."
+            menu += "\n📋 O escribí *desvios* para gestionar los desvíos activos."
 
             await meta_client.send_text(payload.telefono, menu)
 
