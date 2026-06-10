@@ -46,7 +46,7 @@ export function WhatsAppAuditFlow({
     },
   ];
 
-  const whatsappPhone = process.env.REACT_APP_WHATSAPP_PHONE || '5493816199195';
+  const whatsappPhone = import.meta.env.VITE_WHATSAPP_PHONE || '5493816199195';
   const message = encodeURIComponent(
     `Hola, quiero hacer la auditoría de ${sucursal.nombre} (${sucursal.id}). ¿Cómo procedo?`
   );

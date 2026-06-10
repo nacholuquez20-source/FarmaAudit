@@ -1,6 +1,5 @@
 import { useRef, useState } from 'react';
-import { Camera, Mic, Type, X, ChevronRight, CheckCircle2, Plus } from 'lucide-react';
-import { Button } from './Button';
+import { Camera, Mic, Type, CheckCircle2 } from 'lucide-react';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
 import type { AuditEvidencia } from '../types';
 

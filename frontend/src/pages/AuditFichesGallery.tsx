@@ -1,416 +1,341 @@
-import React, { useState, useEffect } from "react";
-import {
-  Container,
-  Grid,
-  Card,
-  CardContent,
-  CardActions,
-  Button,
-  TextField,
-  Select,
-  MenuItem,
-  FormControl,
-  InputLabel,
-  CircularProgress,
-  Box,
-  Chip,
-  Typography,
-  Alert,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-} from "@mui/material";
-import {
-  Download,
-  OpenInNew,
-  Visibility,
-  FilterListOff,
-  DateRange,
-} from "@mui/icons-material";
-import { useAuth } from "../contexts/AuthContext";
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Calendar, Camera, Download, FileText, FilterX, X } from 'lucide-react';
+import { AppLayout } from '../components/AppLayout';
+import { Button } from '../components/Button';
+import { FeedbackState } from '../components/FeedbackState';
+import { Input } from '../components/Input';
+import { Select } from '../components/Select';
+import { getSucursales } from '../lib/api';
+import { supabase } from '../lib/supabase';
+import type { Sucursal } from '../types';
 
 interface Ficha {
   id: string;
   sucursal_id: string;
-  auditor_nombre: string;
-  responsable_desvios: string;
-  fecha_auditoria: string;
-  url_pdf: string;
-  google_drive_id: string;
+  auditor_nombre: string | null;
+  responsable_desvios: string | null;
+  fecha_auditoria: string | null;
+  url_pdf: string | null;
   desvios_count: number;
   fotos_count: number;
-  puntuacion_promedio: number;
+  puntuacion_promedio: number | null;
+}
+
+const PAGE_SIZE = 12;
+
+function scoreBadgeClasses(score: number | null): string {
+  if (score === null) return 'bg-gray-400';
+  if (score >= 4) return 'bg-green-600';
+  if (score >= 3) return 'bg-yellow-500';
+  return 'bg-red-600';
+}
+
+function formatDate(dateString: string | null): string {
+  if (!dateString) return 'Sin fecha';
+  return new Date(dateString).toLocaleDateString('es-AR', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 export default function AuditFichesGallery() {
-  const { user } = useAuth();
-  const [fiches, setFiches] = useState<Ficha[]>([]);
+  const [fichas, setFichas] = useState<Ficha[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [sucursales, setSucursales] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [sucursales, setSucursales] = useState<Sucursal[]>([]);
 
-  // Filters
-  const [selectedSucursal, setSelectedSucursal] = useState("");
-  const [fechaDesde, setFechaDesde] = useState("");
-  const [fechaHasta, setFechaHasta] = useState("");
-  const [auditorNombre, setAuditorNombre] = useState("");
-
-  // Pagination
+  const [sucursalId, setSucursalId] = useState('');
+  const [auditor, setAuditor] = useState('');
+  const [fechaDesde, setFechaDesde] = useState('');
+  const [fechaHasta, setFechaHasta] = useState('');
   const [page, setPage] = useState(0);
-  const [limit, setLimit] = useState(12);
 
-  // Detail view
-  const [selectedFicha, setSelectedFicha] = useState<Ficha | null>(null);
-  const [openDetail, setOpenDetail] = useState(false);
+  const [selected, setSelected] = useState<Ficha | null>(null);
 
-  // Load fiches
-  const loadFiches = async () => {
+  const sucursalNombre = useMemo(() => {
+    const map = new Map(sucursales.map((s) => [s.id, s.nombre]));
+    return (id: string) => map.get(id) || id;
+  }, [sucursales]);
+
+  useEffect(() => {
+    getSucursales()
+      .then(setSucursales)
+      .catch(() => setSucursales([]));
+  }, []);
+
+  const loadFichas = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
+      let query = supabase
+        .from('audit_fiches')
+        .select('*', { count: 'exact' })
+        .order('fecha_auditoria', { ascending: false })
+        .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
 
-      const params = new URLSearchParams();
-      if (selectedSucursal) params.append("sucursal_id", selectedSucursal);
-      if (fechaDesde) params.append("fecha_desde", fechaDesde);
-      if (fechaHasta) params.append("fecha_hasta", fechaHasta);
-      if (auditorNombre) params.append("auditor_nombre", auditorNombre);
-      params.append("limit", limit.toString());
-      params.append("offset", (page * limit).toString());
+      if (sucursalId) query = query.eq('sucursal_id', sucursalId);
+      if (auditor.trim()) query = query.ilike('auditor_nombre', `%${auditor.trim()}%`);
+      if (fechaDesde) query = query.gte('fecha_auditoria', fechaDesde);
+      if (fechaHasta) query = query.lte('fecha_auditoria', `${fechaHasta}T23:59:59`);
 
-      const response = await fetch(`/api/audit-fiches/list?${params}`);
-      const data = await response.json();
-
-      if (data.status === "ok") {
-        setFiches(data.data);
-      } else {
-        console.error("Error fetching fiches:", data);
-      }
-    } catch (error) {
-      console.error("Error loading fiches:", error);
+      const { data, count, error: queryError } = await query;
+      if (queryError) throw queryError;
+      setFichas((data as Ficha[]) || []);
+      setTotal(count ?? 0);
+    } catch (err) {
+      console.error('Error loading fichas:', err);
+      const code = (err as { code?: string })?.code;
+      setError(
+        code === 'PGRST205'
+          ? 'La tabla audit_fiches no existe en la base de datos. Ejecuta migration_audit_fiches.sql en Supabase.'
+          : 'No se pudieron cargar las fichas. Verifica tu conexion e intenta de nuevo.'
+      );
+      setFichas([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }
-  };
-
-  // Load sucursales list
-  const loadSucursales = async () => {
-    try {
-      const response = await fetch("/api/audit-fiches/sucursales");
-      const data = await response.json();
-
-      if (data.status === "ok") {
-        setSucursales(data.data);
-      }
-    } catch (error) {
-      console.error("Error loading sucursales:", error);
-    }
-  };
+  }, [sucursalId, auditor, fechaDesde, fechaHasta, page]);
 
   useEffect(() => {
-    loadSucursales();
-  }, []);
+    const timer = window.setTimeout(() => void loadFichas(), auditor ? 350 : 0);
+    return () => window.clearTimeout(timer);
+  }, [loadFichas, auditor]);
 
-  useEffect(() => {
-    setPage(0);
-    loadFiches();
-  }, [selectedSucursal, fechaDesde, fechaHasta, auditorNombre, limit]);
+  const hasFilters = Boolean(sucursalId || auditor || fechaDesde || fechaHasta);
 
-  useEffect(() => {
-    loadFiches();
-  }, [page]);
-
-  const handleClearFilters = () => {
-    setSelectedSucursal("");
-    setFechaDesde("");
-    setFechaHasta("");
-    setAuditorNombre("");
+  const clearFilters = () => {
+    setSucursalId('');
+    setAuditor('');
+    setFechaDesde('');
+    setFechaHasta('');
     setPage(0);
   };
 
-  const handleViewDetails = (ficha: Ficha) => {
-    setSelectedFicha(ficha);
-    setOpenDetail(true);
+  const updateFilter = <T,>(setter: (value: T) => void) => (value: T) => {
+    setter(value);
+    setPage(0);
   };
 
-  const handleDownload = (url: string) => {
-    window.open(url, "_blank");
-  };
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString("es-AR", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  };
-
-  const getSeverityColor = (score: number) => {
-    if (score >= 4) return "#22c55e"; // green
-    if (score >= 3) return "#eab308"; // yellow
-    return "#ef4444"; // red
-  };
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
-      <Typography variant="h4" gutterBottom sx={{ mb: 3, fontWeight: "bold" }}>
-        📄 Fichas de Auditoría
-      </Typography>
-
-      {/* Filters */}
-      <Card sx={{ mb: 3, p: 2 }}>
-        <Box sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 2 }}>
-          <FormControl fullWidth>
-            <InputLabel>Sucursal</InputLabel>
-            <Select value={selectedSucursal} onChange={(e) => setSelectedSucursal(e.target.value)} label="Sucursal">
-              <MenuItem value="">Todas</MenuItem>
-              {sucursales.map((s) => (
-                <MenuItem key={s} value={s}>
-                  {s}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-
-          <TextField
-            label="Auditor"
-            value={auditorNombre}
-            onChange={(e) => setAuditorNombre(e.target.value)}
-            placeholder="Buscar por auditor..."
+    <AppLayout title="Fichas de Auditoria">
+      {/* Filtros */}
+      <div className="mb-6 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <Select
+            label="Sucursal"
+            value={sucursalId}
+            onChange={(e) => updateFilter(setSucursalId)(e.target.value)}
+            options={[
+              { value: '', label: 'Todas' },
+              ...sucursales.map((s) => ({ value: s.id, label: s.nombre })),
+            ]}
           />
-
-          <TextField
+          <Input
+            label="Auditor"
+            type="search"
+            placeholder="Buscar por nombre..."
+            value={auditor}
+            onChange={(e) => updateFilter(setAuditor)(e.target.value)}
+          />
+          <Input
             label="Desde"
             type="date"
             value={fechaDesde}
-            onChange={(e) => setFechaDesde(e.target.value)}
-            InputLabelProps={{ shrink: true }}
+            onChange={(e) => updateFilter(setFechaDesde)(e.target.value)}
           />
-
-          <TextField
+          <Input
             label="Hasta"
             type="date"
             value={fechaHasta}
-            onChange={(e) => setFechaHasta(e.target.value)}
-            InputLabelProps={{ shrink: true }}
+            onChange={(e) => updateFilter(setFechaHasta)(e.target.value)}
           />
+          <div className="flex items-end">
+            <Button
+              variant="secondary"
+              onClick={clearFilters}
+              disabled={!hasFilters}
+              className="w-full"
+            >
+              <FilterX className="mr-2 inline h-4 w-4" />
+              Limpiar
+            </Button>
+          </div>
+        </div>
+      </div>
 
-          <Button
-            variant="outlined"
-            startIcon={<FilterListOff />}
-            onClick={handleClearFilters}
-            sx={{ alignSelf: "center" }}
-          >
-            Limpiar
-          </Button>
-        </Box>
-      </Card>
-
-      {/* Fiches Grid */}
+      {/* Contenido */}
       {loading ? (
-        <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
-          <CircularProgress />
-        </Box>
-      ) : fiches.length === 0 ? (
-        <Alert severity="info">No hay fichas que coincidan con los filtros.</Alert>
+        <FeedbackState title="Cargando fichas..." />
+      ) : error ? (
+        <FeedbackState title="Error al cargar" description={error} tone="error" />
+      ) : fichas.length === 0 ? (
+        <FeedbackState
+          title={hasFilters ? 'Sin resultados con estos filtros.' : 'Todavia no hay fichas de auditoria.'}
+          description={
+            hasFilters
+              ? 'Proba quitando algun filtro.'
+              : 'Las fichas se generan automaticamente al completar auditorias por WhatsApp.'
+          }
+          tone="info"
+        />
       ) : (
         <>
-          <Typography variant="subtitle2" sx={{ mb: 2, color: "text.secondary" }}>
-            {fiches.length} resultado(s)
-          </Typography>
+          <p className="mb-3 text-sm text-gray-500">
+            {total} ficha{total === 1 ? '' : 's'} · pagina {page + 1} de {totalPages}
+          </p>
 
-          <Grid container spacing={2} sx={{ mb: 4 }}>
-            {fiches.map((ficha) => (
-              <Grid item xs={12} sm={6} md={4} lg={3} key={ficha.id}>
-                <Card
-                  sx={{
-                    height: "100%",
-                    display: "flex",
-                    flexDirection: "column",
-                    transition: "all 0.3s",
-                    "&:hover": { boxShadow: 4, transform: "translateY(-4px)" },
-                  }}
-                >
-                  <CardContent sx={{ flexGrow: 1 }}>
-                    {/* Score Badge */}
-                    <Box sx={{ mb: 2, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <Chip
-                        label={`${ficha.puntuacion_promedio.toFixed(1)}/5`}
-                        sx={{
-                          bgcolor: getSeverityColor(ficha.puntuacion_promedio),
-                          color: "white",
-                          fontWeight: "bold",
-                        }}
-                      />
-                      <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                        {formatDate(ficha.fecha_auditoria)}
-                      </Typography>
-                    </Box>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {fichas.map((ficha) => (
+              <button
+                key={ficha.id}
+                type="button"
+                onClick={() => setSelected(ficha)}
+                className="flex flex-col rounded-lg border border-gray-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-200"
+              >
+                <div className="mb-3 flex items-center justify-between">
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-xs font-bold text-white ${scoreBadgeClasses(ficha.puntuacion_promedio)}`}
+                  >
+                    {ficha.puntuacion_promedio != null
+                      ? `${Number(ficha.puntuacion_promedio).toFixed(1)}/5`
+                      : 'Sin puntaje'}
+                  </span>
+                  <span className="flex items-center gap-1 text-xs text-gray-500">
+                    <Calendar className="h-3.5 w-3.5" />
+                    {formatDate(ficha.fecha_auditoria)}
+                  </span>
+                </div>
 
-                    {/* Details */}
-                    <Typography variant="subtitle2" sx={{ fontWeight: "bold", mb: 1 }}>
-                      {ficha.sucursal_id}
-                    </Typography>
+                <h3 className="mb-1 font-semibold text-gray-900">{sucursalNombre(ficha.sucursal_id)}</h3>
+                <p className="text-sm text-gray-600">Auditor: {ficha.auditor_nombre || '-'}</p>
+                <p className="mb-3 text-sm text-gray-600">
+                  Responsable: {ficha.responsable_desvios || '-'}
+                </p>
 
-                    <Typography variant="body2" sx={{ mb: 0.5 }}>
-                      <strong>Auditor:</strong> {ficha.auditor_nombre}
-                    </Typography>
-
-                    <Typography variant="body2" sx={{ mb: 1 }}>
-                      <strong>Responsable:</strong> {ficha.responsable_desvios || "-"}
-                    </Typography>
-
-                    {/* Evidence counts */}
-                    <Box sx={{ mt: 2, display: "flex", gap: 1, flexWrap: "wrap" }}>
-                      <Chip
-                        label={`${ficha.desvios_count} desvío(s)`}
-                        variant="outlined"
-                        size="small"
-                        color={ficha.desvios_count > 0 ? "error" : "success"}
-                      />
-                      <Chip
-                        label={`${ficha.fotos_count} foto(s)`}
-                        variant="outlined"
-                        size="small"
-                      />
-                    </Box>
-                  </CardContent>
-
-                  <CardActions sx={{ pt: 0 }}>
-                    <Button
-                      size="small"
-                      startIcon={<Visibility />}
-                      onClick={() => handleViewDetails(ficha)}
-                    >
-                      Ver
-                    </Button>
-                    <Button
-                      size="small"
-                      startIcon={<Download />}
-                      onClick={() => handleDownload(ficha.url_pdf)}
-                      color="primary"
-                    >
+                <div className="mt-auto flex flex-wrap items-center gap-2">
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${
+                      ficha.desvios_count > 0
+                        ? 'border-red-200 bg-red-50 text-red-700'
+                        : 'border-green-200 bg-green-50 text-green-700'
+                    }`}
+                  >
+                    {ficha.desvios_count} desvio{ficha.desvios_count === 1 ? '' : 's'}
+                  </span>
+                  <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs font-medium text-gray-600">
+                    <Camera className="h-3 w-3" />
+                    {ficha.fotos_count}
+                  </span>
+                  {ficha.url_pdf && (
+                    <span className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-blue-600">
+                      <FileText className="h-3.5 w-3.5" />
                       PDF
-                    </Button>
-                  </CardActions>
-                </Card>
-              </Grid>
+                    </span>
+                  )}
+                </div>
+              </button>
             ))}
-          </Grid>
+          </div>
 
-          {/* Pagination */}
-          <Box sx={{ display: "flex", justifyContent: "center", gap: 1, mt: 4 }}>
-            <Button
-              variant="outlined"
-              disabled={page === 0}
-              onClick={() => setPage(page - 1)}
-            >
-              Anterior
-            </Button>
-            <Typography sx={{ alignSelf: "center", px: 2 }}>
-              Página {page + 1}
-            </Typography>
-            <Button
-              variant="outlined"
-              disabled={fiches.length < limit}
-              onClick={() => setPage(page + 1)}
-            >
-              Siguiente
-            </Button>
-          </Box>
+          {/* Paginacion */}
+          {totalPages > 1 && (
+            <div className="mt-6 flex items-center justify-center gap-3">
+              <Button variant="secondary" disabled={page === 0} onClick={() => setPage(page - 1)}>
+                Anterior
+              </Button>
+              <span className="text-sm text-gray-600">
+                {page + 1} / {totalPages}
+              </span>
+              <Button
+                variant="secondary"
+                disabled={page + 1 >= totalPages}
+                onClick={() => setPage(page + 1)}
+              >
+                Siguiente
+              </Button>
+            </div>
+          )}
         </>
       )}
 
-      {/* Detail Dialog */}
-      <Dialog open={openDetail} onClose={() => setOpenDetail(false)} maxWidth="sm" fullWidth>
-        <DialogTitle sx={{ fontWeight: "bold" }}>
-          Ficha de Auditoría - {selectedFicha?.sucursal_id}
-        </DialogTitle>
-        <DialogContent sx={{ pt: 2 }}>
-          {selectedFicha && (
-            <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              <Box>
-                <Typography variant="subtitle2" sx={{ fontWeight: "bold" }}>
-                  Sucursal
-                </Typography>
-                <Typography variant="body2">{selectedFicha.sucursal_id}</Typography>
-              </Box>
-
-              <Box>
-                <Typography variant="subtitle2" sx={{ fontWeight: "bold" }}>
-                  Auditor
-                </Typography>
-                <Typography variant="body2">{selectedFicha.auditor_nombre}</Typography>
-              </Box>
-
-              <Box>
-                <Typography variant="subtitle2" sx={{ fontWeight: "bold" }}>
-                  Responsable Desvíos
-                </Typography>
-                <Typography variant="body2">{selectedFicha.responsable_desvios || "-"}</Typography>
-              </Box>
-
-              <Box>
-                <Typography variant="subtitle2" sx={{ fontWeight: "bold" }}>
-                  Fecha
-                </Typography>
-                <Typography variant="body2">{formatDate(selectedFicha.fecha_auditoria)}</Typography>
-              </Box>
-
-              <Box>
-                <Typography variant="subtitle2" sx={{ fontWeight: "bold" }}>
-                  Puntuación Promedio
-                </Typography>
-                <Box
-                  sx={{
-                    display: "inline-block",
-                    bgcolor: getSeverityColor(selectedFicha.puntuacion_promedio),
-                    color: "white",
-                    px: 2,
-                    py: 1,
-                    borderRadius: 1,
-                    fontWeight: "bold",
-                  }}
-                >
-                  {selectedFicha.puntuacion_promedio.toFixed(1)}/5
-                </Box>
-              </Box>
-
-              <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1 }}>
-                <Box>
-                  <Typography variant="subtitle2" sx={{ fontWeight: "bold" }}>
-                    Desvíos
-                  </Typography>
-                  <Typography variant="body2" sx={{ color: "error.main", fontWeight: "bold" }}>
-                    {selectedFicha.desvios_count}
-                  </Typography>
-                </Box>
-                <Box>
-                  <Typography variant="subtitle2" sx={{ fontWeight: "bold" }}>
-                    Fotos
-                  </Typography>
-                  <Typography variant="body2" sx={{ color: "primary.main", fontWeight: "bold" }}>
-                    {selectedFicha.fotos_count}
-                  </Typography>
-                </Box>
-              </Box>
-            </Box>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setOpenDetail(false)}>Cerrar</Button>
-          <Button
-            variant="contained"
-            startIcon={<Download />}
-            onClick={() => {
-              if (selectedFicha) handleDownload(selectedFicha.url_pdf);
-              setOpenDetail(false);
-            }}
+      {/* Detalle */}
+      {selected && (
+        <div
+          className="fixed inset-0 z-30 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setSelected(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-lg bg-white shadow-xl"
+            onClick={(e) => e.stopPropagation()}
           >
-            Descargar PDF
-          </Button>
-        </DialogActions>
-      </Dialog>
-    </Container>
+            <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
+              <h2 className="font-semibold text-gray-900">
+                Ficha · {sucursalNombre(selected.sucursal_id)}
+              </h2>
+              <button
+                type="button"
+                onClick={() => setSelected(null)}
+                className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                aria-label="Cerrar"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 px-5 py-4 text-sm">
+              <div className="flex justify-between">
+                <span className="text-gray-500">Fecha</span>
+                <span className="font-medium text-gray-900">{formatDate(selected.fecha_auditoria)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Auditor</span>
+                <span className="font-medium text-gray-900">{selected.auditor_nombre || '-'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Responsable desvios</span>
+                <span className="font-medium text-gray-900">{selected.responsable_desvios || '-'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Puntuacion</span>
+                <span
+                  className={`rounded-full px-2.5 py-0.5 text-xs font-bold text-white ${scoreBadgeClasses(selected.puntuacion_promedio)}`}
+                >
+                  {selected.puntuacion_promedio != null
+                    ? `${Number(selected.puntuacion_promedio).toFixed(1)}/5`
+                    : 'Sin puntaje'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Desvios</span>
+                <span className="font-medium text-red-600">{selected.desvios_count}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Fotos</span>
+                <span className="font-medium text-gray-900">{selected.fotos_count}</span>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-gray-200 px-5 py-4">
+              <Button variant="secondary" onClick={() => setSelected(null)}>
+                Cerrar
+              </Button>
+              {selected.url_pdf && (
+                <Button onClick={() => window.open(selected.url_pdf as string, '_blank', 'noopener')}>
+                  <Download className="mr-2 inline h-4 w-4" />
+                  Descargar PDF
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </AppLayout>
   );
 }

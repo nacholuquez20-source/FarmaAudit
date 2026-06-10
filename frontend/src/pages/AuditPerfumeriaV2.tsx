@@ -288,7 +288,7 @@ export default function AuditPerfumeriaV2() {
                   blocked={!bloques.find(b => b.id === activeBloque)?.puntuacion}
                 />
 
-                {bloques.find(b => b.id === activeBloque)?.desvios.length ?? 0 > 0 && (
+                {(bloques.find(b => b.id === activeBloque)?.desvios.length ?? 0) > 0 && (
                   <div className="mt-6 border-t pt-6">
                     <h4 className="font-medium text-gray-900 mb-3">Desvíos en esta área</h4>
                     <div className="space-y-2">

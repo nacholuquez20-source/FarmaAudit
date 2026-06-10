@@ -66,6 +66,9 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
                         Sucursales
                       </Link>
                     )}
+                    <Link to="/fichas" className="text-gray-600 hover:text-gray-900 hover:underline">
+                      Fichas
+                    </Link>
                     {canAccessAdmin && (
                       <Link to="/admin" className="text-gray-600 hover:text-gray-900 hover:underline">
                         Admin
@@ -90,6 +93,9 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
                         Sucursales
                       </Link>
                     )}
+                    <Link to="/fichas" className="text-gray-600 hover:text-gray-900 hover:underline">
+                      Fichas
+                    </Link>
                   </>
                 )}
                 {role === 'sucursal' && (

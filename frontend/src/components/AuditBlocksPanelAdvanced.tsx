@@ -1,4 +1,4 @@
-import { CheckCircle2, Circle, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { CheckCircle2, Circle, AlertCircle } from 'lucide-react';
 import { ScoreSelector } from './ScoreSelector';
 import type { AuditBloqueId, AuditBloque } from '../types';
 
@@ -67,11 +67,6 @@ export function AuditBlocksPanelAdvanced({
       default:
         return <Circle className="w-5 h-5 text-gray-300" />;
     }
-  };
-
-  const allBrandsScoredInOfertas = (bloque: AuditBloqueAdvanced) => {
-    if (!bloque.subItems) return true;
-    return bloque.subItems.every(b => b.puntuacion !== null);
   };
 
   return (

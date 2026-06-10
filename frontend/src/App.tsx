@@ -15,6 +15,7 @@ const MisDesvios = lazy(() => import('./pages/MisDesvios'));
 const Sucursales = lazy(() => import('./pages/Sucursales'));
 const SucursalDetail = lazy(() => import('./pages/SucursalDetail'));
 const AuditPerfumeria = lazy(() => import('./pages/AuditPerfumeria'));
+const AuditFichesGallery = lazy(() => import('./pages/AuditFichesGallery'));
 const Admin = lazy(() => import('./pages/Admin'));
 
 function LoadingGate({ title }: { title: string }) {
@@ -228,6 +229,15 @@ export default function App() {
             element={
               <ProtectedRoute allowRoles={['auditor', 'admin']}>
                 <AuditPerfumeria />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/fichas"
+            element={
+              <ProtectedRoute allowRoles={['admin', 'auditor']}>
+                <AuditFichesGallery />
               </ProtectedRoute>
             }
           />

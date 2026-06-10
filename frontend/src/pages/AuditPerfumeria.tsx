@@ -8,7 +8,7 @@ import { DesvioCreationDialog } from '../components/DesvioCreationDialog';
 import { Button } from '../components/Button';
 import { getSucursal, submitPerfumeriaAudit } from '../lib/api';
 import { supabase } from '../lib/supabase';
-import type { Sucursal, AuditBloqueId, AuditBloque, AuditSession, AuditEvidencia } from '../types';
+import type { Sucursal, AuditBloqueId, AuditBloque, AuditEvidencia } from '../types';
 
 const INITIAL_BLOQUES: AuditBloque[] = [
   {
