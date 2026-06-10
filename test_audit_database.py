@@ -111,7 +111,7 @@ def test_audit_completion_workflow():
     print("  ✓ Brand scores recorded")
 
     # Move to evidence
-    session.estado = AuditState.EVIDENCE
+    session.estado = AuditState.BLOQUE_EVIDENCE_COLLECTION
 
     # Add photos
     foto1 = FotoEvidence(

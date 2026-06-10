@@ -735,6 +735,7 @@ async def create_perfumeria_deviations(payload: AuditoriaCompletadaPerfumeriaReq
         for desvio in payload.desvios:
             # Create Reporte record
             reporte_record = {
+                "id": str(uuid.uuid4())[:12],
                 "fecha": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
                 "hora": datetime.now(timezone.utc).strftime("%H:%M:%S"),
                 "cuadrilla": "",  # Not applicable for perfumery audits
@@ -764,6 +765,7 @@ async def create_perfumeria_deviations(payload: AuditoriaCompletadaPerfumeriaReq
 
             # Create Gestion record
             gestion_record = {
+                "id_gestion": str(uuid.uuid4())[:12],
                 "id_reporte": reporte_id,
                 "id_sucursal": payload.sucursal_id,
                 "sucursal": payload.sucursal_nombre,
@@ -774,12 +776,13 @@ async def create_perfumeria_deviations(payload: AuditoriaCompletadaPerfumeriaReq
                 "plazo_fecha": (datetime.now(timezone.utc) + timedelta(days=7)).strftime("%Y-%m-%d"),
                 "plan_accion": "",  # Empty initially, responsable fills it
                 "estado": "Abierta",
+                "bloque": desvio.bloque,
                 "created_at": now,
                 "updated_at": now,
             }
 
             gestion_response = (
-                client.table("gestiones")
+                client.table("gestion")
                 .insert(gestion_record)
                 .execute()
             )

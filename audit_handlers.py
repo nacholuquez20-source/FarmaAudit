@@ -18,6 +18,7 @@ from models import WhatsAppPayload
 from meta_client import MetaClient
 from photo_validator import PhotoValidator, PhotoValidationResult
 from audit_database import save_audit_to_database, send_manager_notification, get_previous_audit
+from supabase_manager import SupabaseManager
 from audit_pdf_generator import generate_audit_pdf
 from audit_fiches_manager import AuditFichesManager
 from datetime import datetime, timezone
@@ -58,6 +59,17 @@ NOTES_TEMPLATES = {
 }
 
 
+SCORE_OPTIONS = [
+    {"id": "1", "title": "Muy malo", "description": "Crítico, acción inmediata"},
+    {"id": "2", "title": "Malo", "description": "Problemas significativos"},
+    {"id": "3", "title": "Regular", "description": "Necesita mejora"},
+    {"id": "4", "title": "Bueno", "description": "Bien, algunos detalles"},
+    {"id": "5", "title": "Excelente", "description": "Cumple perfectamente"},
+]
+
+SEVERITY_ESCALATION = {"Baja": "Media", "Media": "Alta", "Alta": "Alta"}
+
+
 class AuditConversationHandler:
     """Handles audit conversation states and transitions."""
 
@@ -89,6 +101,9 @@ class AuditConversationHandler:
         # Active session: route by state
         if session.estado == AuditState.IDLE:
             return await AuditConversationHandler.handle_init(payload, meta_client)
+
+        elif session.estado == AuditState.VERIFY_PREVIOUS:
+            return await AuditConversationHandler.handle_verification(payload, meta_client, session)
 
         elif session.estado == AuditState.SCORING:
             return await AuditConversationHandler.handle_score(payload, meta_client, session)
@@ -136,6 +151,289 @@ class AuditConversationHandler:
         return "unknown_state"
 
     @staticmethod
+    async def _send_scoring_list(meta_client: MetaClient, telefono: str, session: AuditSession, intro: str = "") -> None:
+        """Send the 1-5 scoring list message for the current bloque."""
+        bloque = session.get_current_bloque()
+        label = BLOQUE_LABELS.get(bloque, bloque)
+        desc = BLOQUE_DESCRIPTIONS.get(bloque, "")
+        body = f"{intro}{desc}\n\n¿Cuál es tu puntuación?"
+
+        await meta_client.send_list_message(
+            telefono,
+            header=f"Paso {session.current_bloque_index + 1} de 4: {label}",
+            body=body,
+            footer="",
+            button_text="Selecciona una opción",
+            options=SCORE_OPTIONS,
+        )
+
+    @staticmethod
+    async def enter_bloque(meta_client: MetaClient, session: AuditSession, intro_msg: str = "") -> str:
+        """Enter current bloque: verify pending desvíos from previous audits, then scoring."""
+        telefono = session.telefono
+        bloque = session.get_current_bloque()
+
+        pendientes = []
+        try:
+            db = SupabaseManager()
+            pendientes = db.get_gestiones_pendientes_bloque(session.sucursal_id, bloque)
+        except Exception as e:
+            logger.warning(f"Could not fetch pending gestiones for {session.sucursal_id}/{bloque}: {e}")
+
+        if intro_msg:
+            await meta_client.send_text(telefono, intro_msg)
+
+        if not pendientes:
+            session.estado = AuditState.SCORING
+            save_session(session)
+            await AuditConversationHandler._send_scoring_list(meta_client, telefono, session)
+            return "scoring_started"
+
+        session.pending_verifications = [
+            {
+                "id_gestion": g.get("id_gestion"),
+                "desvio": g.get("desvio") or "",
+                "severidad": g.get("severidad") or "Media",
+                "estado": g.get("estado") or "Abierta",
+                "plazo_fecha": g.get("plazo_fecha") or "",
+            }
+            for g in pendientes
+        ]
+        session.current_verification_index = 0
+        session.awaiting_verification_photo = False
+        session.estado = AuditState.VERIFY_PREVIOUS
+        save_session(session)
+
+        label = BLOQUE_LABELS.get(bloque, bloque)
+        await meta_client.send_text(
+            telefono,
+            f"📋 Hay {len(pendientes)} desvío(s) pendiente(s) de {label} en esta sucursal.\n"
+            f"Verifiquemos antes de puntuar."
+        )
+        await AuditConversationHandler._send_current_verification(meta_client, session)
+        return "verification_started"
+
+    @staticmethod
+    async def _send_current_verification(meta_client: MetaClient, session: AuditSession) -> None:
+        """Send quick reply buttons for the gestion currently being verified."""
+        verif = session.get_current_verification()
+        if not verif:
+            return
+
+        total = len(session.pending_verifications)
+        idx = session.current_verification_index + 1
+        desvio_txt = (verif.get("desvio") or "")[:300]
+        plazo = verif.get("plazo_fecha") or "sin plazo"
+        vencido = " ⏰ vencido" if verif.get("estado") == "Vencida" else ""
+
+        await meta_client.send_quick_reply(
+            session.telefono,
+            f"{idx}/{total} · {desvio_txt}\n"
+            f"Severidad: {verif.get('severidad')} · Plazo: {plazo}{vencido}\n\n"
+            f"¿Cómo está hoy?",
+            [
+                {"id": "verif_resuelto", "title": "✅ Resuelto"},
+                {"id": "verif_persiste", "title": "⚠️ Persiste"},
+                {"id": "verif_omitir", "title": "⏭️ Omitir"},
+            ],
+        )
+
+    @staticmethod
+    async def handle_verification(payload: WhatsAppPayload, meta_client: MetaClient, session: AuditSession) -> str:
+        """Handle auditor responses while verifying previous desvíos."""
+        telefono = payload.telefono
+        verif = session.get_current_verification()
+
+        if not verif:
+            return await AuditConversationHandler._finish_verifications(meta_client, session)
+
+        # Waiting for resolution photo after "Resuelto"
+        if session.awaiting_verification_photo:
+            if payload.tipo == "image" and payload.media_id:
+                try:
+                    media_bytes, mime_type = await meta_client.download_media_with_metadata(payload.media_id)
+                    validation = PhotoValidator.validate_media_bytes(media_bytes, mime_type)
+                    if not validation.is_valid:
+                        await meta_client.send_text(
+                            telefono,
+                            validation.message + "\n\nIntenta de nuevo o escribe 'OMITIR' para continuar sin foto."
+                        )
+                        return "verification_photo_invalid"
+                except Exception as e:
+                    logger.error(f"Error downloading verification photo: {e}")
+                    await meta_client.send_text(
+                        telefono,
+                        "❌ Error procesando la foto. Intenta de nuevo o escribe 'OMITIR'."
+                    )
+                    return "verification_photo_error"
+
+                evidencia = None
+                try:
+                    db = SupabaseManager()
+                    evidencia = db.upload_desvio_evidencia(verif["id_gestion"], media_bytes, mime_type)
+                except Exception as e:
+                    logger.warning(f"Could not upload verification evidence: {e}")
+
+                return await AuditConversationHandler._mark_resuelto(meta_client, session, verif, evidencia)
+
+            if payload.tipo == "text" and "OMITIR" in (payload.contenido or "").upper():
+                return await AuditConversationHandler._mark_resuelto(meta_client, session, verif, None)
+
+            await meta_client.send_text(
+                telefono,
+                "📷 Enviá una foto de la resolución o escribí 'OMITIR' para continuar sin foto."
+            )
+            return "awaiting_verification_photo"
+
+        # Expect a button reply (or its typed equivalent)
+        respuesta = (payload.contenido or "").lower().strip() if payload.tipo == "text" else ""
+
+        if respuesta == "verif_resuelto" or "resuelto" in respuesta:
+            session.awaiting_verification_photo = True
+            save_session(session)
+            await meta_client.send_text(
+                telefono,
+                "📷 Enviá una foto de evidencia de la resolución\n(o escribí 'OMITIR' para continuar sin foto)"
+            )
+            return "verification_resuelto_awaiting_photo"
+
+        if respuesta == "verif_persiste" or "persiste" in respuesta:
+            return await AuditConversationHandler._mark_persiste(meta_client, session, verif)
+
+        if respuesta == "verif_omitir" or "omitir" in respuesta:
+            verif["resultado"] = "omitido"
+            return await AuditConversationHandler._advance_verification(meta_client, session)
+
+        await meta_client.send_text(
+            telefono,
+            "Por favor usá los botones: ✅ Resuelto · ⚠️ Persiste · ⏭️ Omitir"
+        )
+        return "verification_invalid_input"
+
+    @staticmethod
+    async def _mark_resuelto(meta_client: MetaClient, session: AuditSession, verif: dict, evidencia: Optional[dict]) -> str:
+        """Mark gestion as Resuelta with verification event (+ optional photo evidence)."""
+        actor = session.auditor_nombre or "Auditor"
+        bloque = session.get_current_bloque()
+
+        try:
+            db = SupabaseManager()
+            metadata = {
+                "origen": "auditoria_v2",
+                "bloque": bloque,
+                "id_sesion": session.id_sesion,
+                "canal": "whatsapp",
+            }
+            if evidencia:
+                metadata["foto_path"] = evidencia.get("path")
+                metadata["thumb_path"] = evidencia.get("thumb_path")
+                metadata["bucket"] = evidencia.get("bucket")
+                signed = db.create_signed_evidencia_url(evidencia.get("path", ""))
+                if signed:
+                    metadata["foto_url_signed"] = signed
+
+            db.save_encargado_evento(
+                id_gestion=verif["id_gestion"],
+                tipo="verificacion_auditoria",
+                contenido="Desvío verificado como resuelto durante auditoría en piso.",
+                actor_nombre=actor,
+                metadata=metadata,
+            )
+            db.update_gestion_fields(verif["id_gestion"], {"estado": "Resuelta"})
+
+            verif["resultado"] = "resuelto"
+            session.verified_resueltos += 1
+        except Exception as e:
+            logger.error(f"Error marking gestion {verif.get('id_gestion')} resuelta: {e}")
+            await meta_client.send_text(
+                session.telefono,
+                "⚠️ No pude registrar la resolución en el sistema, seguimos con la auditoría."
+            )
+            return await AuditConversationHandler._advance_verification(meta_client, session)
+
+        await meta_client.send_text(session.telefono, "✅ Registrado como resuelto.")
+        return await AuditConversationHandler._advance_verification(meta_client, session)
+
+    @staticmethod
+    async def _mark_persiste(meta_client: MetaClient, session: AuditSession, verif: dict) -> str:
+        """Record recurrence event and escalate severity one level."""
+        actor = session.auditor_nombre or "Auditor"
+        bloque = session.get_current_bloque()
+        severidad_actual = verif.get("severidad") or "Media"
+        nueva_severidad = SEVERITY_ESCALATION.get(severidad_actual, severidad_actual)
+
+        try:
+            db = SupabaseManager()
+            db.save_encargado_evento(
+                id_gestion=verif["id_gestion"],
+                tipo="reincidencia",
+                contenido=(
+                    f"El desvío persiste según verificación en piso. "
+                    f"Severidad: {severidad_actual} → {nueva_severidad}."
+                ),
+                actor_nombre=actor,
+                metadata={
+                    "origen": "auditoria_v2",
+                    "bloque": bloque,
+                    "id_sesion": session.id_sesion,
+                    "severidad_anterior": severidad_actual,
+                    "severidad_nueva": nueva_severidad,
+                    "canal": "whatsapp",
+                },
+            )
+            if nueva_severidad != severidad_actual:
+                db.update_gestion_fields(verif["id_gestion"], {"severidad": nueva_severidad})
+
+            verif["resultado"] = "persiste"
+            session.verified_persisten += 1
+        except Exception as e:
+            logger.error(f"Error marking gestion {verif.get('id_gestion')} persiste: {e}")
+            await meta_client.send_text(
+                session.telefono,
+                "⚠️ No pude registrar la reincidencia en el sistema, seguimos con la auditoría."
+            )
+            return await AuditConversationHandler._advance_verification(meta_client, session)
+
+        await meta_client.send_text(
+            session.telefono,
+            f"⚠️ Reincidencia registrada (severidad: {nueva_severidad})."
+        )
+        return await AuditConversationHandler._advance_verification(meta_client, session)
+
+    @staticmethod
+    async def _advance_verification(meta_client: MetaClient, session: AuditSession) -> str:
+        """Move to next pending verification, or finish and start scoring."""
+        if session.move_to_next_verification():
+            save_session(session)
+            await AuditConversationHandler._send_current_verification(meta_client, session)
+            return "next_verification"
+        return await AuditConversationHandler._finish_verifications(meta_client, session)
+
+    @staticmethod
+    async def _finish_verifications(meta_client: MetaClient, session: AuditSession) -> str:
+        """Close verification queue for this bloque and move on to scoring."""
+        resumen = ""
+        if session.pending_verifications:
+            resueltos = sum(1 for v in session.pending_verifications if v.get("resultado") == "resuelto")
+            persisten = sum(1 for v in session.pending_verifications if v.get("resultado") == "persiste")
+            omitidos = len(session.pending_verifications) - resueltos - persisten
+            partes = [f"✅ {resueltos} resuelto(s)", f"⚠️ {persisten} persiste(n)"]
+            if omitidos:
+                partes.append(f"⏭️ {omitidos} omitido(s)")
+            resumen = "✓ Verificación completada: " + " · ".join(partes)
+
+        session.pending_verifications = []
+        session.current_verification_index = 0
+        session.awaiting_verification_photo = False
+        session.estado = AuditState.SCORING
+        save_session(session)
+
+        if resumen:
+            await meta_client.send_text(session.telefono, resumen)
+        await AuditConversationHandler._send_scoring_list(meta_client, session.telefono, session)
+        return "scoring_started"
+
+    @staticmethod
     async def handle_init(payload: WhatsAppPayload, meta_client: MetaClient) -> str:
         """Initialize new audit session."""
 
@@ -161,31 +459,12 @@ class AuditConversationHandler:
             auditor_nombre=None  # Could get from Supabase if needed
         )
 
-        # Move to SCORING state
-        session.estado = AuditState.SCORING
         session.started_at = datetime.now(timezone.utc).isoformat()
         save_session(session)
 
-        # Send first scoring question with list message
-        primer_bloque = BLOQUE_ORDER[0]
-        bloque_label = BLOQUE_LABELS.get(primer_bloque, primer_bloque)
-        bloque_desc = BLOQUE_DESCRIPTIONS.get(primer_bloque, "")
-
-        score_options = [
-            {"id": "1", "title": "Muy malo", "description": "Crítico, acción inmediata"},
-            {"id": "2", "title": "Malo", "description": "Problemas significativos"},
-            {"id": "3", "title": "Regular", "description": "Necesita mejora"},
-            {"id": "4", "title": "Bueno", "description": "Bien, algunos detalles"},
-            {"id": "5", "title": "Excelente", "description": "Cumple perfectamente"},
-        ]
-
-        await meta_client.send_list_message(
-            telefono,
-            header=f"Paso 1 de 4: {bloque_label}",
-            body=f"✓ Auditoría iniciada: {sucursal_id}\n\n{bloque_desc}\n\n¿Cuál es tu puntuación?",
-            footer=f"({bloque_desc})",
-            button_text="Selecciona una opción",
-            options=score_options
+        # Enter first bloque: verify pending desvíos, then scoring
+        await AuditConversationHandler.enter_bloque(
+            meta_client, session, intro_msg=f"✓ Auditoría iniciada: {sucursal_id}"
         )
 
         return "audit_started"
@@ -301,30 +580,11 @@ class AuditConversationHandler:
 
                 # Check if there are more bloques to score
                 if session.move_to_next_bloque():
-                    next_bloque = session.get_current_bloque()
-                    next_label = BLOQUE_LABELS.get(next_bloque, next_bloque)
-                    next_desc = BLOQUE_DESCRIPTIONS.get(next_bloque, "")
-
-                    session.estado = AuditState.SCORING
                     save_session(session)
 
-                    score_options = [
-                        {"id": "1", "title": "Muy malo", "description": "Crítico"},
-                        {"id": "2", "title": "Malo", "description": "Problemas"},
-                        {"id": "3", "title": "Regular", "description": "Mejora necesaria"},
-                        {"id": "4", "title": "Bueno", "description": "Bien"},
-                        {"id": "5", "title": "Excelente", "description": "Perfecto"},
-                    ]
-
-                    # Send confirmation + new scoring list in one flow
-                    await meta_client.send_text(payload.telefono, summary_msg)
-                    await meta_client.send_list_message(
-                        payload.telefono,
-                        header=f"Paso {session.current_bloque_index + 1} de 4: {next_label}",
-                        body=f"{next_desc}\n\n¿Cuál es tu puntuación?",
-                        footer="",
-                        button_text="Selecciona una opción",
-                        options=score_options
+                    # Enter next bloque: verify pending desvíos, then scoring
+                    await AuditConversationHandler.enter_bloque(
+                        meta_client, session, intro_msg=summary_msg.strip()
                     )
 
                     return "next_bloque"
@@ -744,6 +1004,13 @@ class AuditConversationHandler:
         # Fotos
         if session.fotos:
             summary += f"\n📷 FOTOS: {len(session.fotos)}\n"
+
+        # Verificaciones de desvíos previos
+        if session.verified_resueltos or session.verified_persisten:
+            summary += (
+                f"\n🔁 VERIFICACIONES PREVIAS: "
+                f"{session.verified_resueltos} resuelto(s) · {session.verified_persisten} persiste(n)\n"
+            )
 
         summary += f"\n¿Confirmas envío?"
 

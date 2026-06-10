@@ -276,6 +276,7 @@ class Gestion:
     estado: GestionState = GestionState.ABIERTA
     fecha_cierre: Optional[datetime] = None
     cerrado_por: Optional[str] = None
+    bloque: Optional[str] = None  # LIMPIEZA/STOCK/OFERTAS/BURBUJAS (perfumería v2)
 
 
 @dataclass

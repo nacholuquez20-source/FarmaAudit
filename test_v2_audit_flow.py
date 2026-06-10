@@ -29,6 +29,24 @@ class MockMetaClient:
         })
         return {'status': 'ok'}
 
+    async def send_list_message(self, telefono, header, body, footer, button_text, options) -> dict:
+        self.sent_messages.append({
+            'telefono': telefono,
+            'text': f"[LIST] {header}: {body}",
+            'options': options,
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        })
+        return {'status': 'ok'}
+
+    async def send_quick_reply(self, telefono, body, buttons) -> dict:
+        self.sent_messages.append({
+            'telefono': telefono,
+            'text': f"[BUTTONS] {body}",
+            'buttons': buttons,
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        })
+        return {'status': 'ok'}
+
 
 async def test_complete_audit_flow():
     """Test complete audit flow from start to finish."""

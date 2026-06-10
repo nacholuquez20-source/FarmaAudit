@@ -22,7 +22,7 @@ def test_photo_evidence_collection():
 
     # Create session
     session = create_session("+5493816199195", "SC-001", "Juan Pérez")
-    session.estado = AuditState.EVIDENCE
+    session.estado = AuditState.BLOQUE_EVIDENCE_COLLECTION
     save_session(session)
 
     # Create test images
@@ -60,7 +60,7 @@ def test_bloque_assignment():
     print("\n[TEST 2] Photo bloque assignment...")
 
     session = create_session("+5493816199195", "SC-001", "Juan Pérez")
-    session.estado = AuditState.EVIDENCE
+    session.estado = AuditState.BLOQUE_EVIDENCE_COLLECTION
     save_session(session)
 
     # Simulate receiving a validated photo
@@ -109,7 +109,7 @@ def test_multiple_photos():
     print("\n[TEST 3] Multiple photos with different bloques...")
 
     session = create_session("+5493816199195", "SC-001", "Juan Pérez")
-    session.estado = AuditState.EVIDENCE
+    session.estado = AuditState.BLOQUE_EVIDENCE_COLLECTION
     save_session(session)
 
     from audit_session import FotoEvidence
@@ -163,7 +163,7 @@ def test_evidence_to_summary():
         BloqueType.BURBUJAS.value: 5,
     }
 
-    session.estado = AuditState.EVIDENCE
+    session.estado = AuditState.BLOQUE_EVIDENCE_COLLECTION
 
     from audit_session import FotoEvidence
 

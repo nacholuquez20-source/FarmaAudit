@@ -474,6 +474,7 @@ class SupabaseManager:
                 "estado": gestion.estado.value,
                 "fecha_cierre": gestion.fecha_cierre.isoformat() if gestion.fecha_cierre else None,
                 "cerrado_por": gestion.cerrado_por or "",
+                "bloque": gestion.bloque,
             }).execute()
 
             logger.info(f"Created gestion {gestion.id_gestion}")
@@ -542,6 +543,7 @@ class SupabaseManager:
                 plazo_fecha=plazo,
                 plan_accion="[Por definir por el responsable]",
                 estado=GestionState.ABIERTA,
+                bloque=bloque_nombre if bloque_nombre in {"LIMPIEZA", "STOCK", "OFERTAS", "BURBUJAS"} else None,
             )
             gestion_id = self.create_gestion(gestion)
 
@@ -813,6 +815,32 @@ class SupabaseManager:
         except Exception as e:
             logger.error(f"Failed to get pending gestiones for {id_sucursal}: {e}")
             return []
+
+    def get_gestiones_pendientes_bloque(self, id_sucursal: str, bloque: str) -> List[Dict[str, Any]]:
+        """Get open deviations for a sucursal filtered by audit bloque."""
+        try:
+            response = (
+                self.client.table("gestion")
+                .select("*")
+                .eq("id_sucursal", id_sucursal)
+                .eq("bloque", bloque)
+                .in_("estado", ["Abierta", "En_proceso", "Vencida"])
+                .order("plazo_fecha")
+                .execute()
+            )
+            return response.data or []
+        except Exception as e:
+            logger.error(f"Failed to get pending gestiones for {id_sucursal}/{bloque}: {e}")
+            return []
+
+    def update_gestion_fields(self, id_gestion: str, fields: Dict[str, Any]) -> bool:
+        """Update arbitrary fields of a gestion record."""
+        try:
+            self.client.table("gestion").update(fields).eq("id_gestion", id_gestion).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to update gestion {id_gestion} with {fields}: {e}")
+            return False
 
     def get_gestion_by_id(self, id_gestion: str) -> Optional[Dict[str, Any]]:
         """Get one gestion by ID."""

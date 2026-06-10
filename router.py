@@ -2214,34 +2214,17 @@ class ConversationRouter:
                 sucursal_id=sucursal.id,
                 auditor_nombre=auditor.nombre if auditor else None
             )
-            # Transition directly to SCORING state (skip IDLE)
-            audit_session_v2.estado = AuditState.SCORING
             audit_session_v2.started_at = datetime.now(timezone.utc).isoformat()
             save_session(audit_session_v2)
-            logger.info(f"Created v2 audit session {audit_session_v2.id_sesion} for {payload.telefono} in SCORING state")
+            logger.info(f"Created v2 audit session {audit_session_v2.id_sesion} for {payload.telefono}")
 
-            # Send welcome message with list options
-            primer_bloque = BLOQUE_ORDER[0]
-            bloque_label = BLOQUE_LABELS.get(primer_bloque, primer_bloque)
-            bloque_desc = BLOQUE_DESCRIPTIONS.get(primer_bloque, "")
-
-            score_options = [
-                {"id": "1", "title": "Muy malo", "description": "Crítico, acción inmediata"},
-                {"id": "2", "title": "Malo", "description": "Problemas significativos"},
-                {"id": "3", "title": "Regular", "description": "Necesita mejora"},
-                {"id": "4", "title": "Bueno", "description": "Bien, algunos detalles"},
-                {"id": "5", "title": "Excelente", "description": "Cumple perfectamente"},
-            ]
-
-            await meta_client.send_list_message(
-                payload.telefono,
-                header=f"Paso 1 de 4: {bloque_label}",
-                body=f"✅ Comenzando auditoría de perfumería en {sucursal.nombre}.\n\nAuditoría Perfumería (0/4)\n\n{bloque_desc}\n\n¿Cuál es tu puntuación?",
-                footer="",
-                button_text="Selecciona una opción",
-                options=score_options
+            # Enter first bloque: verify pending desvíos, then scoring
+            await AuditConversationHandler.enter_bloque(
+                meta_client,
+                audit_session_v2,
+                intro_msg=f"✅ Comenzando auditoría de perfumería en {sucursal.nombre}."
             )
-            logger.info(f"Sent welcome message with list options for v2 session {audit_session_v2.id_sesion}")
+            logger.info(f"Entered first bloque for v2 session {audit_session_v2.id_sesion}")
 
             return "v2_audit_started"
 

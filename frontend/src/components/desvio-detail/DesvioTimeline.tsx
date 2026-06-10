@@ -21,6 +21,10 @@ function getEventIcon(tipo: string) {
       return <Phone size={18} />;
     case 'respuesta':
       return <CheckCircle2 size={18} />;
+    case 'verificacion_auditoria':
+      return <CheckCircle2 size={18} />;
+    case 'reincidencia':
+      return <AlertCircle size={18} />;
     case 'nota':
       return <Clock size={18} />;
     default:
@@ -42,6 +46,10 @@ function getEventColor(tipo: string): { bg: string; text: string; border: string
       return { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' };
     case 'respuesta':
       return { bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200' };
+    case 'verificacion_auditoria':
+      return { bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200' };
+    case 'reincidencia':
+      return { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' };
     case 'nota':
       return { bg: 'bg-gray-50', text: 'text-gray-700', border: 'border-gray-200' };
     default:

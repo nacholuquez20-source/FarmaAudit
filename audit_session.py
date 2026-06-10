@@ -11,6 +11,7 @@ import uuid
 class AuditState(Enum):
     """State machine for audit conversation flow."""
     IDLE = "idle"                              # No audit in progress
+    VERIFY_PREVIOUS = "verify_previous"        # Verifying open desvíos from previous audits
     SCORING = "scoring"                        # Collecting area scores (1-5)
     BLOQUE_EVIDENCE_COLLECTION = "bloque_evidence"  # Collecting evidence for current bloque
     SCORING_BRANDS = "scoring_brands"         # Collecting brand scores for OFERTAS
@@ -125,6 +126,13 @@ class AuditSession:
     fotos: List[FotoEvidence] = field(default_factory=list)
     desvios: List[Desvio] = field(default_factory=list)
 
+    # Verification of previous open desvíos (per bloque)
+    pending_verifications: List[Dict[str, Any]] = field(default_factory=list)
+    current_verification_index: int = 0
+    awaiting_verification_photo: bool = False
+    verified_resueltos: int = 0
+    verified_persisten: int = 0
+
     # Timestamps
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     started_at: Optional[str] = None
@@ -152,6 +160,11 @@ class AuditSession:
             'current_brand_index': self.current_brand_index,
             'fotos': [f.to_dict() for f in self.fotos],
             'desvios': [d.to_dict() for d in self.desvios],
+            'pending_verifications': self.pending_verifications,
+            'current_verification_index': self.current_verification_index,
+            'awaiting_verification_photo': self.awaiting_verification_photo,
+            'verified_resueltos': self.verified_resueltos,
+            'verified_persisten': self.verified_persisten,
             'created_at': self.created_at,
             'started_at': self.started_at,
             'last_message_at': self.last_message_at,
@@ -231,6 +244,19 @@ class AuditSession:
         self.desvios.append(desvio)
         self.last_message_at = datetime.now(timezone.utc).isoformat()
         return desvio
+
+    def get_current_verification(self) -> Optional[Dict[str, Any]]:
+        """Get the gestion currently being verified, or None if queue is done."""
+        if self.current_verification_index < len(self.pending_verifications):
+            return self.pending_verifications[self.current_verification_index]
+        return None
+
+    def move_to_next_verification(self) -> bool:
+        """Advance verification queue. Returns True if there is another pending."""
+        self.current_verification_index += 1
+        self.awaiting_verification_photo = False
+        self.last_message_at = datetime.now(timezone.utc).isoformat()
+        return self.current_verification_index < len(self.pending_verifications)
 
     def move_to_next_bloque(self) -> bool:
         """Move to next bloque in scoring."""

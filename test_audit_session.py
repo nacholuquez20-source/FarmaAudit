@@ -106,7 +106,7 @@ def test_evidence(session):
     print("\n[TEST 4] Testing evidence collection...")
 
     # Move to EVIDENCE
-    session.estado = AuditState.EVIDENCE
+    session.estado = AuditState.BLOQUE_EVIDENCE_COLLECTION
     save_session(session)
 
     # Add fotos

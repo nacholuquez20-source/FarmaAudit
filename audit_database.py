@@ -109,6 +109,7 @@ async def save_audit_to_database(
                     plazo_fecha=plazo,
                     plan_accion="[Por definir por el responsable]",
                     estado=GestionState.ABIERTA,
+                    bloque=bloque,
                 )
 
                 gestion_id = db.create_gestion(gestion)
