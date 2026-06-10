@@ -37,3 +37,14 @@ WHERE g.bloque IS NULL
 
 CREATE INDEX IF NOT EXISTS idx_gestion_sucursal_bloque_estado
   ON gestion (id_sucursal, bloque, estado);
+
+-- Permitir los nuevos tipos de evento de la verificación en piso
+ALTER TABLE desvio_eventos
+DROP CONSTRAINT IF EXISTS desvio_eventos_tipo_check;
+
+ALTER TABLE desvio_eventos
+ADD CONSTRAINT desvio_eventos_tipo_check
+CHECK (tipo IN (
+  'creacion', 'contacto', 'respuesta', 'cierre', 'nota', 'evidencia',
+  'mensaje', 'auditor_hallazgo', 'verificacion_auditoria', 'reincidencia'
+));
