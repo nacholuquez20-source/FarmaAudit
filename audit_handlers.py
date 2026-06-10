@@ -19,6 +19,7 @@ from meta_client import MetaClient
 from photo_validator import PhotoValidator, PhotoValidationResult
 from audit_database import save_audit_to_database, send_manager_notification, get_previous_audit
 from audit_pdf_generator import generate_audit_pdf
+from audit_fiches_manager import AuditFichesManager
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -776,8 +777,25 @@ class AuditConversationHandler:
         if any(word in texto for word in ["sí", "si", "yes", "confirmo", "ok", "✅"]):
             # Save to DB
             try:
-                await save_audit_to_database(session, meta_client)
+                result = await save_audit_to_database(session, meta_client)
                 logger.info(f"Audit session {session.id_sesion} saved to database")
+
+                # Get reporte_id from result (if available)
+                reporte_id = result.get("id_reporte") if isinstance(result, dict) else None
+
+                # Generate and save ficha to Google Drive (non-blocking)
+                if reporte_id:
+                    try:
+                        responsable = getattr(session, 'desvios_responsable', None)
+                        await AuditFichesManager.generate_and_save_ficha(
+                            session=session,
+                            reporte_id=reporte_id,
+                            sucursal_nombre=session.sucursal_id,
+                            responsable_desvios=responsable,
+                        )
+                        logger.info(f"Ficha PDF generated and saved for {session.id_sesion}")
+                    except Exception as e:
+                        logger.warning(f"Failed to generate ficha PDF: {e}")
 
                 # Try to send manager notification (non-blocking)
                 try:
