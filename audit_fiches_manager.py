@@ -72,7 +72,7 @@ class AuditFichesManager:
                 "sucursal_id": session.sucursal_id,
                 "auditor_nombre": session.auditor_nombre,
                 "responsable_desvios": responsable_desvios,
-                "fecha_auditoria": datetime.fromisoformat(session.started_at),
+                "fecha_auditoria": session.started_at or datetime.now(timezone.utc).isoformat(),
                 "url_pdf": drive_url,
                 "google_drive_id": file_id,
                 "desvios_count": len(session.desvios),
@@ -152,9 +152,7 @@ class AuditFichesManager:
 
         try:
             db = SupabaseManager()
-            response = db.client.table("audit_fiches").select(
-                "sucursal_id"
-            ).distinct().execute()
+            response = db.client.table("audit_fiches").select("sucursal_id").execute()
 
             return response.data if response.data else []
 

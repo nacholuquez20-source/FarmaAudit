@@ -1,8 +1,10 @@
 -- Migration: Create audit_fiches table to store PDF metadata
+-- Nota: la tabla de reportes se llama "reportes" (plural) y su id es TEXT de 12 chars,
+-- no UUID. Por eso id_reporte es TEXT.
 
 CREATE TABLE IF NOT EXISTS audit_fiches (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  id_reporte UUID NOT NULL REFERENCES reporte(id) ON DELETE CASCADE,
+  id_reporte TEXT NOT NULL REFERENCES reportes(id) ON DELETE CASCADE,
   sucursal_id VARCHAR(50) NOT NULL,
   auditor_nombre VARCHAR(255),
   responsable_desvios VARCHAR(255),
@@ -19,21 +21,25 @@ CREATE TABLE IF NOT EXISTS audit_fiches (
 );
 
 -- Indexes for faster filtering
-CREATE INDEX idx_audit_fiches_sucursal ON audit_fiches(sucursal_id);
-CREATE INDEX idx_audit_fiches_fecha ON audit_fiches(fecha_auditoria);
-CREATE INDEX idx_audit_fiches_auditor ON audit_fiches(auditor_nombre);
-CREATE INDEX idx_audit_fiches_reporte ON audit_fiches(id_reporte);
+CREATE INDEX IF NOT EXISTS idx_audit_fiches_sucursal ON audit_fiches(sucursal_id);
+CREATE INDEX IF NOT EXISTS idx_audit_fiches_fecha ON audit_fiches(fecha_auditoria);
+CREATE INDEX IF NOT EXISTS idx_audit_fiches_auditor ON audit_fiches(auditor_nombre);
+CREATE INDEX IF NOT EXISTS idx_audit_fiches_reporte ON audit_fiches(id_reporte);
 
 -- Row Level Security
 ALTER TABLE audit_fiches ENABLE ROW LEVEL SECURITY;
 
--- Policy: allow authenticated users to read
+-- Policy: usuarios autenticados del panel pueden leer
+DROP POLICY IF EXISTS audit_fiches_read_policy ON audit_fiches;
 CREATE POLICY audit_fiches_read_policy ON audit_fiches
-  FOR SELECT USING (true);
+  FOR SELECT TO authenticated USING (true);
 
--- Policy: allow service role to insert/update
+-- El bot inserta con service key (saltea RLS); estas policies quedan por si
+-- algun dia se inserta/actualiza desde el panel autenticado
+DROP POLICY IF EXISTS audit_fiches_insert_policy ON audit_fiches;
 CREATE POLICY audit_fiches_insert_policy ON audit_fiches
-  FOR INSERT WITH CHECK (true);
+  FOR INSERT TO authenticated WITH CHECK (true);
 
+DROP POLICY IF EXISTS audit_fiches_update_policy ON audit_fiches;
 CREATE POLICY audit_fiches_update_policy ON audit_fiches
-  FOR UPDATE USING (true);
+  FOR UPDATE TO authenticated USING (true);
