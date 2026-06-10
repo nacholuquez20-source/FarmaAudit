@@ -150,8 +150,10 @@ async def test_resuelto_con_foto():
     db.update_gestion_fields.assert_called_once_with("g1", {"estado": "Resuelta"})
     assert session.verified_resueltos == 1
     assert session.current_verification_index == 1
-    # Next verification was offered
-    assert len(meta.quick_replies) == 1
+    # Photo prompt (with "sin foto" button) + next verification card
+    assert len(meta.quick_replies) == 2
+    assert meta.quick_replies[0]["buttons"][0]["id"] == "verif_sin_foto"
+    assert meta.quick_replies[-1]["buttons"][0]["id"] == "verif_resuelto"
     delete_session(telefono)
 
 
@@ -341,16 +343,23 @@ async def test_desvio_management_menu_y_seleccion():
         session = get_session(telefono)
         assert session.estado == AuditState.VERIFY_SELECT_SUCURSAL
         assert session.verification_only is True
-        assert "Plazoleta Roca (3)" in meta.texts[-1]
+        # Menu is a native list message with row ids verif_suc_N
+        assert len(meta.lists) == 1
+        menu_options = meta.lists[-1]["options"]
+        assert menu_options[0]["id"] == "verif_suc_1"
+        assert menu_options[0]["title"] == "Plazoleta Roca"
+        assert "3" in menu_options[0]["description"]
 
-        # Invalid input re-prompts
+        # Invalid input re-prompts with the menu again
         result = await AuditConversationHandler.handle_verify_sucursal_selection(
             make_payload(telefono, contenido="99"), meta, session
         )
         assert result == "verify_sucursal_invalid_input"
+        assert len(meta.lists) == 2
 
+        # List reply id selects the sucursal
         result = await AuditConversationHandler.handle_verify_sucursal_selection(
-            make_payload(telefono, contenido="1"), meta, session
+            make_payload(telefono, contenido="verif_suc_1"), meta, session
         )
 
     assert result == "verification_started"

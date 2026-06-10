@@ -209,13 +209,40 @@ class AuditConversationHandler:
         session.estado = AuditState.VERIFY_SELECT_SUCURSAL
         save_session(session)
 
+        await AuditConversationHandler._send_sucursal_menu(meta_client, session)
+        return "desvio_management_menu_sent"
+
+    @staticmethod
+    async def _send_sucursal_menu(meta_client: MetaClient, session: AuditSession) -> None:
+        """Send sucursal picker: native list message (≤10) or numbered text fallback."""
+        telefono = session.telefono
+        sucursales = session.verification_menu
+
+        if len(sucursales) <= 10:
+            options = [
+                {
+                    "id": f"verif_suc_{i}",
+                    "title": s["sucursal"][:24],
+                    "description": f"{s['count']} desvío(s) activo(s)",
+                }
+                for i, s in enumerate(sucursales, 1)
+            ]
+            sent = await meta_client.send_list_message(
+                telefono,
+                "📋 Gestión de desvíos",
+                "Elegí la sucursal cuyos desvíos querés verificar.",
+                "Escribí 'cancelar' para salir",
+                "Ver sucursales",
+                options,
+            )
+            if sent:
+                return
+
         menu = "📋 Gestión de desvíos activos\n\nSucursales con desvíos pendientes:\n\n"
         for i, s in enumerate(sucursales, 1):
             menu += f"{i}. {s['sucursal']} ({s['count']})\n"
         menu += "\nResponde con el número de la sucursal, o 'cancelar' para salir."
-
         await meta_client.send_text(telefono, menu)
-        return "desvio_management_menu_sent"
 
     @staticmethod
     async def handle_verify_sucursal_selection(payload: WhatsAppPayload, meta_client: MetaClient, session: AuditSession) -> str:
@@ -228,8 +255,12 @@ class AuditConversationHandler:
             await meta_client.send_text(telefono, "Gestión de desvíos cancelada. Escribí 'hola' para volver al menú.")
             return "desvio_management_cancelled"
 
+        if texto.startswith("verif_suc_"):
+            texto = texto.removeprefix("verif_suc_")
+
         if not texto.isdigit() or not (1 <= int(texto) <= len(session.verification_menu)):
-            await meta_client.send_text(telefono, "⚠️ Respondé con el número de la sucursal, o 'cancelar' para salir.")
+            await meta_client.send_text(telefono, "⚠️ Elegí una sucursal de la lista, o escribí 'cancelar' para salir.")
+            await AuditConversationHandler._send_sucursal_menu(meta_client, session)
             return "verify_sucursal_invalid_input"
 
         elegida = session.verification_menu[int(texto) - 1]
@@ -352,16 +383,18 @@ class AuditConversationHandler:
                     media_bytes, mime_type = await meta_client.download_media_with_metadata(payload.media_id)
                     validation = PhotoValidator.validate_media_bytes(media_bytes, mime_type)
                     if not validation.is_valid:
-                        await meta_client.send_text(
+                        await meta_client.send_quick_reply(
                             telefono,
-                            validation.message + "\n\nIntenta de nuevo o escribe 'OMITIR' para continuar sin foto."
+                            validation.message + "\n\nIntentá con otra foto.",
+                            [{"id": "verif_sin_foto", "title": "Continuar sin foto"}],
                         )
                         return "verification_photo_invalid"
                 except Exception as e:
                     logger.error(f"Error downloading verification photo: {e}")
-                    await meta_client.send_text(
+                    await meta_client.send_quick_reply(
                         telefono,
-                        "❌ Error procesando la foto. Intenta de nuevo o escribe 'OMITIR'."
+                        "❌ Error procesando la foto. Intentá de nuevo.",
+                        [{"id": "verif_sin_foto", "title": "Continuar sin foto"}],
                     )
                     return "verification_photo_error"
 
@@ -374,12 +407,15 @@ class AuditConversationHandler:
 
                 return await AuditConversationHandler._mark_resuelto(meta_client, session, verif, evidencia)
 
-            if payload.tipo == "text" and "OMITIR" in (payload.contenido or "").upper():
-                return await AuditConversationHandler._mark_resuelto(meta_client, session, verif, None)
+            if payload.tipo == "text":
+                contenido_up = (payload.contenido or "").upper()
+                if "OMITIR" in contenido_up or contenido_up.strip() == "VERIF_SIN_FOTO":
+                    return await AuditConversationHandler._mark_resuelto(meta_client, session, verif, None)
 
-            await meta_client.send_text(
+            await meta_client.send_quick_reply(
                 telefono,
-                "📷 Enviá una foto de la resolución o escribí 'OMITIR' para continuar sin foto."
+                "📷 Enviá una foto de la resolución.",
+                [{"id": "verif_sin_foto", "title": "Continuar sin foto"}],
             )
             return "awaiting_verification_photo"
 
@@ -394,9 +430,10 @@ class AuditConversationHandler:
         if respuesta == "verif_resuelto" or "resuelto" in respuesta:
             session.awaiting_verification_photo = True
             save_session(session)
-            await meta_client.send_text(
+            await meta_client.send_quick_reply(
                 telefono,
-                "📷 Enviá una foto de evidencia de la resolución\n(o escribí 'OMITIR' para continuar sin foto)"
+                "📷 Enviá una foto de evidencia de la resolución.",
+                [{"id": "verif_sin_foto", "title": "Continuar sin foto"}],
             )
             return "verification_resuelto_awaiting_photo"
 
@@ -407,10 +444,8 @@ class AuditConversationHandler:
             verif["resultado"] = "omitido"
             return await AuditConversationHandler._advance_verification(meta_client, session)
 
-        await meta_client.send_text(
-            telefono,
-            "Por favor usá los botones: ✅ Resuelto · ⚠️ Persiste · ⏭️ Omitir"
-        )
+        await meta_client.send_text(telefono, "Por favor usá los botones 👇")
+        await AuditConversationHandler._send_current_verification(meta_client, session)
         return "verification_invalid_input"
 
     @staticmethod

@@ -288,9 +288,10 @@ Acción requerida inmediatamente."""
             quick_reply_buttons = []
             for btn in buttons[:3]:  # Max 3 buttons for quick reply
                 quick_reply_buttons.append({
-                    "type": "text",
-                    "text": {
-                        "body": btn.get("title", "")[:20]
+                    "type": "reply",
+                    "reply": {
+                        "id": btn.get("id", ""),
+                        "title": btn.get("title", "")[:20],
                     }
                 })
 
