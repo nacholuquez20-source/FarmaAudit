@@ -18,6 +18,7 @@ from models import WhatsAppPayload
 from meta_client import MetaClient
 from photo_validator import PhotoValidator, PhotoValidationResult
 from audit_database import save_audit_to_database, send_manager_notification, get_previous_audit
+from audit_pdf_generator import generate_audit_pdf
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -101,6 +102,34 @@ class AuditConversationHandler:
             return await AuditConversationHandler.handle_confirmation(payload, meta_client, session)
 
         elif session.estado == AuditState.DONE:
+            # After audit complete, handle ficha requests or responsable input
+            if payload.tipo == "text":
+                texto = payload.contenido.lower().strip()
+
+                # Check if asking for ficha
+                if any(word in texto for word in ["ficha", "pdf", "documento", "descargar"]):
+                    return await AuditConversationHandler.generate_and_send_ficha(
+                        payload, meta_client, session
+                    )
+
+                # Check if user entered responsable name (when there are desvios)
+                if not hasattr(session, 'desvios_responsable') or session.desvios_responsable is None:
+                    if len(session.desvios) > 0:
+                        # Save responsable name
+                        session.desvios_responsable = payload.contenido.strip()
+                        save_session(session)
+
+                        await meta_client.send_quick_reply(
+                            payload.telefono,
+                            f"✅ Desvios asignados a: {session.desvios_responsable}\n\n"
+                            f"¿Deseas descargar la ficha de auditoría?",
+                            [
+                                {"id": "ficha", "title": "📄 Ficha"},
+                                {"id": "no", "title": "❌ No"},
+                            ]
+                        )
+                        return "responsable_saved"
+
             return "audit_already_completed"
 
         return "unknown_state"
@@ -629,6 +658,54 @@ class AuditConversationHandler:
         return "unsupported_media"
 
     @staticmethod
+    async def generate_and_send_ficha(
+        payload: WhatsAppPayload, meta_client: MetaClient, session: AuditSession
+    ) -> str:
+        """Generate PDF ficha and send to user."""
+
+        try:
+            # Get sucursal name from somewhere (we have sucursal_id)
+            # For now use sucursal_id as fallback
+            sucursal_nombre = session.sucursal_id
+
+            # Get responsable if exists
+            responsable = getattr(session, 'desvios_responsable', None)
+
+            # Generate PDF
+            pdf_bytes = generate_audit_pdf(
+                session=session,
+                sucursal_nombre=sucursal_nombre,
+                auditor_nombre=session.auditor_nombre,
+                responsable_desvios=responsable,
+            )
+
+            # Save PDF temporarily and send
+            # Note: In production, upload to Google Drive or S3
+            filename = f"Auditoria_{session.id_sesion}.pdf"
+
+            await meta_client.send_text(
+                payload.telefono,
+                f"📄 Ficha de auditoría generada.\n\n"
+                f"ID: {session.id_sesion}\n"
+                f"Archivo: {filename}\n\n"
+                f"✅ Auditoría completada. ¡Gracias!"
+            )
+
+            # TODO: Send PDF file using meta_client.send_file()
+            # await meta_client.send_file(payload.telefono, pdf_url, caption="Ficha de auditoría")
+
+            logger.info(f"Generated ficha PDF for session {session.id_sesion}")
+            return "ficha_sent"
+
+        except Exception as e:
+            logger.error(f"Error generating ficha: {e}")
+            await meta_client.send_text(
+                payload.telefono,
+                "❌ Error generando la ficha. Por favor contacta al soporte."
+            )
+            return "ficha_error"
+
+    @staticmethod
     async def send_summary(telefono: str, meta_client: MetaClient, session: AuditSession) -> str:
         """Generate and send audit summary."""
 
@@ -719,21 +796,43 @@ class AuditConversationHandler:
                 )
                 return "audit_saved_local_only"
 
-            # Mark as complete
-            session.estado = AuditState.DONE
-            save_session(session)
-
+            # Mark as complete but ask for ficha first
+            # Don't set to DONE yet - need responsable name if there are desvios
             desvio_count = len(session.desvios)
-            await meta_client.send_text(
-                payload.telefono,
-                f"✅ ¡Auditoría guardada!\n\n"
-                f"ID: {session.id_sesion}\n"
-                f"Fotos: {len(session.fotos)}\n"
-                f"Desvíos: {desvio_count}\n\n"
-                f"Gerente notificado de {desvio_count} hallazgo(s)"
-            )
 
-            return "audit_saved"
+            if desvio_count > 0:
+                # If there are desvios, ask for responsible name
+                await meta_client.send_text(
+                    payload.telefono,
+                    f"✅ ¡Auditoría guardada!\n\n"
+                    f"ID: {session.id_sesion}\n"
+                    f"Fotos: {len(session.fotos)}\n"
+                    f"Desvíos: {desvio_count}\n\n"
+                    f"Gerente notificado de {desvio_count} hallazgo(s)\n\n"
+                    f"¿A nombre de quién se registran los desvios?\n"
+                    f"(Escribe el nombre del responsable)"
+                )
+                # Save with temporary state
+                session.estado = AuditState.DONE
+                session.desvios_responsable = None  # Will be set in next message
+                save_session(session)
+                return "awaiting_responsable_name"
+            else:
+                # No desvios, ask directly for ficha
+                session.estado = AuditState.DONE
+                save_session(session)
+
+                await meta_client.send_quick_reply(
+                    payload.telefono,
+                    f"✅ ¡Auditoría guardada!\n\nID: {session.id_sesion}\n\n"
+                    f"¿Deseas descargar la ficha de auditoría?",
+                    [
+                        {"id": "ficha", "title": "📄 Ficha"},
+                        {"id": "no", "title": "❌ No"},
+                    ]
+                )
+
+                return "audit_saved"
 
         elif any(word in texto for word in ["no", "editar", "cambiar", "modificar", "❌"]):
             # Ask what to change
