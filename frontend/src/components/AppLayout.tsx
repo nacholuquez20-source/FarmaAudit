@@ -5,10 +5,7 @@ import {
   AlertTriangle,
   Bell,
   ClipboardCheck,
-  ClipboardList,
-  FileText,
   Home,
-  LayoutDashboard,
   LogOut,
   Settings,
   Store,
@@ -57,23 +54,17 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
   const navItems: NavItem[] = [];
   if (role === 'admin') {
     if (hasModuleAccess(profile, 'dashboard'))
-      navItems.push({ to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard });
-    if (hasModuleAccess(profile, 'gestion_desvios'))
-      navItems.push({ to: '/gestion-desvios', label: 'Gestion', icon: ClipboardList });
-    if (hasModuleAccess(profile, 'revision_desvios'))
-      navItems.push({ to: '/revision-desvios', label: 'Revision', icon: ClipboardCheck });
+      navItems.push({ to: '/dashboard', label: 'Inicio', icon: Home });
+    if (hasModuleAccess(profile, 'gestion_desvios') || hasModuleAccess(profile, 'revision_desvios'))
+      navItems.push({ to: '/desvios', label: 'Desvios', icon: ClipboardCheck });
     if (hasModuleAccess(profile, 'sucursales'))
       navItems.push({ to: '/sucursales', label: 'Sucursales', icon: Store });
-    navItems.push({ to: '/fichas', label: 'Fichas', icon: FileText });
     if (canAccessAdmin) navItems.push({ to: '/admin', label: 'Admin', icon: Settings });
   } else if (role === 'auditor') {
-    if (hasModuleAccess(profile, 'gestion_desvios'))
-      navItems.push({ to: '/gestion-desvios', label: 'Gestion', icon: ClipboardList });
-    if (hasModuleAccess(profile, 'revision_desvios'))
-      navItems.push({ to: '/revision-desvios', label: 'Revision', icon: ClipboardCheck });
+    if (hasModuleAccess(profile, 'gestion_desvios') || hasModuleAccess(profile, 'revision_desvios'))
+      navItems.push({ to: '/desvios', label: 'Desvios', icon: ClipboardCheck });
     if (hasModuleAccess(profile, 'sucursales'))
       navItems.push({ to: '/sucursales', label: 'Sucursales', icon: Store });
-    navItems.push({ to: '/fichas', label: 'Fichas', icon: FileText });
   } else if (role === 'sucursal') {
     if (hasModuleAccess(profile, 'dashboard'))
       navItems.push({ to: '/dashboard', label: 'Resumen', icon: Home });

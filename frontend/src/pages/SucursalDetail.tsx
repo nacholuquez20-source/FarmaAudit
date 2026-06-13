@@ -1,13 +1,34 @@
 import React, { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { ClipboardCheck } from 'lucide-react';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { useControlStock } from '../hooks/useControlStock';
 import { useGestion } from '../hooks/useGestion';
 import { useReportes } from '../hooks/useReportes';
 import { getSucursal } from '../lib/api';
+import { supabase } from '../lib/supabase';
 import { formatDate, gestionStateLabel, severidadColor } from '../lib/utils';
 import type { Sucursal, SucursalDetailTab } from '../types';
+
+interface AuditFiche {
+  id: string;
+  created_at: string;
+  sucursal_id: string;
+  auditor_nombre: string;
+  score_limpieza: number | null;
+  score_stock: number | null;
+  score_ofertas: number | null;
+  score_burbujas: number | null;
+  total_desvios: number;
+}
+
+function scoreColor(score: number | null) {
+  if (score === null) return 'text-slate-400';
+  if (score >= 4) return 'text-green-600 font-semibold';
+  if (score >= 3) return 'text-yellow-600 font-semibold';
+  return 'text-red-600 font-semibold';
+}
 
 export default function SucursalDetail() {
   const { id } = useParams<{ id: string }>();
@@ -15,6 +36,8 @@ export default function SucursalDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<SucursalDetailTab>('reportes');
+  const [fichas, setFichas] = useState<AuditFiche[]>([]);
+  const [fichasLoading, setFichasLoading] = useState(false);
   const navigate = useNavigate();
 
   const { reportes } = useReportes(id ? { sucursal_id: id } : undefined);
@@ -39,6 +62,20 @@ export default function SucursalDetail() {
     loadSucursal();
   }, [id]);
 
+  React.useEffect(() => {
+    if (activeTab !== 'auditorias' || !id) return;
+    setFichasLoading(true);
+    supabase
+      .from('audit_fiches')
+      .select('*')
+      .eq('sucursal_id', id)
+      .order('created_at', { ascending: false })
+      .then(({ data, error: err }) => {
+        if (!err && data) setFichas(data as AuditFiche[]);
+        setFichasLoading(false);
+      });
+  }, [activeTab, id]);
+
   if (loading) {
     return (
       <AppLayout title="Sucursal">
@@ -55,6 +92,13 @@ export default function SucursalDetail() {
     );
   }
 
+  const tabs: { key: SucursalDetailTab; label: string }[] = [
+    { key: 'reportes', label: `Hallazgos (${reportes.length})` },
+    { key: 'gestiones', label: `Gestiones (${gestiones.length})` },
+    { key: 'stock', label: `Stock (${stockItems.length})` },
+    { key: 'auditorias', label: 'Auditorías' },
+  ];
+
   return (
     <AppLayout title={sucursal.nombre}>
       <div className="mb-6 flex justify-between items-center">
@@ -66,9 +110,10 @@ export default function SucursalDetail() {
         </button>
         <button
           onClick={() => navigate(`/sucursales/${sucursal.id}/auditoria`)}
-          className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium"
+          className="flex items-center gap-2 px-4 py-2 bg-primary-navy text-white rounded-lg hover:bg-primary-navy/90 font-medium"
         >
-          + Iniciar Auditoría Perfumería
+          <ClipboardCheck className="h-4 w-4" />
+          Auditar Perfumería
         </button>
       </div>
 
@@ -96,19 +141,17 @@ export default function SucursalDetail() {
       <div className="bg-white rounded-lg shadow">
         <div className="border-b border-gray-200">
           <div className="flex gap-0">
-            {(['reportes', 'gestiones', 'stock'] as SucursalDetailTab[]).map((tab) => (
+            {tabs.map(({ key, label }) => (
               <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
+                key={key}
+                onClick={() => setActiveTab(key)}
                 className={`px-6 py-4 font-medium border-b-2 transition ${
-                  activeTab === tab
-                    ? 'border-blue-600 text-blue-600'
+                  activeTab === key
+                    ? 'border-primary-navy text-primary-navy'
                     : 'border-transparent text-gray-600 hover:text-gray-900'
                 }`}
               >
-                {tab === 'reportes' && `Hallazgos (${reportes.length})`}
-                {tab === 'gestiones' && `Gestiones (${gestiones.length})`}
-                {tab === 'stock' && `Stock (${stockItems.length})`}
+                {label}
               </button>
             ))}
           </div>
@@ -204,6 +247,41 @@ export default function SucursalDetail() {
                 ))}
               </tbody>
             </table>
+          )}
+
+          {activeTab === 'auditorias' && (
+            fichasLoading ? (
+              <div className="p-8"><FeedbackState title="Cargando auditorias..." tone="loading" /></div>
+            ) : fichas.length === 0 ? (
+              <div className="p-8"><FeedbackState title="Sin auditorias registradas" description="Las auditorias de perfumeria realizadas por WhatsApp apareceran aqui." /></div>
+            ) : (
+              <table className="w-full">
+                <thead className="bg-gray-100 border-b">
+                  <tr>
+                    <th className="text-left px-6 py-3 font-semibold text-sm">Fecha</th>
+                    <th className="text-left px-6 py-3 font-semibold text-sm">Auditor</th>
+                    <th className="text-left px-6 py-3 font-semibold text-sm">Limpieza</th>
+                    <th className="text-left px-6 py-3 font-semibold text-sm">Stock</th>
+                    <th className="text-left px-6 py-3 font-semibold text-sm">Ofertas</th>
+                    <th className="text-left px-6 py-3 font-semibold text-sm">Displays</th>
+                    <th className="text-left px-6 py-3 font-semibold text-sm">Desvios</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fichas.map((ficha) => (
+                    <tr key={ficha.id} className="border-b hover:bg-gray-50">
+                      <td className="px-6 py-4 text-sm">{formatDate(ficha.created_at)}</td>
+                      <td className="px-6 py-4 text-sm">{ficha.auditor_nombre}</td>
+                      <td className={`px-6 py-4 text-sm ${scoreColor(ficha.score_limpieza)}`}>{ficha.score_limpieza ?? '—'}/5</td>
+                      <td className={`px-6 py-4 text-sm ${scoreColor(ficha.score_stock)}`}>{ficha.score_stock ?? '—'}/5</td>
+                      <td className={`px-6 py-4 text-sm ${scoreColor(ficha.score_ofertas)}`}>{ficha.score_ofertas ?? '—'}/5</td>
+                      <td className={`px-6 py-4 text-sm ${scoreColor(ficha.score_burbujas)}`}>{ficha.score_burbujas ?? '—'}/5</td>
+                      <td className="px-6 py-4 text-sm font-semibold">{ficha.total_desvios}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )
           )}
         </div>
 

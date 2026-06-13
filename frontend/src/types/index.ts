@@ -15,7 +15,7 @@ export type DesvioOrigen = 'auditor' | 'sucursal';
 export type NotificacionTipo = 'mensaje_nuevo' | 'encargado_respondio' | 'estado_cambio' | 'vencimiento_proximo';
 export type AdminTabKey = 'auditores' | 'usuarios';
 export type DashboardView = 'general' | 'zona';
-export type SucursalDetailTab = 'reportes' | 'gestiones' | 'stock';
+export type SucursalDetailTab = 'reportes' | 'gestiones' | 'stock' | 'auditorias';
 export type SucursalEditableField = 'nombre' | 'direccion' | 'zona' | 'responsable' | 'tel_responsable';
 export type AutosaveStatus = 'idle' | 'pending' | 'saving' | 'saved' | 'error';
 

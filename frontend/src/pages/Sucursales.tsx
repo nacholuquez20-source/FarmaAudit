@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { ClipboardCheck } from 'lucide-react';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { useSucursales } from '../hooks/useSucursales';
@@ -65,6 +66,7 @@ export default function Sucursales() {
   const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const navigate = useNavigate();
   const canEdit = role === 'admin';
+  const canAudit = role === 'admin' || role === 'auditor';
 
   useEffect(() => {
     setRows(sucursales.map(normalizeSucursal));
@@ -197,7 +199,7 @@ export default function Sucursales() {
                   </th>
                 ))}
                 <th className="px-4 py-3 text-left text-sm font-semibold">Estado</th>
-                <th className="px-4 py-3 text-right text-sm font-semibold">Detalle</th>
+                <th className="px-4 py-3 text-right text-sm font-semibold">Acciones</th>
               </tr>
             </thead>
             <tbody>
@@ -246,13 +248,25 @@ export default function Sucursales() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right align-top">
-                      <button
-                        type="button"
-                        onClick={() => navigate(`/sucursales/${sucursal.id}`)}
-                        className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-100"
-                      >
-                        Ver
-                      </button>
+                      <div className="flex items-center justify-end gap-2">
+                        {canAudit && (
+                          <button
+                            type="button"
+                            onClick={() => navigate(`/sucursales/${sucursal.id}/auditoria`)}
+                            className="flex items-center gap-1.5 rounded-md bg-primary-navy px-3 py-2 text-sm font-medium text-white transition hover:bg-primary-navy/90"
+                          >
+                            <ClipboardCheck className="h-3.5 w-3.5" />
+                            Auditar
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/sucursales/${sucursal.id}`)}
+                          className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-100"
+                        >
+                          Ver
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -318,7 +332,17 @@ export default function Sucursales() {
                 })}
               </div>
 
-              <div className="mt-4 flex justify-end">
+              <div className="mt-4 flex justify-end gap-2">
+                {canAudit && (
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/sucursales/${sucursal.id}/auditoria`)}
+                    className="flex items-center gap-1.5 rounded-md bg-primary-navy px-3 py-2 text-sm font-medium text-white transition hover:bg-primary-navy/90"
+                  >
+                    <ClipboardCheck className="h-3.5 w-3.5" />
+                    Auditar
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => navigate(`/sucursales/${sucursal.id}`)}

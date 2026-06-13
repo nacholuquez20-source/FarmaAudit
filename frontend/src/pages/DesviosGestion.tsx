@@ -411,7 +411,7 @@ function DetailDrawer({
   );
 }
 
-export default function DesviosGestion() {
+export function DesviosGestionPanel({ embedded = false }: { embedded?: boolean }) {
   const { user, profile } = useAuth();
   const [desvios, setDesvios] = useState<DesvioCard[]>([]);
   const [loading, setLoading] = useState(true);
@@ -574,8 +574,8 @@ export default function DesviosGestion() {
   };
 
   return (
-    <AppLayout title="FarmaAudit" contentClassName="max-w-none px-0 py-0">
-      <div className="min-h-[calc(100vh-73px)] bg-slate-100">
+      <div className="min-h-screen bg-slate-100">
+        {!embedded && (
         <section className="border-b border-slate-200 bg-white px-5 py-4 lg:px-8">
           <div className="flex items-center gap-4">
             <div className="flex h-11 w-11 items-center justify-center rounded-lg font-black text-white" style={{ background: tokens.navy }}>FA</div>
@@ -586,6 +586,7 @@ export default function DesviosGestion() {
             <span className="hidden rounded-full bg-slate-100 px-4 py-2 text-sm font-bold text-slate-600 sm:inline-flex">{desvios.length} desvios</span>
           </div>
         </section>
+        )}
 
         <section className="sticky top-0 z-20 border-b border-slate-200 bg-white px-5 py-4 lg:px-8">
           <div className="flex flex-col gap-3">
@@ -750,6 +751,13 @@ export default function DesviosGestion() {
           />
         )}
       </div>
+  );
+}
+
+export default function DesviosGestion() {
+  return (
+    <AppLayout title="Gestion de Desvios" contentClassName="max-w-none px-0 py-0">
+      <DesviosGestionPanel />
     </AppLayout>
   );
 }

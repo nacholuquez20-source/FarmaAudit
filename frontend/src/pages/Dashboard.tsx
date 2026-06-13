@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { ClipboardCheck } from 'lucide-react';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { KPICard } from '../components/KPICard';
@@ -124,6 +125,22 @@ export default function Dashboard() {
       </div>
 
       {error && <div className="mb-6"><FeedbackState title={error} tone="error" /></div>}
+
+      {(role === 'admin' || role === 'auditor') && (
+        <Link
+          to="/desvios?v=revision"
+          className="mb-6 flex items-center gap-4 rounded-xl border border-primary-navy/20 bg-primary-navy/5 px-5 py-4 transition hover:bg-primary-navy/10"
+        >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-navy text-white">
+            <ClipboardCheck className="h-5 w-5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-primary-navy">Revisar borradores</div>
+            <div className="text-xs text-slate-500">Aprobar o descartar desvios detectados por el bot de WhatsApp</div>
+          </div>
+          <span className="text-xs font-medium text-primary-navy">Ver →</span>
+        </Link>
+      )}
 
       {stats && (
         <>

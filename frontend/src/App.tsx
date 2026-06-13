@@ -9,13 +9,11 @@ const Login = lazy(() => import('./pages/Login'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const DesvioDetail = lazy(() => import('./pages/DesvioDetail'));
-const DesviosGestion = lazy(() => import('./pages/DesviosGestion'));
-const RevisionDesvios = lazy(() => import('./pages/RevisionDesvios'));
+const Desvios = lazy(() => import('./pages/Desvios'));
 const MisDesvios = lazy(() => import('./pages/MisDesvios'));
 const Sucursales = lazy(() => import('./pages/Sucursales'));
 const SucursalDetail = lazy(() => import('./pages/SucursalDetail'));
-const AuditPerfumeria = lazy(() => import('./pages/AuditPerfumeria'));
-const AuditFichesGallery = lazy(() => import('./pages/AuditFichesGallery'));
+const AuditPerfumeriaV2 = lazy(() => import('./pages/AuditPerfumeriaV2'));
 const Admin = lazy(() => import('./pages/Admin'));
 
 function LoadingGate({ title }: { title: string }) {
@@ -122,13 +120,13 @@ function ProtectedRoute({
   if (!role) return <ProfileError message={profileError} />;
 
   if (adminOnly && role !== 'admin') {
-    if (role === 'auditor') return <Navigate to="/gestion-desvios" replace />;
+    if (role === 'auditor') return <Navigate to="/desvios" replace />;
     if (role === 'sucursal') return <Navigate to="/dashboard" replace />;
     return <Navigate to="/dashboard" replace />;
   }
 
   if (allowRoles?.length && !allowRoles.includes(role)) {
-    if (role === 'auditor') return <Navigate to="/gestion-desvios" replace />;
+    if (role === 'auditor') return <Navigate to="/desvios" replace />;
     return <Navigate to="/dashboard" replace />;
   }
 
@@ -158,7 +156,11 @@ export default function App() {
 
           <Route
             path="/desvios"
-            element={<Navigate to="/gestion-desvios" replace />}
+            element={
+              <ProtectedRoute allowRoles={['admin', 'auditor']} module="gestion_desvios">
+                <Desvios />
+              </ProtectedRoute>
+            }
           />
 
           <Route
@@ -170,23 +172,9 @@ export default function App() {
             }
           />
 
-          <Route
-            path="/gestion-desvios"
-            element={
-              <ProtectedRoute allowRoles={['admin', 'auditor']} module="gestion_desvios">
-                <DesviosGestion />
-              </ProtectedRoute>
-            }
-          />
-
-          <Route
-            path="/revision-desvios"
-            element={
-              <ProtectedRoute allowRoles={['admin', 'auditor']} module="revision_desvios">
-                <RevisionDesvios />
-              </ProtectedRoute>
-            }
-          />
+          {/* Legacy routes — redirect to merged Desvios page */}
+          <Route path="/gestion-desvios" element={<Navigate to="/desvios?v=gestion" replace />} />
+          <Route path="/revision-desvios" element={<Navigate to="/desvios?v=revision" replace />} />
 
           <Route
             path="/mis-desvios"
@@ -228,16 +216,7 @@ export default function App() {
             path="/sucursales/:id/auditoria"
             element={
               <ProtectedRoute allowRoles={['auditor', 'admin']}>
-                <AuditPerfumeria />
-              </ProtectedRoute>
-            }
-          />
-
-          <Route
-            path="/fichas"
-            element={
-              <ProtectedRoute allowRoles={['admin', 'auditor']}>
-                <AuditFichesGallery />
+                <AuditPerfumeriaV2 />
               </ProtectedRoute>
             }
           />
