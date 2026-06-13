@@ -42,7 +42,7 @@ export default function SucursalDetail() {
   if (loading) {
     return (
       <AppLayout title="Sucursal">
-        <FeedbackState title="Cargando sucursal..." />
+        <FeedbackState title="Cargando sucursal..." tone="loading" />
       </AppLayout>
     );
   }

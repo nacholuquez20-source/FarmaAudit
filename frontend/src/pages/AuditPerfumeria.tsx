@@ -196,7 +196,7 @@ export default function AuditPerfumeria() {
   if (loading) {
     return (
       <AppLayout title="Auditoria">
-        <FeedbackState title="Cargando sucursal..." />
+        <FeedbackState title="Cargando sucursal..." tone="loading" />
       </AppLayout>
     );
   }

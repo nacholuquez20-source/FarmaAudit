@@ -74,7 +74,7 @@ export default function Dashboard() {
   if (loading) {
     return (
       <AppLayout title={role === 'sucursal' ? 'Resumen' : 'Dashboard'}>
-        <FeedbackState title="Cargando supervision..." />
+        <FeedbackState title="Cargando supervision..." tone="loading" />
       </AppLayout>
     );
   }

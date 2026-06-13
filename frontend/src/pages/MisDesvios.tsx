@@ -30,7 +30,7 @@ export default function MisDesvios() {
         <p className="text-sm text-gray-600">{activos.length} desvios activos para responder desde la app.</p>
       </div>
 
-      {loading && <FeedbackState title="Cargando desvios..." />}
+      {loading && <FeedbackState title="Cargando desvios..." tone="loading" />}
       {error && <FeedbackState title={error} tone="error" />}
 
       {!loading && !error && activos.length === 0 && (

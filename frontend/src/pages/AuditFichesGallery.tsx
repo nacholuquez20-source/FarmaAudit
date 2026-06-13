@@ -172,7 +172,7 @@ export default function AuditFichesGallery() {
 
       {/* Contenido */}
       {loading ? (
-        <FeedbackState title="Cargando fichas..." />
+        <FeedbackState title="Cargando fichas..." tone="loading" />
       ) : error ? (
         <FeedbackState title="Error al cargar" description={error} tone="error" />
       ) : fichas.length === 0 ? (

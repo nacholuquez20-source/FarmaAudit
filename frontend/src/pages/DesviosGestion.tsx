@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Check, Clock, MapPin, Paperclip, Search, Send, User, X } from 'lucide-react';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { getGestion, getDesvioEventos, updateGestion, enviarMensajeInterno } from '../lib/api';
@@ -45,75 +46,6 @@ const tokens = {
     closed: { bg: '#E7F6EC', fg: '#1E6F3D', dot: '#2A9D5F' },
   } satisfies Record<SlaStatus, { bg: string; fg: string; dot: string }>,
 };
-
-function SearchIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="11" cy="11" r="7" />
-      <path d="m21 21-4.3-4.3" />
-    </svg>
-  );
-}
-
-function CheckIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
-      <path d="M20 6 9 17l-5-5" />
-    </svg>
-  );
-}
-
-function CloseIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M18 6 6 18M6 6l12 12" />
-    </svg>
-  );
-}
-
-function SendIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="m22 2-7 20-4-9-9-4z" />
-      <path d="M22 2 11 13" />
-    </svg>
-  );
-}
-
-function AttachmentIcon() {
-  return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="m21.4 11.1-9.2 9.1a6 6 0 0 1-8.5-8.5l9.2-9.1a4 4 0 1 1 5.6 5.6l-9.2 9.2a2 2 0 1 1-2.8-2.8l8.5-8.5" />
-    </svg>
-  );
-}
-
-function PinIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="12" cy="10" r="3" />
-      <path d="M12 22s7-6.4 7-12A7 7 0 0 0 5 10c0 5.6 7 12 7 12z" />
-    </svg>
-  );
-}
-
-function UserIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="12" cy="8" r="4" />
-      <path d="M4 22a8 8 0 0 1 16 0" />
-    </svg>
-  );
-}
-
-function ClockIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="12" cy="12" r="10" />
-      <path d="M12 6v6l4 2" />
-    </svg>
-  );
-}
 
 function WhatsappIcon() {
   return (
@@ -236,7 +168,7 @@ function SelectBox({ checked, onClick }: { checked: boolean; onClick: () => void
       style={{ borderColor: checked ? tokens.navy : '#CBD5E1', background: checked ? tokens.navy : '#fff' }}
       aria-label={checked ? 'Quitar seleccion' : 'Seleccionar'}
     >
-      {checked && <CheckIcon />}
+      {checked && <Check className="h-4 w-4" />}
     </button>
   );
 }
@@ -354,7 +286,7 @@ function DetailDrawer({
             <EstadoBadge estado={desvio.estado} />
             <SlaPill desvio={desvio} large />
             <button type="button" onClick={onClose} className="ml-auto rounded-md p-2 text-slate-500 hover:bg-slate-100" aria-label="Cerrar">
-              <CloseIcon />
+              <X className="h-4.5 w-4.5" />
             </button>
           </div>
           <div className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">{desvio.id_gestion} · {desvio.id_reporte || 'Sin reporte'}</div>
@@ -362,9 +294,9 @@ function DetailDrawer({
         </div>
 
         <div className="grid grid-cols-1 gap-4 border-b border-slate-200 px-6 py-4 sm:grid-cols-3">
-          <Fact icon={<PinIcon />} label="Sucursal" value={desvio.sucursal} sub={desvio.id_sucursal} />
-          <Fact icon={<UserIcon />} label="Responsable" value={desvio.responsable} sub="Encargado/a" />
-          <Fact icon={<ClockIcon />} label="Plazo" value={formatDate(desvio.plazo_fecha)} sub={sla.label} tone={tokens.sla[sla.status].fg} />
+          <Fact icon={<MapPin className="h-3.5 w-3.5" />} label="Sucursal" value={desvio.sucursal} sub={desvio.id_sucursal} />
+          <Fact icon={<User className="h-3.5 w-3.5" />} label="Responsable" value={desvio.responsable} sub="Encargado/a" />
+          <Fact icon={<Clock className="h-3.5 w-3.5" />} label="Plazo" value={formatDate(desvio.plazo_fecha)} sub={sla.label} tone={tokens.sla[sla.status].fg} />
         </div>
 
         <div className="flex flex-wrap gap-2 border-b border-slate-200 px-6 py-4">
@@ -374,7 +306,7 @@ function DetailDrawer({
           </button>
           {desvio.estado !== 'Resuelta' && desvio.estado !== 'Cerrada' && (
             <button type="button" disabled={updatingId === desvio.id_gestion} onClick={() => onStateChange(desvio.id_gestion, 'Resuelta')} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-emerald-200 bg-white px-4 text-sm font-bold text-emerald-700 disabled:opacity-60">
-              <CheckIcon />
+              <Check className="h-4 w-4" />
               Marcar resuelta
             </button>
           )}
@@ -461,7 +393,7 @@ function DetailDrawer({
             className="min-h-[54px] flex-1 resize-none rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
           />
           <button type="button" className="rounded-lg p-3 text-slate-500 hover:bg-slate-100" aria-label="Adjuntar evidencia">
-            <AttachmentIcon />
+            <Paperclip className="h-4.5 w-4.5" />
           </button>
           <button
             type="button"
@@ -470,7 +402,7 @@ function DetailDrawer({
             className="inline-flex min-h-12 items-center gap-2 rounded-lg px-5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-200"
             style={{ background: comentario.trim() ? tokens.orange : undefined }}
           >
-            <SendIcon />
+            <Send className="h-4 w-4" />
             Enviar
           </button>
         </div>
@@ -659,7 +591,7 @@ export default function DesviosGestion() {
           <div className="flex flex-col gap-3">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
               <label className="relative min-w-0 flex-1">
-                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"><SearchIcon /></span>
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"><Search className="h-4.5 w-4.5" /></span>
                 <input
                   value={searchText}
                   onChange={(event) => setSearchText(event.target.value)}
@@ -716,7 +648,7 @@ export default function DesviosGestion() {
           </div>
         )}
 
-        {loading && <div className="px-6 py-10"><FeedbackState title="Cargando desvios..." /></div>}
+        {loading && <div className="px-6 py-10"><FeedbackState title="Cargando desvios..." tone="loading" /></div>}
         {error && <div className="px-6 py-10"><FeedbackState title={error} tone="error" /></div>}
         {!loading && !error && desvios.length === 0 && (
           <div className="px-6 py-10">
@@ -790,7 +722,7 @@ export default function DesviosGestion() {
                         </button>
                         {desvio.estado !== 'Resuelta' && desvio.estado !== 'Cerrada' && (
                           <button type="button" disabled={updatingId === desvio.id_gestion} onClick={() => void handleStateChange(desvio.id_gestion, 'Resuelta')} className="rounded-md p-2 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50" aria-label="Marcar resuelta">
-                            <CheckIcon />
+                            <Check className="h-4 w-4" />
                           </button>
                         )}
                       </div>

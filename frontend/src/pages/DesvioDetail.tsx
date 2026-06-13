@@ -254,7 +254,7 @@ export default function DesvioDetail() {
   if (loading) {
     return (
       <AppLayout title="Detalle de Desvio">
-        <FeedbackState title="Cargando desvio..." />
+        <FeedbackState title="Cargando desvio..." tone="loading" />
       </AppLayout>
     );
   }

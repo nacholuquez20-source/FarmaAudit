@@ -151,7 +151,7 @@ export default function Sucursales() {
   if (loading) {
     return (
       <AppLayout title="Sucursales">
-        <FeedbackState title="Cargando sucursales..." />
+        <FeedbackState title="Cargando sucursales..." tone="loading" />
       </AppLayout>
     );
   }

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { toast } from 'sonner';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import {
@@ -111,6 +112,10 @@ export default function Admin() {
 
   const handleAddAuditor = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!formAuditor.nombre.trim() || !formAuditor.telefono.trim()) {
+      setError('Nombre y teléfono son obligatorios.');
+      return;
+    }
     setSubmittingAuditor(true);
     setError('');
 
@@ -125,6 +130,7 @@ export default function Admin() {
       setAuditores([...auditores, newAuditor]);
       setFormAuditor({ nombre: '', telefono: '', cuadrilla: '', activo: true });
       setShowAuditorForm(false);
+      toast.success(`Auditor ${newAuditor.nombre} creado correctamente`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al crear auditor');
     } finally {
@@ -185,6 +191,10 @@ export default function Admin() {
 
   const handleCreatePanelUser = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (!userForm.email.trim() || !userForm.password.trim()) {
+      setError('Email y contraseña son obligatorios.');
+      return;
+    }
     setCreatingUser(true);
     setError('');
 
@@ -207,6 +217,7 @@ export default function Admin() {
       );
       setUserForm(EMPTY_USER_FORM);
       setShowUserForm(false);
+      toast.success(`Usuario ${created.email} creado correctamente`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al crear usuario');
     } finally {
@@ -233,6 +244,7 @@ export default function Admin() {
       });
       setProfiles(profiles.map((p) => (p.id === saved.id ? saved : p)));
       setPasswordDrafts((current) => ({ ...current, [row.id]: '' }));
+      toast.success('Perfil guardado correctamente');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al guardar perfil');
     } finally {
@@ -272,7 +284,7 @@ export default function Admin() {
       </div>
 
       {loadingPrincipal ? (
-        <FeedbackState title="Cargando..." />
+        <FeedbackState title="Cargando..." tone="loading" />
       ) : tab === 'auditores' ? (
         <>
           <div className="mb-6 flex items-center justify-between">
