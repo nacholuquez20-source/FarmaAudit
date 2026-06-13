@@ -1,5 +1,7 @@
 """FastAPI application for AuditBot webhook and background jobs."""
 
+import hashlib
+import hmac
 import logging
 from datetime import datetime, timedelta, timezone
 import json
@@ -462,8 +464,9 @@ async def health_check():
 
 
 @app.post("/api/send-encargado-notification")
-async def send_encargado_notification(payload: EncargadoNotificationRequest):
+async def send_encargado_notification(payload: EncargadoNotificationRequest, request: Request):
     """Send a WhatsApp notification to the branch manager for one deviation."""
+    await _require_admin_or_auditor(request)
     telefono = "".join(ch for ch in payload.telefono_encargado if ch.isdigit())
     if not telefono:
         raise HTTPException(status_code=400, detail="telefono_encargado is required")
@@ -868,6 +871,15 @@ async def webhook_verify(request: Request):
         raise HTTPException(status_code=403, detail="Forbidden")
 
 
+def _verify_meta_signature(body: bytes, signature_header: str) -> bool:
+    """Verify X-Hub-Signature-256 header sent by Meta. Returns True if valid or if no secret is configured."""
+    app_secret = settings.meta_app_secret
+    if not app_secret:
+        return True  # Verification disabled — set META_APP_SECRET in production
+    expected = "sha256=" + hmac.new(app_secret.encode(), body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(signature_header, expected)
+
+
 @app.post("/webhook")
 async def webhook(request: Request):
     """Meta WhatsApp Cloud API webhook entry point."""
@@ -876,7 +888,12 @@ async def webhook(request: Request):
     message_claimed = False
     processed_successfully = False
     try:
-        data = await request.json()
+        body_bytes = await request.body()
+        sig = request.headers.get("x-hub-signature-256", "")
+        if not _verify_meta_signature(body_bytes, sig):
+            logger.warning(f"[{correlation_id}] Webhook signature mismatch — rejected")
+            raise HTTPException(status_code=403, detail="Invalid signature")
+        data = json.loads(body_bytes)
 
         # Extract messages from Meta's nested structure
         entry = data.get("entry", [])
@@ -1302,18 +1319,16 @@ async def regenerate_thumbnails_job():
 
 
 @app.post("/admin/thumbnails/regenerate")
-async def regenerate_thumbnails_endpoint():
-    """
-    Manual endpoint to regenerate missing thumbnails.
-    Protected: requires admin context (implement auth check if needed).
-    """
+async def regenerate_thumbnails_endpoint(request: Request):
+    """Manual endpoint to regenerate missing thumbnails. Requires admin role."""
+    await _require_admin(request)
     try:
         supabase_mgr = SupabaseManager()
         result = supabase_mgr.regenerate_missing_thumbnails()
         return {"status": "ok", "result": result}
     except Exception as e:
         logger.error(f"Error regenerating thumbnails: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 
 # ============== AUDIT FICHES ENDPOINTS ==============
@@ -1325,6 +1340,7 @@ from typing import Optional
 
 @app.get("/api/audit-fiches/list")
 async def get_audit_fiches(
+    request: Request,
     sucursal_id: Optional[str] = Query(None),
     fecha_desde: Optional[str] = Query(None),
     fecha_hasta: Optional[str] = Query(None),
@@ -1333,7 +1349,7 @@ async def get_audit_fiches(
     offset: int = Query(0, ge=0),
 ):
     """Get audit fiches with optional filters."""
-
+    await _require_admin_or_auditor(request)
     try:
         fiches = await AuditFichesManager.get_fiches(
             sucursal_id=sucursal_id,
@@ -1343,7 +1359,6 @@ async def get_audit_fiches(
             limit=limit,
             offset=offset,
         )
-
         return {
             "status": "ok",
             "count": len(fiches),
@@ -1355,58 +1370,49 @@ async def get_audit_fiches(
                 "auditor_nombre": auditor_nombre,
             },
         }
-
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error fetching fiches: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 
 @app.get("/api/audit-fiches/sucursales")
-async def get_audit_fiches_sucursales():
+async def get_audit_fiches_sucursales(request: Request):
     """Get list of sucursales with audit fiches."""
-
+    await _require_admin_or_auditor(request)
     try:
         sucursales = await AuditFichesManager.get_sucursales_with_fiches()
-
-        # Extract unique sucursal_ids
         unique_sucursales = []
         seen = set()
         for item in sucursales:
-            sucursal_id = item.get("sucursal_id")
-            if sucursal_id and sucursal_id not in seen:
-                unique_sucursales.append(sucursal_id)
-                seen.add(sucursal_id)
-
-        return {
-            "status": "ok",
-            "count": len(unique_sucursales),
-            "data": unique_sucursales,
-        }
-
+            sid = item.get("sucursal_id")
+            if sid and sid not in seen:
+                unique_sucursales.append(sid)
+                seen.add(sid)
+        return {"status": "ok", "count": len(unique_sucursales), "data": unique_sucursales}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error fetching sucursales: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 
 @app.get("/api/audit-fiches/{ficha_id}")
-async def get_audit_ficha(ficha_id: str):
+async def get_audit_ficha(ficha_id: str, request: Request):
     """Get details of specific audit ficha."""
-
+    await _require_admin_or_auditor(request)
     try:
         db = SupabaseManager()
         response = db.client.table("audit_fiches").select("*").eq("id", ficha_id).single().execute()
-
         if response.data:
-            return {
-                "status": "ok",
-                "data": response.data,
-            }
-        else:
-            raise HTTPException(status_code=404, detail="Ficha not found")
-
+            return {"status": "ok", "data": response.data}
+        raise HTTPException(status_code=404, detail="Ficha not found")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error fetching ficha: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 
 if __name__ == "__main__":

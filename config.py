@@ -22,6 +22,7 @@ class Settings:
     meta_phone_number_id: str = os.getenv("META_PHONE_NUMBER_ID", "")
     meta_access_token: str = os.getenv("META_ACCESS_TOKEN", "")
     meta_verify_token: str = os.getenv("META_VERIFY_TOKEN", "")
+    meta_app_secret: str = os.getenv("META_APP_SECRET", "")
 
     # Google Sheets
     google_sheets_id: str = os.getenv("GOOGLE_SHEETS_ID", "")

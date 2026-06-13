@@ -115,7 +115,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (cancelled) return;
 
       if (!sessionUser) {
-        if (import.meta.env.DEV) {
+        if (import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEV_BYPASS === 'true') {
           setUser(DEV_USER);
           setProfile(DEV_PROFILE);
         } else {
