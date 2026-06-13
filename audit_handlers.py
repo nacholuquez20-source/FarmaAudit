@@ -134,19 +134,34 @@ class AuditConversationHandler:
                 # Check if user entered responsable name (when there are desvios)
                 if not hasattr(session, 'desvios_responsable') or session.desvios_responsable is None:
                     if len(session.desvios) > 0:
-                        # Save responsable name
-                        session.desvios_responsable = payload.contenido.strip()
+                        session.desvios_responsable = payload.contenido.strip()  # type: ignore[attr-defined]
+
+                        # Now that we have the responsable, generate the ficha
+                        reporte_id = getattr(session, 'pending_ficha_reporte_id', None)
+                        if reporte_id:
+                            try:
+                                ficha_id = await AuditFichesManager.generate_and_save_ficha(
+                                    session=session,
+                                    reporte_id=reporte_id,
+                                    responsable_desvios=session.desvios_responsable,
+                                )
+                                logger.info(f"Ficha generated after responsable collected: {ficha_id}")
+                            except Exception as ficha_exc:
+                                logger.warning(f"Ficha generation failed: {ficha_exc}")
+
                         save_session(session)
 
-                        await meta_client.send_quick_reply(
-                            payload.telefono,
-                            f"✅ Desvios asignados a: {session.desvios_responsable}\n\n"
-                            f"¿Deseas descargar la ficha de auditoría?",
-                            [
-                                {"id": "ficha", "title": "📄 Ficha"},
-                                {"id": "no", "title": "❌ No"},
-                            ]
+                        drive_url = (
+                            f"https://drive.google.com/file/d/{ficha_id}/view"
+                            if reporte_id and ficha_id else None
                         )
+                        msg = f"✅ Desvíos asignados a: {session.desvios_responsable}\n\n"
+                        if drive_url:
+                            msg += f"📄 Ficha disponible:\n{drive_url}"
+                        else:
+                            msg += "La ficha de auditoría fue guardada en el sistema."
+
+                        await meta_client.send_text(payload.telefono, msg)
                         return "responsable_saved"
 
             return "audit_already_completed"
@@ -1195,24 +1210,11 @@ class AuditConversationHandler:
                 result = await save_audit_to_database(session, meta_client)
                 logger.info(f"Audit session {session.id_sesion} saved to database")
 
-                # Get reporte_id from result (if available)
+                # Store reporte_id in session so ficha can be generated after responsable is collected
                 reporte_id = result.get("id_reporte") if isinstance(result, dict) else None
+                session.pending_ficha_reporte_id = reporte_id  # type: ignore[attr-defined]
 
-                # Generate and save ficha to Google Drive (non-blocking)
-                if reporte_id:
-                    try:
-                        responsable = getattr(session, 'desvios_responsable', None)
-                        await AuditFichesManager.generate_and_save_ficha(
-                            session=session,
-                            reporte_id=reporte_id,
-                            sucursal_nombre=session.sucursal_id,
-                            responsable_desvios=responsable,
-                        )
-                        logger.info(f"Ficha PDF generated and saved for {session.id_sesion}")
-                    except Exception as e:
-                        logger.warning(f"Failed to generate ficha PDF: {e}")
-
-                # Try to send manager notification (non-blocking)
+                # Manager notification (non-blocking)
                 try:
                     await send_manager_notification(
                         payload.telefono, session.sucursal_id, meta_client
@@ -1229,12 +1231,10 @@ class AuditConversationHandler:
                 )
                 return "audit_saved_local_only"
 
-            # Mark as complete but ask for ficha first
-            # Don't set to DONE yet - need responsable name if there are desvios
             desvio_count = len(session.desvios)
 
             if desvio_count > 0:
-                # If there are desvios, ask for responsible name
+                # Ask for responsable before generating ficha (so PDF includes the name)
                 await meta_client.send_text(
                     payload.telefono,
                     f"✅ ¡Auditoría guardada!\n\n"
@@ -1242,28 +1242,37 @@ class AuditConversationHandler:
                     f"Fotos: {len(session.fotos)}\n"
                     f"Desvíos: {desvio_count}\n\n"
                     f"Gerente notificado de {desvio_count} hallazgo(s)\n\n"
-                    f"¿A nombre de quién se registran los desvios?\n"
+                    f"¿A nombre de quién se registran los desvíos?\n"
                     f"(Escribe el nombre del responsable)"
                 )
-                # Save with temporary state
                 session.estado = AuditState.DONE
-                session.desvios_responsable = None  # Will be set in next message
+                session.desvios_responsable = None  # type: ignore[attr-defined]
                 save_session(session)
                 return "awaiting_responsable_name"
             else:
-                # No desvios, ask directly for ficha
+                # No desvios — generate ficha immediately, then send link
                 session.estado = AuditState.DONE
                 save_session(session)
 
-                await meta_client.send_quick_reply(
-                    payload.telefono,
-                    f"✅ ¡Auditoría guardada!\n\nID: {session.id_sesion}\n\n"
-                    f"¿Deseas descargar la ficha de auditoría?",
-                    [
-                        {"id": "ficha", "title": "📄 Ficha"},
-                        {"id": "no", "title": "❌ No"},
-                    ]
-                )
+                ficha_id = None
+                reporte_id = getattr(session, 'pending_ficha_reporte_id', None)
+                if reporte_id:
+                    try:
+                        ficha_id = await AuditFichesManager.generate_and_save_ficha(
+                            session=session,
+                            reporte_id=reporte_id,
+                            responsable_desvios=None,
+                        )
+                    except Exception as ficha_exc:
+                        logger.warning(f"Ficha generation failed (no desvios path): {ficha_exc}")
+
+                drive_url = f"https://drive.google.com/file/d/{ficha_id}/view" if ficha_id else None
+                msg = f"✅ ¡Auditoría guardada!\n\nID: {session.id_sesion}\n\n"
+                if drive_url:
+                    msg += f"📄 Ficha:\n{drive_url}"
+                else:
+                    msg += "La ficha fue guardada en el sistema."
+                await meta_client.send_text(payload.telefono, msg)
 
                 return "audit_saved"
 

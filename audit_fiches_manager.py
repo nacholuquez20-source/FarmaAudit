@@ -36,39 +36,40 @@ class AuditFichesManager:
         """
 
         try:
+            db = SupabaseManager()
+
+            # Resolve real sucursal name (avoid saving raw IDs like "SC-001" in the PDF)
+            sucursal = db.get_sucursal(session.sucursal_id)
+            resolved_nombre = sucursal.nombre if sucursal else (sucursal_nombre or session.sucursal_id)
+
             # Generate PDF
             pdf_bytes = generate_audit_pdf(
                 session=session,
-                sucursal_nombre=sucursal_nombre,
+                sucursal_nombre=resolved_nombre,
                 auditor_nombre=session.auditor_nombre,
                 responsable_desvios=responsable_desvios,
             )
 
             # Upload to Google Drive
             drive = DriveManager()
-            filename = f"Auditoria_Perfumeria_{session.id_sesion}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.pdf"
+            filename = f"Auditoria_{session.id_sesion}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.pdf"
 
             file_id = await drive.upload_file_async(
                 file_bytes=pdf_bytes,
                 filename=filename,
                 mime_type="application/pdf",
-                folder_name="Auditorías_Perfumería",
+                folder_name="Auditorias_Perfumeria",
             )
 
             if not file_id:
-                logger.warning(f"Failed to upload PDF to Google Drive for session {session.id_sesion}")
+                logger.warning(f"Failed to upload PDF to Drive for session {session.id_sesion}")
                 return None
 
-            # Generate Drive share link
             drive_url = f"https://drive.google.com/file/d/{file_id}/view"
-
-            # Calculate metrics for metadata
             avg_score = sum(session.bloques.values()) / len(session.bloques) if session.bloques else 0
 
-            # Save metadata to Supabase
-            db = SupabaseManager()
             ficha_data = {
-                "id_reporte": reporte_id,
+                "reporte_id": reporte_id,
                 "sucursal_id": session.sucursal_id,
                 "auditor_nombre": session.auditor_nombre,
                 "responsable_desvios": responsable_desvios,
@@ -78,19 +79,23 @@ class AuditFichesManager:
                 "desvios_count": len(session.desvios),
                 "fotos_count": len(session.fotos),
                 "puntuacion_promedio": round(avg_score, 2),
+                "score_limpieza": session.bloques.get("LIMPIEZA"),
+                "score_stock": session.bloques.get("STOCK"),
+                "score_ofertas": session.bloques.get("OFERTAS"),
+                "score_burbujas": session.bloques.get("BURBUJAS"),
             }
 
             response = db.client.table("audit_fiches").insert(ficha_data).execute()
 
             if response.data:
-                logger.info(f"Saved ficha metadata for session {session.id_sesion}, Drive ID: {file_id}")
+                logger.info(f"Saved ficha for session {session.id_sesion}, Drive: {file_id}")
                 return file_id
             else:
                 logger.error(f"Failed to save ficha metadata: {response.error}")
                 return None
 
         except Exception as e:
-            logger.error(f"Error generating/saving ficha: {e}")
+            logger.error(f"Error generating/saving ficha: {e}", exc_info=True)
             return None
 
     @staticmethod

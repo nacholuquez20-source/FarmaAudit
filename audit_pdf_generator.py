@@ -99,42 +99,44 @@ def generate_audit_pdf(
 
     score_data = [["BLOQUE", "PUNTUACIÓN", "EVALUACIÓN"]]
 
-    score_labels = {
-        1: "Muy malo",
-        2: "Malo",
-        3: "Regular",
-        4: "Bueno",
-        5: "Excelente",
-    }
+    score_labels = {1: "Muy malo", 2: "Malo", 3: "Regular", 4: "Bueno", 5: "Excelente"}
 
-    for bloque in session.bloques:
+    def score_bg(s: int) -> colors.Color:
+        if s <= 2: return colors.HexColor("#fee2e2")   # red-100
+        if s == 3: return colors.HexColor("#fef9c3")   # yellow-100
+        return colors.HexColor("#dcfce7")              # green-100
+
+    style_cmds = [
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e3a6d")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("ALIGN", (0, 1), (0, -1), "LEFT"),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d1d5db")),
+    ]
+
+    for i, bloque in enumerate(session.bloques, start=1):
         score = session.bloques[bloque]
         bloque_label = BLOQUE_LABELS.get(bloque, bloque)
         eval_label = score_labels.get(score, "")
-
         score_data.append([bloque_label, f"{score}/5", eval_label])
+        style_cmds.append(("BACKGROUND", (1, i), (2, i), score_bg(score)))
 
-    # Add overall score
     if session.bloques:
         avg_score = sum(session.bloques.values()) / len(session.bloques)
-        score_data.append(["PROMEDIO GENERAL", f"{avg_score:.1f}/5", score_labels.get(round(avg_score), "")])
+        avg_rounded = round(avg_score)
+        score_data.append(["PROMEDIO GENERAL", f"{avg_score:.1f}/5", score_labels.get(avg_rounded, "")])
+        last = len(score_data) - 1
+        style_cmds += [
+            ("FONTNAME", (0, last), (-1, last), "Helvetica-Bold"),
+            ("BACKGROUND", (1, last), (2, last), score_bg(avg_rounded)),
+        ]
 
-    score_table = Table(score_data, colWidths=[3 * inch, 1.2 * inch, 1.8 * inch])
-    score_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#3b82f6")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, 0), 10),
-                ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
-                ("TOPPADDING", (0, 0), (-1, 0), 8),
-                ("GRID", (0, 0), (-1, -1), 1, colors.grey),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f0f9ff")]),
-            ]
-        )
-    )
+    score_table = Table(score_data, colWidths=[3.2 * inch, 1.1 * inch, 1.7 * inch])
+    score_table.setStyle(TableStyle(style_cmds))
     story.append(score_table)
     story.append(Spacer(1, 0.2 * inch))
 
@@ -148,9 +150,10 @@ def generate_audit_pdf(
         for desvio in session.desvios:
             bloque_label = BLOQUE_LABELS.get(desvio.bloque, desvio.bloque)
             foto_count = len(desvio.fotos)
+            desc = desvio.descripcion[:200] + "…" if len(desvio.descripcion) > 200 else desvio.descripcion
             desvios_data.append([
                 bloque_label,
-                desvio.descripcion[:60] + "..." if len(desvio.descripcion) > 60 else desvio.descripcion,
+                Paragraph(desc, styles["Normal"]),
                 f"{foto_count}" if foto_count > 0 else "-",
             ])
 
@@ -201,12 +204,20 @@ def generate_audit_pdf(
     story.append(evidence_table)
     story.append(Spacer(1, 0.3 * inch))
 
-    # Footer
-    story.append(Paragraph("_" * 80, styles["Normal"]))
-    story.append(Spacer(1, 0.1 * inch))
-    story.append(Paragraph("Firma Auditor", ParagraphStyle("FooterLeft", parent=styles["Normal"], fontSize=9)))
-    story.append(Spacer(1, 0.05 * inch))
-    story.append(Paragraph("Firma Encargado", ParagraphStyle("FooterRight", parent=styles["Normal"], fontSize=9)))
+    # Footer — side-by-side signature blocks
+    sig_line = "_" * 35
+    footer_style = ParagraphStyle("FooterSig", parent=styles["Normal"], fontSize=9, alignment=TA_CENTER)
+    footer_table = Table(
+        [[Paragraph(sig_line, footer_style), Paragraph(sig_line, footer_style)],
+         [Paragraph("Firma Auditor", footer_style), Paragraph("Firma Encargado / Responsable", footer_style)]],
+        colWidths=[3.5 * inch, 3.5 * inch],
+    )
+    footer_table.setStyle(TableStyle([
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    story.append(footer_table)
 
     # Build PDF
     doc.build(story)
