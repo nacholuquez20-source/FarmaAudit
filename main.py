@@ -992,9 +992,10 @@ async def webhook(request: Request):
         meta_client = MetaClient()
         route = get_router()
 
-        # NEW: Try perfumery audit v2 first if user has active session
+        # Route to v2 handler while there is any active v2 session (including DONE state,
+        # which still expects responsable name and ficha-download answer)
         session = get_session(payload.telefono)
-        if session and session.estado != AuditState.DONE:
+        if session:
             result = await route.handle_perfumeria_audit(payload, meta_client)
         else:
             result = await route.handle_message(payload, meta_client)

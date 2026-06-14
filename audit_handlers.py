@@ -287,11 +287,13 @@ class AuditConversationHandler:
                 # Quick-reply: auditor wants to download the ficha
                 if texto == "descargar_ficha_si":
                     await _send_ficha_to_auditor(meta_client, session, payload.telefono)
+                    delete_session(payload.telefono)
                     return "ficha_sent_to_auditor"
 
                 # Quick-reply: auditor declined download
                 if texto == "descargar_ficha_no":
                     await meta_client.send_text(payload.telefono, "¡Listo! La ficha queda guardada en el sistema. 👍")
+                    delete_session(payload.telefono)
                     return "ficha_download_declined"
 
                 # Keyword fallback: ask for ficha explicitly
@@ -336,7 +338,8 @@ class AuditConversationHandler:
                                 meta_client, payload.telefono, session, ficha_url
                             )
                         else:
-                            save_session(session)
+                            # Ficha generation failed — release session so user can start new audit
+                            delete_session(payload.telefono)
                             await meta_client.send_text(
                                 payload.telefono, "La ficha de auditoría fue guardada en el sistema."
                             )
@@ -1459,7 +1462,7 @@ class AuditConversationHandler:
                         meta_client, payload.telefono, session, ficha_url
                     )
                 else:
-                    save_session(session)
+                    delete_session(payload.telefono)
                     await meta_client.send_text(
                         payload.telefono, "La ficha fue guardada en el sistema."
                     )
