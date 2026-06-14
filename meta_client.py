@@ -96,6 +96,36 @@ class MetaClient:
             logger.error(f"Failed to send image to {phone}: {e}")
             return False
 
+    async def send_image_by_id(
+        self,
+        phone: str,
+        media_id: str,
+        caption: Optional[str] = None,
+    ) -> bool:
+        """Send an image using an existing Meta media_id (no re-upload needed)."""
+        try:
+            to_number = self._normalize_whatsapp_number(phone)
+            url = f"{self.BASE_URL}/{self.phone_number_id}/messages"
+            payload: dict = {
+                "messaging_product": "whatsapp",
+                "to": to_number,
+                "type": "image",
+                "image": {"id": media_id},
+            }
+            if caption:
+                payload["image"]["caption"] = caption
+            headers = {"Authorization": f"Bearer {self.access_token}"}
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json=payload, headers=headers, timeout=30)
+                if response.status_code == 200:
+                    logger.info(f"Sent image (id={media_id}) to {phone}")
+                    return True
+                logger.error(f"Failed to send image to {phone}: {response.status_code} {response.text}")
+                return False
+        except Exception as e:
+            logger.error(f"Failed to send image to {phone}: {e}")
+            return False
+
     async def send_document(
         self,
         phone: str,

@@ -108,6 +108,81 @@ async def _send_ficha_to_responsable(
         logger.warning(f"Could not send PDF to responsable: {e}")
 
 
+async def _send_desvios_summary(
+    meta_client: MetaClient,
+    session: AuditSession,
+    telefono: str,
+) -> None:
+    """Send a human-readable desvíos summary with photos to the auditor (best-effort)."""
+    if not session.desvios:
+        return
+    try:
+        # Build foto lookup
+        foto_map = {f.id: f for f in session.fotos}
+
+        # Score emoji helpers
+        def score_icon(s: int) -> str:
+            return "🔴" if s <= 2 else "🟡" if s == 3 else "🟢"
+
+        def score_label(s: int) -> str:
+            return {1: "Muy malo", 2: "Malo", 3: "Regular", 4: "Bueno", 5: "Excelente"}.get(s, "")
+
+        # ── Header ──────────────────────────────────────────────────────────
+        db = SupabaseManager()
+        sucursal = db.get_sucursal(session.sucursal_id)
+        nombre = sucursal.nombre if sucursal else session.sucursal_id
+        fecha = ""
+        if session.started_at:
+            try:
+                from datetime import datetime as _dt
+                fecha = _dt.fromisoformat(session.started_at).strftime("%d/%m/%Y")
+            except Exception:
+                fecha = session.started_at
+
+        scores_lines = "\n".join(
+            f"  {score_icon(v)} {BLOQUE_LABELS.get(k, k)}: {v}/5 — {score_label(v)}"
+            for k, v in session.bloques.items()
+        )
+        header = (
+            f"📋 *RESUMEN DE AUDITORÍA*\n"
+            f"Sucursal: {nombre}\n"
+            f"📅 {fecha}   Auditor: {session.auditor_nombre or '—'}\n\n"
+            f"*Puntuaciones:*\n{scores_lines}\n\n"
+            f"*Desvíos encontrados: {len(session.desvios)}*"
+        )
+        await meta_client.send_text(telefono, header)
+
+        # ── One block per desvío ─────────────────────────────────────────────
+        for idx, desvio in enumerate(session.desvios, 1):
+            bloque_label = BLOQUE_LABELS.get(desvio.bloque, desvio.bloque)
+            score = session.bloques.get(desvio.bloque, 0)
+            icon = score_icon(score)
+
+            text = (
+                f"{icon} *Desvío {idx} — {bloque_label}*\n"
+                f"Puntaje: {score}/5 — {score_label(score)}\n\n"
+                f"{desvio.descripcion}"
+            )
+            foto_ids = desvio.fotos or []
+            has_photos = any(foto_map.get(fid) and foto_map[fid].media_id for fid in foto_ids)
+
+            # Send description; include photo count note in caption if photos follow
+            await meta_client.send_text(telefono, text)
+
+            # Send each photo
+            for foto_id in foto_ids:
+                foto = foto_map.get(foto_id)
+                if foto and foto.media_id:
+                    caption = f"📸 Evidencia — {bloque_label} (desvío {idx})"
+                    ok = await meta_client.send_image_by_id(telefono, foto.media_id, caption)
+                    if not ok:
+                        logger.warning(f"Could not resend photo {foto_id} for desvío {idx}")
+
+        logger.info(f"Desvíos summary sent to auditor {telefono} ({len(session.desvios)} items)")
+    except Exception as e:
+        logger.warning(f"Could not send desvíos summary: {e}")
+
+
 async def _ask_ficha_download(
     meta_client: MetaClient,
     telefono: str,
@@ -248,12 +323,15 @@ class AuditConversationHandler:
                         msg = f"✅ Desvíos asignados a: {session.desvios_responsable}"
                         await meta_client.send_text(payload.telefono, msg)
 
+                        # Send desvíos summary with photos so auditor can forward to manager
+                        await _send_desvios_summary(meta_client, session, payload.telefono)
+
                         if ficha_url:
                             # Send PDF to branch manager
                             await _send_ficha_to_responsable(
                                 meta_client, session, ficha_url, session.id_sesion
                             )
-                            # Ask auditor if they want a copy
+                            # Ask auditor if they want the PDF too
                             await _ask_ficha_download(
                                 meta_client, payload.telefono, session, ficha_url
                             )
