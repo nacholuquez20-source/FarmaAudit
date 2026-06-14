@@ -138,6 +138,11 @@ class AuditSession:
     verification_only: bool = False
     verification_menu: List[Dict[str, Any]] = field(default_factory=list)
 
+    # Post-audit fields (persisted so they survive session reload between messages)
+    pending_ficha_reporte_id: Optional[str] = None   # reporte_id deferred until responsable is known
+    desvios_responsable: Optional[str] = None         # name of person responsible for desvíos
+    ficha_url: Optional[str] = None                   # Drive URL of the generated PDF
+
     # Timestamps
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     started_at: Optional[str] = None
@@ -172,6 +177,9 @@ class AuditSession:
             'verified_persisten': self.verified_persisten,
             'verification_only': self.verification_only,
             'verification_menu': self.verification_menu,
+            'pending_ficha_reporte_id': self.pending_ficha_reporte_id,
+            'desvios_responsable': self.desvios_responsable,
+            'ficha_url': self.ficha_url,
             'created_at': self.created_at,
             'started_at': self.started_at,
             'last_message_at': self.last_message_at,

@@ -190,7 +190,7 @@ async def _ask_ficha_download(
     ficha_url: str,
 ) -> None:
     """Store ficha URL on session and ask auditor if they want to receive it."""
-    session.ficha_url = ficha_url  # type: ignore[attr-defined]
+    session.ficha_url = ficha_url
     save_session(session)
     await meta_client.send_quick_reply(
         telefono,
@@ -208,7 +208,7 @@ async def _send_ficha_to_auditor(
     telefono: str,
 ) -> None:
     """Send the stored ficha PDF to the auditor as a WhatsApp document."""
-    ficha_url: Optional[str] = getattr(session, "ficha_url", None)
+    ficha_url: Optional[str] = session.ficha_url
     if not ficha_url:
         await meta_client.send_text(telefono, "⚠️ No encontré la ficha. Intentá de nuevo en unos segundos.")
         return
@@ -303,12 +303,12 @@ class AuditConversationHandler:
                     )
 
                 # Check if user entered responsable name (when there are desvios)
-                if not hasattr(session, 'desvios_responsable') or session.desvios_responsable is None:
+                if session.desvios_responsable is None:
                     if len(session.desvios) > 0:
-                        session.desvios_responsable = payload.contenido.strip()  # type: ignore[attr-defined]
+                        session.desvios_responsable = payload.contenido.strip()
 
                         # Now that we have the responsable, generate the ficha
-                        reporte_id = getattr(session, 'pending_ficha_reporte_id', None)
+                        reporte_id = session.pending_ficha_reporte_id
                         ficha_url: Optional[str] = None
                         if reporte_id:
                             try:
@@ -1275,7 +1275,7 @@ class AuditConversationHandler:
             sucursal_nombre = session.sucursal_id
 
             # Get responsable if exists
-            responsable = getattr(session, 'desvios_responsable', None)
+            responsable = session.desvios_responsable
 
             # Generate PDF
             pdf_bytes = generate_audit_pdf(
@@ -1394,7 +1394,7 @@ class AuditConversationHandler:
 
                 # Store reporte_id in session so ficha can be generated after responsable is collected
                 reporte_id = result.get("id_reporte") if isinstance(result, dict) else None
-                session.pending_ficha_reporte_id = reporte_id  # type: ignore[attr-defined]
+                session.pending_ficha_reporte_id = reporte_id
 
                 # Manager notification (non-blocking)
                 try:
@@ -1428,7 +1428,7 @@ class AuditConversationHandler:
                     f"(Escribe el nombre del responsable)"
                 )
                 session.estado = AuditState.DONE
-                session.desvios_responsable = None  # type: ignore[attr-defined]
+                session.desvios_responsable = None
                 save_session(session)
                 return "awaiting_responsable_name"
             else:
@@ -1437,7 +1437,7 @@ class AuditConversationHandler:
                 save_session(session)
 
                 ficha_url: Optional[str] = None
-                reporte_id = getattr(session, 'pending_ficha_reporte_id', None)
+                reporte_id = session.pending_ficha_reporte_id
                 if reporte_id:
                     try:
                         ficha_url = await AuditFichesManager.generate_and_save_ficha(
