@@ -1,9 +1,10 @@
 """Manage audit fiches: Generate PDF, save to Google Drive, store metadata."""
 
 import logging
-from typing import Optional
+from typing import Dict, Optional
 from datetime import datetime, timezone
-from uuid import uuid4
+
+import httpx
 
 from audit_session import AuditSession, BLOQUE_ORDER
 from audit_pdf_generator import generate_audit_pdf
@@ -13,6 +14,18 @@ from drive import DriveManager
 logger = logging.getLogger(__name__)
 
 
+async def _download_photo_bytes(foto_url: str) -> Optional[bytes]:
+    """Download photo from URL. Returns bytes or None on failure."""
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.get(foto_url, follow_redirects=True)
+            resp.raise_for_status()
+            return resp.content
+    except Exception as e:
+        logger.warning(f"Could not download photo from {foto_url}: {e}")
+        return None
+
+
 class AuditFichesManager:
     """Manage PDF generation and storage for audit fiches."""
 
@@ -20,27 +33,43 @@ class AuditFichesManager:
     async def generate_and_save_ficha(
         session: AuditSession,
         reporte_id: str,
-        sucursal_nombre: str,
+        sucursal_nombre: str = "",
         responsable_desvios: Optional[str] = None,
+        meta_client=None,  # MetaClient — optional, used to re-download fresh photos
     ) -> Optional[str]:
-        """Generate PDF ficha, save to Google Drive, store metadata in DB.
-
-        Args:
-            session: AuditSession with audit data
-            reporte_id: UUID of reporte record in DB
-            sucursal_nombre: Name of sucursal
-            responsable_desvios: Name of person responsible for deviations
+        """Generate PDF ficha with photos, save to Google Drive, store metadata.
 
         Returns:
-            Google Drive file ID or None if error
+            Public Google Drive view URL or None if error.
         """
-
         try:
             db = SupabaseManager()
 
-            # Resolve real sucursal name (avoid saving raw IDs like "SC-001" in the PDF)
             sucursal = db.get_sucursal(session.sucursal_id)
             resolved_nombre = sucursal.nombre if sucursal else (sucursal_nombre or session.sucursal_id)
+
+            # Download photo bytes for embedding in PDF
+            photo_bytes: Dict[str, bytes] = {}
+            if session.fotos:
+                for foto in session.fotos:
+                    raw: Optional[bytes] = None
+
+                    # Try re-downloading via Meta (always fresh)
+                    if meta_client and foto.media_id:
+                        try:
+                            raw = await meta_client.download_media(foto.media_id)
+                        except Exception as e:
+                            logger.warning(f"Meta re-download failed for {foto.id}: {e}")
+
+                    # Fallback: cached media_url (may be expired)
+                    if raw is None and foto.media_url:
+                        raw = await _download_photo_bytes(foto.media_url)
+
+                    if raw:
+                        photo_bytes[foto.id] = raw
+                        logger.info(f"Downloaded photo {foto.id} ({len(raw)} bytes) for PDF")
+                    else:
+                        logger.warning(f"Could not obtain bytes for photo {foto.id} — skipping in PDF")
 
             # Generate PDF
             pdf_bytes = generate_audit_pdf(
@@ -48,6 +77,7 @@ class AuditFichesManager:
                 sucursal_nombre=resolved_nombre,
                 auditor_nombre=session.auditor_nombre,
                 responsable_desvios=responsable_desvios,
+                photo_bytes=photo_bytes or None,
             )
 
             # Upload to Google Drive
@@ -89,10 +119,11 @@ class AuditFichesManager:
 
             if response.data:
                 logger.info(f"Saved ficha for session {session.id_sesion}, Drive: {file_id}")
-                return file_id
+                return drive_url
             else:
                 logger.error(f"Failed to save ficha metadata: {response.error}")
-                return None
+                # Still return the URL since the file was uploaded
+                return drive_url
 
         except Exception as e:
             logger.error(f"Error generating/saving ficha: {e}", exc_info=True)
@@ -107,44 +138,22 @@ class AuditFichesManager:
         limit: int = 50,
         offset: int = 0,
     ) -> list:
-        """Get audit fiches with optional filters.
-
-        Args:
-            sucursal_id: Filter by sucursal
-            fecha_desde: Filter from date (ISO format)
-            fecha_hasta: Filter to date (ISO format)
-            auditor_nombre: Filter by auditor name
-            limit: Pagination limit
-            offset: Pagination offset
-
-        Returns:
-            List of ficha records
-        """
-
+        """Get audit fiches with optional filters."""
         try:
             db = SupabaseManager()
             query = db.client.table("audit_fiches").select("*")
 
             if sucursal_id:
                 query = query.eq("sucursal_id", sucursal_id)
-
             if fecha_desde:
                 query = query.gte("fecha_auditoria", fecha_desde)
-
             if fecha_hasta:
                 query = query.lte("fecha_auditoria", fecha_hasta)
-
             if auditor_nombre:
                 query = query.ilike("auditor_nombre", f"%{auditor_nombre}%")
 
-            # Order by date descending
-            query = query.order("fecha_auditoria", desc=True)
-
-            # Pagination
-            query = query.limit(limit).offset(offset)
-
+            query = query.order("fecha_auditoria", desc=True).limit(limit).offset(offset)
             response = query.execute()
-
             return response.data if response.data else []
 
         except Exception as e:
@@ -154,13 +163,10 @@ class AuditFichesManager:
     @staticmethod
     async def get_sucursales_with_fiches() -> list:
         """Get list of all sucursales that have audit fiches."""
-
         try:
             db = SupabaseManager()
             response = db.client.table("audit_fiches").select("sucursal_id").execute()
-
             return response.data if response.data else []
-
         except Exception as e:
             logger.error(f"Error fetching sucursales: {e}")
             return []

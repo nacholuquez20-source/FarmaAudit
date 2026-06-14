@@ -72,7 +72,7 @@ class MetaClient:
     async def send_file(
         self, phone: str, file_url: str, caption: Optional[str] = None
     ) -> bool:
-        """Send file (photo/document) via Meta WhatsApp Cloud API."""
+        """Send image via Meta WhatsApp Cloud API."""
         try:
             to_number = self._normalize_whatsapp_number(phone)
             url = f"{self.BASE_URL}/{self.phone_number_id}/messages"
@@ -80,27 +80,51 @@ class MetaClient:
                 "messaging_product": "whatsapp",
                 "to": to_number,
                 "type": "image",
-                "image": {
-                    "link": file_url,
-                },
+                "image": {"link": file_url},
             }
             if caption:
                 payload["image"]["caption"] = caption
-
             headers = {"Authorization": f"Bearer {self.access_token}"}
-
             async with httpx.AsyncClient() as client:
                 response = await client.post(url, json=payload, headers=headers, timeout=30)
                 if response.status_code == 200:
-                    logger.info(f"Sent file to {phone}")
+                    logger.info(f"Sent image to {phone}")
                     return True
-                else:
-                    logger.error(f"Failed to send file to {phone}: Status {response.status_code}")
-                    logger.error(f"Response body: {response.text}")
-                    logger.error(f"Payload sent: {payload}")
-                    return False
+                logger.error(f"Failed to send image to {phone}: {response.status_code} {response.text}")
+                return False
         except Exception as e:
-            logger.error(f"Failed to send file to {phone}: {e}")
+            logger.error(f"Failed to send image to {phone}: {e}")
+            return False
+
+    async def send_document(
+        self,
+        phone: str,
+        doc_url: str,
+        filename: str,
+        caption: Optional[str] = None,
+    ) -> bool:
+        """Send a PDF/document via Meta WhatsApp Cloud API using a public URL."""
+        try:
+            to_number = self._normalize_whatsapp_number(phone)
+            url = f"{self.BASE_URL}/{self.phone_number_id}/messages"
+            payload = {
+                "messaging_product": "whatsapp",
+                "to": to_number,
+                "type": "document",
+                "document": {"link": doc_url, "filename": filename},
+            }
+            if caption:
+                payload["document"]["caption"] = caption
+            headers = {"Authorization": f"Bearer {self.access_token}"}
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json=payload, headers=headers, timeout=30)
+                if response.status_code == 200:
+                    logger.info(f"Sent document '{filename}' to {phone}")
+                    return True
+                logger.error(f"Failed to send document to {phone}: {response.status_code} {response.text}")
+                return False
+        except Exception as e:
+            logger.error(f"Failed to send document to {phone}: {e}")
             return False
 
     async def send_message(self, message: WhatsAppMessage) -> bool:

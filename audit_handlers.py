@@ -70,6 +70,90 @@ SCORE_OPTIONS = [
 SEVERITY_ESCALATION = {"Baja": "Media", "Media": "Alta", "Alta": "Alta"}
 
 
+def _drive_download_url(ficha_url: str) -> str:
+    """Convert a Drive viewer URL to a direct download URL for WhatsApp documents."""
+    if "/d/" in ficha_url:
+        file_id = ficha_url.split("/d/")[1].split("/")[0]
+        return f"https://drive.google.com/uc?export=download&id={file_id}"
+    return ficha_url
+
+
+async def _send_ficha_to_responsable(
+    meta_client: MetaClient,
+    session: AuditSession,
+    ficha_url: str,
+    id_sesion: str,
+) -> None:
+    """Send PDF ficha to the branch manager via WhatsApp (best-effort, never raises)."""
+    try:
+        db = SupabaseManager()
+        sucursal = db.get_sucursal(session.sucursal_id)
+        tel = sucursal.tel_responsable if sucursal else None
+        if not tel:
+            logger.info(f"No tel_responsable for sucursal {session.sucursal_id} — skipping PDF delivery")
+            return
+
+        filename = f"Auditoria_{id_sesion}.pdf"
+        caption = (
+            f"📋 Informe de auditoría — {sucursal.nombre if sucursal else session.sucursal_id}\n"
+            f"Auditor: {session.auditor_nombre or '—'}"
+        )
+
+        ok = await meta_client.send_document(tel, _drive_download_url(ficha_url), filename, caption)
+        if ok:
+            logger.info(f"PDF ficha sent to manager at {tel}")
+        else:
+            logger.warning(f"Failed to send PDF ficha to manager at {tel}")
+    except Exception as e:
+        logger.warning(f"Could not send PDF to responsable: {e}")
+
+
+async def _ask_ficha_download(
+    meta_client: MetaClient,
+    telefono: str,
+    session: AuditSession,
+    ficha_url: str,
+) -> None:
+    """Store ficha URL on session and ask auditor if they want to receive it."""
+    session.ficha_url = ficha_url  # type: ignore[attr-defined]
+    save_session(session)
+    await meta_client.send_quick_reply(
+        telefono,
+        "📄 La ficha de auditoría está lista.\n¿Querés recibirla aquí en WhatsApp?",
+        [
+            {"id": "descargar_ficha_si", "title": "✅ Sí, enviar"},
+            {"id": "descargar_ficha_no", "title": "❌ No, gracias"},
+        ],
+    )
+
+
+async def _send_ficha_to_auditor(
+    meta_client: MetaClient,
+    session: AuditSession,
+    telefono: str,
+) -> None:
+    """Send the stored ficha PDF to the auditor as a WhatsApp document."""
+    ficha_url: Optional[str] = getattr(session, "ficha_url", None)
+    if not ficha_url:
+        await meta_client.send_text(telefono, "⚠️ No encontré la ficha. Intentá de nuevo en unos segundos.")
+        return
+
+    filename = f"Auditoria_{session.id_sesion}.pdf"
+    ok = await meta_client.send_document(
+        telefono,
+        _drive_download_url(ficha_url),
+        filename,
+        caption=f"📋 Ficha de auditoría — {session.id_sesion}",
+    )
+    if ok:
+        logger.info(f"Ficha PDF sent to auditor {telefono}")
+    else:
+        await meta_client.send_text(
+            telefono,
+            f"⚠️ No pude enviar el archivo directamente.\nDescargalo desde:\n{ficha_url}",
+        )
+
+
 class AuditConversationHandler:
     """Handles audit conversation states and transitions."""
 
@@ -125,7 +209,17 @@ class AuditConversationHandler:
             if payload.tipo == "text":
                 texto = payload.contenido.lower().strip()
 
-                # Check if asking for ficha
+                # Quick-reply: auditor wants to download the ficha
+                if texto == "descargar_ficha_si":
+                    await _send_ficha_to_auditor(meta_client, session, payload.telefono)
+                    return "ficha_sent_to_auditor"
+
+                # Quick-reply: auditor declined download
+                if texto == "descargar_ficha_no":
+                    await meta_client.send_text(payload.telefono, "¡Listo! La ficha queda guardada en el sistema. 👍")
+                    return "ficha_download_declined"
+
+                # Keyword fallback: ask for ficha explicitly
                 if any(word in texto for word in ["ficha", "pdf", "documento", "descargar"]):
                     return await AuditConversationHandler.generate_and_send_ficha(
                         payload, meta_client, session
@@ -138,30 +232,37 @@ class AuditConversationHandler:
 
                         # Now that we have the responsable, generate the ficha
                         reporte_id = getattr(session, 'pending_ficha_reporte_id', None)
+                        ficha_url: Optional[str] = None
                         if reporte_id:
                             try:
-                                ficha_id = await AuditFichesManager.generate_and_save_ficha(
+                                ficha_url = await AuditFichesManager.generate_and_save_ficha(
                                     session=session,
                                     reporte_id=reporte_id,
                                     responsable_desvios=session.desvios_responsable,
+                                    meta_client=meta_client,
                                 )
-                                logger.info(f"Ficha generated after responsable collected: {ficha_id}")
+                                logger.info(f"Ficha generated after responsable collected: {ficha_url}")
                             except Exception as ficha_exc:
                                 logger.warning(f"Ficha generation failed: {ficha_exc}")
 
-                        save_session(session)
-
-                        drive_url = (
-                            f"https://drive.google.com/file/d/{ficha_id}/view"
-                            if reporte_id and ficha_id else None
-                        )
-                        msg = f"✅ Desvíos asignados a: {session.desvios_responsable}\n\n"
-                        if drive_url:
-                            msg += f"📄 Ficha disponible:\n{drive_url}"
-                        else:
-                            msg += "La ficha de auditoría fue guardada en el sistema."
-
+                        msg = f"✅ Desvíos asignados a: {session.desvios_responsable}"
                         await meta_client.send_text(payload.telefono, msg)
+
+                        if ficha_url:
+                            # Send PDF to branch manager
+                            await _send_ficha_to_responsable(
+                                meta_client, session, ficha_url, session.id_sesion
+                            )
+                            # Ask auditor if they want a copy
+                            await _ask_ficha_download(
+                                meta_client, payload.telefono, session, ficha_url
+                            )
+                        else:
+                            save_session(session)
+                            await meta_client.send_text(
+                                payload.telefono, "La ficha de auditoría fue guardada en el sistema."
+                            )
+
                         return "responsable_saved"
 
             return "audit_already_completed"
@@ -1254,25 +1355,36 @@ class AuditConversationHandler:
                 session.estado = AuditState.DONE
                 save_session(session)
 
-                ficha_id = None
+                ficha_url: Optional[str] = None
                 reporte_id = getattr(session, 'pending_ficha_reporte_id', None)
                 if reporte_id:
                     try:
-                        ficha_id = await AuditFichesManager.generate_and_save_ficha(
+                        ficha_url = await AuditFichesManager.generate_and_save_ficha(
                             session=session,
                             reporte_id=reporte_id,
                             responsable_desvios=None,
+                            meta_client=meta_client,
                         )
                     except Exception as ficha_exc:
                         logger.warning(f"Ficha generation failed (no desvios path): {ficha_exc}")
 
-                drive_url = f"https://drive.google.com/file/d/{ficha_id}/view" if ficha_id else None
-                msg = f"✅ ¡Auditoría guardada!\n\nID: {session.id_sesion}\n\n"
-                if drive_url:
-                    msg += f"📄 Ficha:\n{drive_url}"
+                await meta_client.send_text(
+                    payload.telefono,
+                    f"✅ ¡Auditoría guardada!\n\nID: {session.id_sesion}",
+                )
+
+                if ficha_url:
+                    await _send_ficha_to_responsable(
+                        meta_client, session, ficha_url, session.id_sesion
+                    )
+                    await _ask_ficha_download(
+                        meta_client, payload.telefono, session, ficha_url
+                    )
                 else:
-                    msg += "La ficha fue guardada en el sistema."
-                await meta_client.send_text(payload.telefono, msg)
+                    save_session(session)
+                    await meta_client.send_text(
+                        payload.telefono, "La ficha fue guardada en el sistema."
+                    )
 
                 return "audit_saved"
 
