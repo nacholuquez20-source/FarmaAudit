@@ -11,6 +11,7 @@ import uuid
 class AuditState(Enum):
     """State machine for audit conversation flow."""
     IDLE = "idle"                              # No audit in progress
+    SELECT_SUCURSAL = "select_sucursal"        # Choosing sucursal for a new audit
     VERIFY_SELECT_SUCURSAL = "verify_select_sucursal"  # Choosing sucursal for standalone desvío management
     VERIFY_PREVIOUS = "verify_previous"        # Verifying open desvíos from previous audits
     SCORING = "scoring"                        # Collecting area scores (1-5)

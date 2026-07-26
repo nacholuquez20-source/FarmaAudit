@@ -16,7 +16,7 @@ interface AuditKPIs {
   ultimas: Array<{
     id: string;
     sucursal_id: string;
-    sucursal_nombre?: string;
+    sucursal_nombre: string;
     auditor_nombre: string | null;
     fecha_auditoria: string | null;
     puntuacion_promedio: number | null;
@@ -35,10 +35,21 @@ function useAuditKPIs(scopedSucursal: string | null) {
 
     async function load() {
       try {
-        let base = supabase.from('audit_fiches').select('id, sucursal_id, auditor_nombre, fecha_auditoria, puntuacion_promedio, total_desvios');
-        if (scopedSucursal) base = base.eq('sucursal_id', scopedSucursal);
+        // Load sucursales name map and audit fiches in parallel
+        const [sucursalesRes, fichesRes] = await Promise.all([
+          supabase.from('sucursales').select('id, nombre'),
+          (() => {
+            let q = supabase.from('audit_fiches').select('id, sucursal_id, auditor_nombre, fecha_auditoria, puntuacion_promedio, total_desvios');
+            if (scopedSucursal) q = q.eq('sucursal_id', scopedSucursal);
+            return q.order('fecha_auditoria', { ascending: false }).limit(200);
+          })(),
+        ]);
 
-        const { data } = await base.order('fecha_auditoria', { ascending: false }).limit(200);
+        const nombreMap = new Map<string, string>(
+          (sucursalesRes.data ?? []).map((s: { id: string; nombre: string }) => [s.id, s.nombre])
+        );
+
+        const data = fichesRes.data;
         if (!data) return;
 
         const hoy = data.filter((f) => f.fecha_auditoria && new Date(f.fecha_auditoria) >= todayStart).length;
@@ -48,7 +59,12 @@ function useAuditKPIs(scopedSucursal: string | null) {
           ? withScore.reduce((s, f) => s + (f.puntuacion_promedio as number), 0) / withScore.length
           : null;
 
-        setKpis({ hoy, semana, puntajePromedio, ultimas: data.slice(0, 5) });
+        const ultimas = data.slice(0, 5).map((f) => ({
+          ...f,
+          sucursal_nombre: nombreMap.get(f.sucursal_id) ?? f.sucursal_id,
+        }));
+
+        setKpis({ hoy, semana, puntajePromedio, ultimas });
       } catch {
         // non-critical
       }
@@ -517,7 +533,7 @@ export default function Dashboard() {
                         <tr key={f.id} className="border-b hover:bg-gray-50">
                           <td className="px-3 py-3">
                             <Link to={`/sucursales/${f.sucursal_id}`} className="font-medium text-gray-900 hover:text-blue-700">
-                              {f.sucursal_id}
+                              {f.sucursal_nombre}
                             </Link>
                           </td>
                           <td className="px-3 py-3 text-gray-600">{f.auditor_nombre || '—'}</td>

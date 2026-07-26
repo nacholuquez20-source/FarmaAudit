@@ -12,7 +12,7 @@ from typing import Optional, Tuple
 from audit_session import (
     AuditSession, AuditState, create_session, get_session, save_session,
     delete_session, BloqueType, BrandType, BLOQUE_ORDER, BRAND_ORDER,
-    BLOQUE_LABELS, BRAND_LABELS, BLOQUE_DESCRIPTIONS, FotoEvidence
+    BLOQUE_LABELS, BRAND_LABELS, BLOQUE_DESCRIPTIONS, FotoEvidence,
 )
 from models import WhatsAppPayload
 from meta_client import MetaClient
@@ -241,25 +241,23 @@ class AuditConversationHandler:
 
         # No active session: start new or handle command
         if not session:
-            # Check if it's a command to start audit
             if payload.tipo == "text":
                 texto = payload.contenido.lower().strip()
-                # Check if mentions audit or sucursal
                 if any(word in texto for word in ["auditoria", "audit", "perfumeria", "farmacia"]):
                     return await AuditConversationHandler.handle_init(payload, meta_client)
 
-            # Otherwise ask to start
             await meta_client.send_text(
                 telefono,
-                "Hola 👋\n\n"
-                "Para iniciar una auditoría de perfumería, por favor responde con el ID de la sucursal\n"
-                "Ejemplo: SC-001"
+                "Hola 👋\n\nPara iniciar una auditoría de perfumería escribí *auditoria*."
             )
-            return "awaiting_sucursal_id"
+            return "awaiting_start"
 
         # Active session: route by state
         if session.estado == AuditState.IDLE:
             return await AuditConversationHandler.handle_init(payload, meta_client)
+
+        elif session.estado == AuditState.SELECT_SUCURSAL:
+            return await AuditConversationHandler.handle_select_sucursal(payload, meta_client, session)
 
         elif session.estado == AuditState.VERIFY_SELECT_SUCURSAL:
             return await AuditConversationHandler.handle_verify_sucursal_selection(payload, meta_client, session)
@@ -779,39 +777,116 @@ class AuditConversationHandler:
         return "scoring_started"
 
     @staticmethod
+    async def _send_audit_sucursal_menu(
+        meta_client: MetaClient,
+        telefono: str,
+        sucursales: list,
+    ) -> None:
+        """Send sucursal picker for starting a new audit."""
+        PAGE = 10
+        chunk = sucursales[:PAGE]
+
+        if len(chunk) <= PAGE:
+            options = [
+                {"id": f"audit_suc_{i}", "title": s["nombre"][:24]}
+                for i, s in enumerate(chunk, 1)
+            ]
+            sent = await meta_client.send_list_message(
+                telefono,
+                "🏪 Seleccioná la sucursal",
+                "¿En qué sucursal vas a auditar?",
+                "Escribí 'cancelar' para salir",
+                "Ver sucursales",
+                options,
+            )
+            if sent:
+                return
+
+        # Fallback: numbered text
+        menu = "🏪 ¿En qué sucursal vas a auditar?\n\n"
+        for i, s in enumerate(sucursales, 1):
+            menu += f"{i}. {s['nombre']}\n"
+        menu += "\nResponde con el número, o 'cancelar' para salir."
+        await meta_client.send_text(telefono, menu)
+
+    @staticmethod
     async def handle_init(payload: WhatsAppPayload, meta_client: MetaClient) -> str:
-        """Initialize new audit session."""
-
+        """Initialize new audit session: load sucursales and ask user to pick one."""
         telefono = payload.telefono
-        texto = payload.contenido.strip() if payload.tipo == "text" else ""
 
-        # Extract sucursal_id from message or ask for it
-        sucursal_id = texto.upper() if texto else None
+        try:
+            db = SupabaseManager()
+            res = db.client.table("sucursales").select("id, nombre").order("nombre").execute()
+            sucursales = res.data or []
+        except Exception as e:
+            logger.error(f"Error loading sucursales for audit init: {e}")
+            sucursales = []
 
-        if not sucursal_id:
+        if not sucursales:
             await meta_client.send_text(
                 telefono,
-                "Por favor, indícame el ID de la sucursal\n"
-                "Ejemplo: SC-001"
+                "❌ No pude cargar la lista de sucursales. Intentá de nuevo."
             )
-            return "awaiting_sucursal_id"
+            return "sucursales_load_error"
 
-        # TODO: Validate sucursal exists in DB
-        # For now, assume it exists
-        session = create_session(
-            telefono=telefono,
-            sucursal_id=sucursal_id,
-            auditor_nombre=None  # Could get from Supabase if needed
-        )
-
-        session.started_at = datetime.now(timezone.utc).isoformat()
+        # Create a placeholder session in SELECT_SUCURSAL state
+        session = create_session(telefono=telefono, sucursal_id="", auditor_nombre=None)
+        session.estado = AuditState.SELECT_SUCURSAL
+        session.verification_menu = [{"id": s["id"], "nombre": s["nombre"]} for s in sucursales]
         save_session(session)
 
-        # Enter first bloque: verify pending desvíos, then scoring
-        await AuditConversationHandler.enter_bloque(
-            meta_client, session, intro_msg=f"✓ Auditoría iniciada: {sucursal_id}"
+        await AuditConversationHandler._send_audit_sucursal_menu(
+            meta_client, telefono, session.verification_menu
         )
+        return "sucursal_menu_sent"
 
+    @staticmethod
+    async def handle_select_sucursal(
+        payload: WhatsAppPayload, meta_client: MetaClient, session: AuditSession
+    ) -> str:
+        """Handle sucursal selection to start a new audit."""
+        telefono = payload.telefono
+        texto = (payload.contenido or "").strip().lower() if payload.tipo == "text" else ""
+
+        if texto in {"cancelar", "salir", "cancel"}:
+            delete_session(telefono)
+            await meta_client.send_text(telefono, "Auditoría cancelada. Escribí *auditoria* para empezar.")
+            return "audit_cancelled"
+
+        sucursales = session.verification_menu
+
+        # Accept "audit_suc_N" (list button) or plain digit
+        if texto.startswith("audit_suc_"):
+            texto = texto.removeprefix("audit_suc_")
+
+        if texto.isdigit() and 1 <= int(texto) <= len(sucursales):
+            elegida = sucursales[int(texto) - 1]
+        else:
+            # Try partial name match
+            match = next(
+                (s for s in sucursales if texto in s["nombre"].lower()),
+                None,
+            )
+            if not match:
+                await meta_client.send_text(
+                    telefono, "⚠️ Elegí una sucursal de la lista, o escribí 'cancelar' para salir."
+                )
+                await AuditConversationHandler._send_audit_sucursal_menu(
+                    meta_client, telefono, sucursales
+                )
+                return "invalid_sucursal_selection"
+            elegida = match
+
+        # Commit the selected sucursal and start audit
+        session.sucursal_id = elegida["id"]
+        session.started_at = datetime.now(timezone.utc).isoformat()
+        session.verification_menu = []
+        save_session(session)
+
+        await AuditConversationHandler.enter_bloque(
+            meta_client, session,
+            intro_msg=f"✓ Auditoría iniciada: {elegida['nombre']}"
+        )
         return "audit_started"
 
     @staticmethod
