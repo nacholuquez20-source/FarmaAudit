@@ -1,12 +1,63 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ClipboardCheck } from 'lucide-react';
+import { CalendarDays, ClipboardCheck } from 'lucide-react';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { KPICard } from '../components/KPICard';
 import { useDashboardStats } from '../hooks/useDashboardStats';
 import { useAuth } from '../hooks/useAuth';
+import { supabase } from '../lib/supabase';
 import type { DashboardView, SucursalSupervision } from '../types';
+
+interface AuditKPIs {
+  hoy: number;
+  semana: number;
+  puntajePromedio: number | null;
+  ultimas: Array<{
+    id: string;
+    sucursal_id: string;
+    sucursal_nombre?: string;
+    auditor_nombre: string | null;
+    fecha_auditoria: string | null;
+    puntuacion_promedio: number | null;
+    total_desvios: number;
+  }>;
+}
+
+function useAuditKPIs(scopedSucursal: string | null) {
+  const [kpis, setKpis] = useState<AuditKPIs | null>(null);
+
+  useEffect(() => {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const weekStart = new Date(todayStart);
+    weekStart.setDate(todayStart.getDate() - todayStart.getDay());
+
+    async function load() {
+      try {
+        let base = supabase.from('audit_fiches').select('id, sucursal_id, auditor_nombre, fecha_auditoria, puntuacion_promedio, total_desvios');
+        if (scopedSucursal) base = base.eq('sucursal_id', scopedSucursal);
+
+        const { data } = await base.order('fecha_auditoria', { ascending: false }).limit(200);
+        if (!data) return;
+
+        const hoy = data.filter((f) => f.fecha_auditoria && new Date(f.fecha_auditoria) >= todayStart).length;
+        const semana = data.filter((f) => f.fecha_auditoria && new Date(f.fecha_auditoria) >= weekStart).length;
+        const withScore = data.filter((f) => f.puntuacion_promedio != null);
+        const puntajePromedio = withScore.length
+          ? withScore.reduce((s, f) => s + (f.puntuacion_promedio as number), 0) / withScore.length
+          : null;
+
+        setKpis({ hoy, semana, puntajePromedio, ultimas: data.slice(0, 5) });
+      } catch {
+        // non-critical
+      }
+    }
+    void load();
+  }, [scopedSucursal]);
+
+  return kpis;
+}
 import {
   Bar,
   BarChart,
@@ -54,6 +105,7 @@ export default function Dashboard() {
     scopedSucursal,
   );
   const mostrarVistaZona = role === 'admin';
+  const auditKpis = useAuditKPIs(scopedSucursal);
 
   const gestionStateData = stats
     ? [
@@ -418,6 +470,82 @@ export default function Dashboard() {
               </LineChart>
             </ResponsiveContainer>
           </section>
+
+          {auditKpis && (
+            <section className="mt-8 rounded-lg bg-white p-6 shadow">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="flex items-center gap-2 text-lg font-semibold">
+                  <CalendarDays className="h-5 w-5 text-primary-navy" />
+                  Auditorías de Perfumería
+                </h2>
+                <Link to="/auditorias" className="text-sm font-medium text-blue-600 hover:text-blue-800">
+                  Ver todas →
+                </Link>
+              </div>
+              <div className="mb-6 grid grid-cols-3 gap-4">
+                <div className="rounded-lg border border-gray-100 bg-gray-50 p-4 text-center">
+                  <div className="text-2xl font-bold text-primary-navy">{auditKpis.hoy}</div>
+                  <div className="mt-1 text-xs text-gray-500">Hoy</div>
+                </div>
+                <div className="rounded-lg border border-gray-100 bg-gray-50 p-4 text-center">
+                  <div className="text-2xl font-bold text-primary-navy">{auditKpis.semana}</div>
+                  <div className="mt-1 text-xs text-gray-500">Esta semana</div>
+                </div>
+                <div className="rounded-lg border border-gray-100 bg-gray-50 p-4 text-center">
+                  <div className={`text-2xl font-bold ${auditKpis.puntajePromedio != null && auditKpis.puntajePromedio >= 4 ? 'text-green-600' : auditKpis.puntajePromedio != null && auditKpis.puntajePromedio >= 3 ? 'text-yellow-600' : 'text-gray-400'}`}>
+                    {auditKpis.puntajePromedio != null ? `${auditKpis.puntajePromedio.toFixed(1)}/5` : '—'}
+                  </div>
+                  <div className="mt-1 text-xs text-gray-500">Puntaje promedio</div>
+                </div>
+              </div>
+              {auditKpis.ultimas.length === 0 ? (
+                <p className="text-sm text-gray-500">No hay auditorías registradas todavía.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="border-b bg-gray-50">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-semibold text-gray-600">Sucursal</th>
+                        <th className="px-3 py-2 text-left font-semibold text-gray-600">Auditor</th>
+                        <th className="px-3 py-2 text-left font-semibold text-gray-600">Fecha</th>
+                        <th className="px-3 py-2 text-center font-semibold text-gray-600">Puntaje</th>
+                        <th className="px-3 py-2 text-center font-semibold text-gray-600">Desvíos</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {auditKpis.ultimas.map((f) => (
+                        <tr key={f.id} className="border-b hover:bg-gray-50">
+                          <td className="px-3 py-3">
+                            <Link to={`/sucursales/${f.sucursal_id}`} className="font-medium text-gray-900 hover:text-blue-700">
+                              {f.sucursal_id}
+                            </Link>
+                          </td>
+                          <td className="px-3 py-3 text-gray-600">{f.auditor_nombre || '—'}</td>
+                          <td className="px-3 py-3 text-gray-500">
+                            {f.fecha_auditoria
+                              ? new Date(f.fecha_auditoria).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+                              : '—'}
+                          </td>
+                          <td className="px-3 py-3 text-center">
+                            {f.puntuacion_promedio != null ? (
+                              <span className={`rounded-full px-2 py-0.5 text-xs font-bold text-white ${f.puntuacion_promedio >= 4 ? 'bg-green-600' : f.puntuacion_promedio >= 3 ? 'bg-yellow-500' : 'bg-red-600'}`}>
+                                {f.puntuacion_promedio.toFixed(1)}
+                              </span>
+                            ) : '—'}
+                          </td>
+                          <td className="px-3 py-3 text-center">
+                            <span className={f.total_desvios > 0 ? 'font-semibold text-red-600' : 'text-green-600'}>
+                              {f.total_desvios}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          )}
           </>
           )}
         </>

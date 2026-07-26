@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ClipboardCheck } from 'lucide-react';
+import { Camera, ClipboardCheck, ExternalLink, FileText } from 'lucide-react';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { useControlStock } from '../hooks/useControlStock';
@@ -14,6 +14,7 @@ import type { Sucursal, SucursalDetailTab } from '../types';
 interface AuditFiche {
   id: string;
   created_at: string;
+  fecha_auditoria: string | null;
   sucursal_id: string;
   auditor_nombre: string;
   score_limpieza: number | null;
@@ -21,6 +22,9 @@ interface AuditFiche {
   score_ofertas: number | null;
   score_burbujas: number | null;
   total_desvios: number;
+  total_fotos: number;
+  puntuacion_promedio: number | null;
+  url_pdf: string | null;
 }
 
 function scoreColor(score: number | null) {
@@ -255,32 +259,70 @@ export default function SucursalDetail() {
             ) : fichas.length === 0 ? (
               <div className="p-8"><FeedbackState title="Sin auditorias registradas" description="Las auditorias de perfumeria realizadas por WhatsApp apareceran aqui." /></div>
             ) : (
-              <table className="w-full">
-                <thead className="bg-gray-100 border-b">
-                  <tr>
-                    <th className="text-left px-6 py-3 font-semibold text-sm">Fecha</th>
-                    <th className="text-left px-6 py-3 font-semibold text-sm">Auditor</th>
-                    <th className="text-left px-6 py-3 font-semibold text-sm">Limpieza</th>
-                    <th className="text-left px-6 py-3 font-semibold text-sm">Stock</th>
-                    <th className="text-left px-6 py-3 font-semibold text-sm">Ofertas</th>
-                    <th className="text-left px-6 py-3 font-semibold text-sm">Displays</th>
-                    <th className="text-left px-6 py-3 font-semibold text-sm">Desvios</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {fichas.map((ficha) => (
-                    <tr key={ficha.id} className="border-b hover:bg-gray-50">
-                      <td className="px-6 py-4 text-sm">{formatDate(ficha.created_at)}</td>
-                      <td className="px-6 py-4 text-sm">{ficha.auditor_nombre}</td>
-                      <td className={`px-6 py-4 text-sm ${scoreColor(ficha.score_limpieza)}`}>{ficha.score_limpieza ?? '—'}/5</td>
-                      <td className={`px-6 py-4 text-sm ${scoreColor(ficha.score_stock)}`}>{ficha.score_stock ?? '—'}/5</td>
-                      <td className={`px-6 py-4 text-sm ${scoreColor(ficha.score_ofertas)}`}>{ficha.score_ofertas ?? '—'}/5</td>
-                      <td className={`px-6 py-4 text-sm ${scoreColor(ficha.score_burbujas)}`}>{ficha.score_burbujas ?? '—'}/5</td>
-                      <td className="px-6 py-4 text-sm font-semibold">{ficha.total_desvios}</td>
+              <div>
+                <div className="flex justify-end px-4 py-2 border-b border-gray-100">
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/auditorias?sucursal_id=${id}`)}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium text-primary-navy hover:text-primary-navy/80"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    Ver todas en galería
+                  </button>
+                </div>
+                <table className="w-full">
+                  <thead className="bg-gray-100 border-b">
+                    <tr>
+                      <th className="text-left px-6 py-3 font-semibold text-sm">Fecha</th>
+                      <th className="text-left px-6 py-3 font-semibold text-sm">Auditor</th>
+                      <th className="text-left px-6 py-3 font-semibold text-sm">Limpieza</th>
+                      <th className="text-left px-6 py-3 font-semibold text-sm">Stock</th>
+                      <th className="text-left px-6 py-3 font-semibold text-sm">Ofertas</th>
+                      <th className="text-left px-6 py-3 font-semibold text-sm">Displays</th>
+                      <th className="text-center px-6 py-3 font-semibold text-sm">Desvios</th>
+                      <th className="text-center px-6 py-3 font-semibold text-sm">Fotos</th>
+                      <th className="text-center px-6 py-3 font-semibold text-sm">PDF</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {fichas.map((ficha) => (
+                      <tr key={ficha.id} className="border-b hover:bg-gray-50">
+                        <td className="px-6 py-4 text-sm">{formatDate(ficha.fecha_auditoria || ficha.created_at)}</td>
+                        <td className="px-6 py-4 text-sm">{ficha.auditor_nombre || '—'}</td>
+                        <td className={`px-6 py-4 text-sm ${scoreColor(ficha.score_limpieza)}`}>{ficha.score_limpieza != null ? `${ficha.score_limpieza}/5` : '—'}</td>
+                        <td className={`px-6 py-4 text-sm ${scoreColor(ficha.score_stock)}`}>{ficha.score_stock != null ? `${ficha.score_stock}/5` : '—'}</td>
+                        <td className={`px-6 py-4 text-sm ${scoreColor(ficha.score_ofertas)}`}>{ficha.score_ofertas != null ? `${ficha.score_ofertas}/5` : '—'}</td>
+                        <td className={`px-6 py-4 text-sm ${scoreColor(ficha.score_burbujas)}`}>{ficha.score_burbujas != null ? `${ficha.score_burbujas}/5` : '—'}</td>
+                        <td className="px-6 py-4 text-sm text-center font-semibold">
+                          <span className={ficha.total_desvios > 0 ? 'text-red-600' : 'text-green-600'}>
+                            {ficha.total_desvios}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-center">
+                          <span className="inline-flex items-center gap-1 text-gray-500">
+                            <Camera className="h-3.5 w-3.5" />
+                            {ficha.total_fotos}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                          {ficha.url_pdf ? (
+                            <button
+                              type="button"
+                              onClick={() => window.open(ficha.url_pdf as string, '_blank', 'noopener')}
+                              className="text-blue-600 hover:text-blue-800"
+                              title="Ver PDF"
+                            >
+                              <FileText className="h-4 w-4" />
+                            </button>
+                          ) : (
+                            <span className="text-gray-300">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )
           )}
         </div>

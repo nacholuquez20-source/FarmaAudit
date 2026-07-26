@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Calendar, Camera, Download, FileText, FilterX, X } from 'lucide-react';
 import { AppLayout } from '../components/AppLayout';
 import { Button } from '../components/Button';
@@ -90,13 +91,15 @@ function dayLabel(key: string): string {
 }
 
 export default function AuditFichesGallery() {
+  const [searchParams] = useSearchParams();
+
   const [fichas, setFichas] = useState<Ficha[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sucursales, setSucursales] = useState<Sucursal[]>([]);
 
-  const [sucursalId, setSucursalId] = useState('');
+  const [sucursalId, setSucursalId] = useState(() => searchParams.get('sucursal_id') ?? '');
   const [auditor, setAuditor] = useState('');
   const [fechaDesde, setFechaDesde] = useState('');
   const [fechaHasta, setFechaHasta] = useState('');
