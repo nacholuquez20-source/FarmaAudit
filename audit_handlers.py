@@ -829,8 +829,17 @@ class AuditConversationHandler:
             )
             return "sucursales_load_error"
 
+        # Resolve auditor name from DB (best-effort)
+        auditor_nombre: Optional[str] = None
+        try:
+            auditor_obj = SupabaseManager().get_auditor(telefono)
+            if auditor_obj:
+                auditor_nombre = auditor_obj.nombre
+        except Exception:
+            pass
+
         # Create a placeholder session in SELECT_SUCURSAL state
-        session = create_session(telefono=telefono, sucursal_id="", auditor_nombre=None)
+        session = create_session(telefono=telefono, sucursal_id="", auditor_nombre=auditor_nombre)
         session.estado = AuditState.SELECT_SUCURSAL
         session.verification_menu = [{"id": s["id"], "nombre": s["nombre"]} for s in sucursales]
         save_session(session)

@@ -238,7 +238,8 @@ class ConversationRouter:
             # Check if message triggers v2 audit
             if payload.tipo == "text" and payload.contenido:
                 trigger = payload.contenido.lower().strip()
-                if any(word in trigger for word in ["auditar perfume", "auditoria perfumeria", "perfumeria v2", "audit v2"]):
+                V2_TRIGGERS = {"auditoria", "auditoría", "audit", "auditar", "perfumeria", "perfumería"}
+                if trigger in V2_TRIGGERS or any(w in trigger for w in ["auditar perfume", "auditoria perfumeria", "perfumeria v2", "audit v2"]):
                     return await self.handle_perfumeria_audit(payload, meta_client)
                 if trigger in {"desvios", "desvíos", "gestionar desvios", "gestionar desvíos"}:
                     return await AuditConversationHandler.start_desvio_management(
