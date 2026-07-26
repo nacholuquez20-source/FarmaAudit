@@ -4,6 +4,7 @@ import { Toaster } from 'sonner';
 import {
   AlertTriangle,
   Bell,
+  CalendarDays,
   ClipboardCheck,
   Home,
   LogOut,
@@ -57,12 +58,14 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
       navItems.push({ to: '/dashboard', label: 'Inicio', icon: Home });
     if (hasModuleAccess(profile, 'gestion_desvios') || hasModuleAccess(profile, 'revision_desvios'))
       navItems.push({ to: '/desvios', label: 'Desvios', icon: ClipboardCheck });
+    navItems.push({ to: '/auditorias', label: 'Auditorias', icon: CalendarDays });
     if (hasModuleAccess(profile, 'sucursales'))
       navItems.push({ to: '/sucursales', label: 'Sucursales', icon: Store });
     if (canAccessAdmin) navItems.push({ to: '/admin', label: 'Admin', icon: Settings });
   } else if (role === 'auditor') {
     if (hasModuleAccess(profile, 'gestion_desvios') || hasModuleAccess(profile, 'revision_desvios'))
       navItems.push({ to: '/desvios', label: 'Desvios', icon: ClipboardCheck });
+    navItems.push({ to: '/auditorias', label: 'Auditorias', icon: CalendarDays });
     if (hasModuleAccess(profile, 'sucursales'))
       navItems.push({ to: '/sucursales', label: 'Sucursales', icon: Store });
   } else if (role === 'sucursal') {

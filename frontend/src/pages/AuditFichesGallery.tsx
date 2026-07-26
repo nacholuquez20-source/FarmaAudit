@@ -15,13 +15,25 @@ interface Ficha {
   auditor_nombre: string | null;
   responsable_desvios: string | null;
   fecha_auditoria: string | null;
+  created_at: string;
   url_pdf: string | null;
-  desvios_count: number;
-  fotos_count: number;
+  total_desvios: number;
+  total_fotos: number;
   puntuacion_promedio: number | null;
+  score_limpieza: number | null;
+  score_stock: number | null;
+  score_ofertas: number | null;
+  score_burbujas: number | null;
 }
 
-const PAGE_SIZE = 12;
+const PAGE_SIZE = 24;
+
+const SCORE_LABELS: { key: keyof Ficha; label: string }[] = [
+  { key: 'score_limpieza', label: 'Limpieza' },
+  { key: 'score_stock', label: 'Stock' },
+  { key: 'score_ofertas', label: 'Ofertas' },
+  { key: 'score_burbujas', label: 'Burbujas' },
+];
 
 function scoreBadgeClasses(score: number | null): string {
   if (score === null) return 'bg-gray-400';
@@ -30,7 +42,15 @@ function scoreBadgeClasses(score: number | null): string {
   return 'bg-red-600';
 }
 
-function formatDate(dateString: string | null): string {
+function formatTime(dateString: string | null): string {
+  if (!dateString) return '';
+  return new Date(dateString).toLocaleTimeString('es-AR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function formatDateTime(dateString: string | null): string {
   if (!dateString) return 'Sin fecha';
   return new Date(dateString).toLocaleDateString('es-AR', {
     year: 'numeric',
@@ -39,6 +59,34 @@ function formatDate(dateString: string | null): string {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function fichaFecha(ficha: Ficha): string | null {
+  return ficha.fecha_auditoria || ficha.created_at || null;
+}
+
+function dayKey(dateString: string | null): string {
+  if (!dateString) return 'sin-fecha';
+  return new Date(dateString).toDateString();
+}
+
+function dayLabel(key: string): string {
+  if (key === 'sin-fecha') return 'Sin fecha';
+  const date = new Date(key);
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+
+  if (date.toDateString() === today.toDateString()) return 'Hoy';
+  if (date.toDateString() === yesterday.toDateString()) return 'Ayer';
+
+  const label = date.toLocaleDateString('es-AR', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: date.getFullYear() === today.getFullYear() ? undefined : 'numeric',
+  });
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
 export default function AuditFichesGallery() {
@@ -92,7 +140,7 @@ export default function AuditFichesGallery() {
       setError(
         code === 'PGRST205'
           ? 'La tabla audit_fiches no existe en la base de datos. Ejecuta migration_audit_fiches.sql en Supabase.'
-          : 'No se pudieron cargar las fichas. Verifica tu conexion e intenta de nuevo.'
+          : 'No se pudieron cargar las auditorias. Verifica tu conexion e intenta de nuevo.'
       );
       setFichas([]);
       setTotal(0);
@@ -121,13 +169,31 @@ export default function AuditFichesGallery() {
     setPage(0);
   };
 
+  const setDia = (value: string) => {
+    setFechaDesde(value);
+    setFechaHasta(value);
+    setPage(0);
+  };
+
+  // Group fichas of the current page by day (already sorted desc by fecha)
+  const grupos = useMemo(() => {
+    const map = new Map<string, Ficha[]>();
+    for (const ficha of fichas) {
+      const key = dayKey(fichaFecha(ficha));
+      const group = map.get(key);
+      if (group) group.push(ficha);
+      else map.set(key, [ficha]);
+    }
+    return Array.from(map.entries());
+  }, [fichas]);
+
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
-    <AppLayout title="Fichas de Auditoria">
+    <AppLayout title="Auditorias">
       {/* Filtros */}
       <div className="mb-6 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
           <Select
             label="Sucursal"
             value={sucursalId}
@@ -143,6 +209,12 @@ export default function AuditFichesGallery() {
             placeholder="Buscar por nombre..."
             value={auditor}
             onChange={(e) => updateFilter(setAuditor)(e.target.value)}
+          />
+          <Input
+            label="Dia"
+            type="date"
+            value={fechaDesde === fechaHasta ? fechaDesde : ''}
+            onChange={(e) => setDia(e.target.value)}
           />
           <Input
             label="Desde"
@@ -172,75 +244,87 @@ export default function AuditFichesGallery() {
 
       {/* Contenido */}
       {loading ? (
-        <FeedbackState title="Cargando fichas..." tone="loading" />
+        <FeedbackState title="Cargando auditorias..." tone="loading" />
       ) : error ? (
         <FeedbackState title="Error al cargar" description={error} tone="error" />
       ) : fichas.length === 0 ? (
         <FeedbackState
-          title={hasFilters ? 'Sin resultados con estos filtros.' : 'Todavia no hay fichas de auditoria.'}
+          title={hasFilters ? 'Sin resultados con estos filtros.' : 'Todavia no hay auditorias registradas.'}
           description={
             hasFilters
               ? 'Proba quitando algun filtro.'
-              : 'Las fichas se generan automaticamente al completar auditorias por WhatsApp.'
+              : 'Las auditorias se registran automaticamente al completarlas por WhatsApp.'
           }
           tone="info"
         />
       ) : (
         <>
           <p className="mb-3 text-sm text-gray-500">
-            {total} ficha{total === 1 ? '' : 's'} · pagina {page + 1} de {totalPages}
+            {total} auditoria{total === 1 ? '' : 's'} · pagina {page + 1} de {totalPages}
           </p>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {fichas.map((ficha) => (
-              <button
-                key={ficha.id}
-                type="button"
-                onClick={() => setSelected(ficha)}
-                className="flex flex-col rounded-lg border border-gray-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-200"
-              >
-                <div className="mb-3 flex items-center justify-between">
-                  <span
-                    className={`rounded-full px-2.5 py-1 text-xs font-bold text-white ${scoreBadgeClasses(ficha.puntuacion_promedio)}`}
-                  >
-                    {ficha.puntuacion_promedio != null
-                      ? `${Number(ficha.puntuacion_promedio).toFixed(1)}/5`
-                      : 'Sin puntaje'}
+          <div className="space-y-8">
+            {grupos.map(([key, grupo]) => (
+              <section key={key}>
+                <div className="mb-3 flex items-center gap-3">
+                  <Calendar className="h-4 w-4 text-primary-navy" />
+                  <h2 className="text-base font-semibold text-gray-900">{dayLabel(key)}</h2>
+                  <span className="rounded-full bg-primary-navy/10 px-2 py-0.5 text-xs font-medium text-primary-navy">
+                    {grupo.length} auditoria{grupo.length === 1 ? '' : 's'}
                   </span>
-                  <span className="flex items-center gap-1 text-xs text-gray-500">
-                    <Calendar className="h-3.5 w-3.5" />
-                    {formatDate(ficha.fecha_auditoria)}
-                  </span>
+                  <div className="h-px flex-1 bg-gray-200" />
                 </div>
 
-                <h3 className="mb-1 font-semibold text-gray-900">{sucursalNombre(ficha.sucursal_id)}</h3>
-                <p className="text-sm text-gray-600">Auditor: {ficha.auditor_nombre || '-'}</p>
-                <p className="mb-3 text-sm text-gray-600">
-                  Responsable: {ficha.responsable_desvios || '-'}
-                </p>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  {grupo.map((ficha) => (
+                    <button
+                      key={ficha.id}
+                      type="button"
+                      onClick={() => setSelected(ficha)}
+                      className="flex flex-col rounded-lg border border-gray-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    >
+                      <div className="mb-3 flex items-center justify-between">
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-xs font-bold text-white ${scoreBadgeClasses(ficha.puntuacion_promedio)}`}
+                        >
+                          {ficha.puntuacion_promedio != null
+                            ? `${Number(ficha.puntuacion_promedio).toFixed(1)}/5`
+                            : 'Sin puntaje'}
+                        </span>
+                        <span className="text-xs text-gray-500">{formatTime(fichaFecha(ficha))}</span>
+                      </div>
 
-                <div className="mt-auto flex flex-wrap items-center gap-2">
-                  <span
-                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${
-                      ficha.desvios_count > 0
-                        ? 'border-red-200 bg-red-50 text-red-700'
-                        : 'border-green-200 bg-green-50 text-green-700'
-                    }`}
-                  >
-                    {ficha.desvios_count} desvio{ficha.desvios_count === 1 ? '' : 's'}
-                  </span>
-                  <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs font-medium text-gray-600">
-                    <Camera className="h-3 w-3" />
-                    {ficha.fotos_count}
-                  </span>
-                  {ficha.url_pdf && (
-                    <span className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-blue-600">
-                      <FileText className="h-3.5 w-3.5" />
-                      PDF
-                    </span>
-                  )}
+                      <h3 className="mb-1 font-semibold text-gray-900">{sucursalNombre(ficha.sucursal_id)}</h3>
+                      <p className="text-sm text-gray-600">Auditor: {ficha.auditor_nombre || '-'}</p>
+                      <p className="mb-3 text-sm text-gray-600">
+                        Responsable: {ficha.responsable_desvios || '-'}
+                      </p>
+
+                      <div className="mt-auto flex flex-wrap items-center gap-2">
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${
+                            ficha.total_desvios > 0
+                              ? 'border-red-200 bg-red-50 text-red-700'
+                              : 'border-green-200 bg-green-50 text-green-700'
+                          }`}
+                        >
+                          {ficha.total_desvios} desvio{ficha.total_desvios === 1 ? '' : 's'}
+                        </span>
+                        <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs font-medium text-gray-600">
+                          <Camera className="h-3 w-3" />
+                          {ficha.total_fotos}
+                        </span>
+                        {ficha.url_pdf && (
+                          <span className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-blue-600">
+                            <FileText className="h-3.5 w-3.5" />
+                            PDF
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                  ))}
                 </div>
-              </button>
+              </section>
             ))}
           </div>
 
@@ -277,7 +361,7 @@ export default function AuditFichesGallery() {
           >
             <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
               <h2 className="font-semibold text-gray-900">
-                Ficha · {sucursalNombre(selected.sucursal_id)}
+                Auditoria · {sucursalNombre(selected.sucursal_id)}
               </h2>
               <button
                 type="button"
@@ -292,7 +376,7 @@ export default function AuditFichesGallery() {
             <div className="space-y-3 px-5 py-4 text-sm">
               <div className="flex justify-between">
                 <span className="text-gray-500">Fecha</span>
-                <span className="font-medium text-gray-900">{formatDate(selected.fecha_auditoria)}</span>
+                <span className="font-medium text-gray-900">{formatDateTime(fichaFecha(selected))}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-500">Auditor</span>
@@ -312,13 +396,35 @@ export default function AuditFichesGallery() {
                     : 'Sin puntaje'}
                 </span>
               </div>
+
+              <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                  Puntajes por bloque
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {SCORE_LABELS.map(({ key, label }) => {
+                    const value = selected[key] as number | null;
+                    return (
+                      <div key={key} className="flex items-center justify-between">
+                        <span className="text-gray-600">{label}</span>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-xs font-bold text-white ${scoreBadgeClasses(value)}`}
+                        >
+                          {value != null ? `${value}/5` : '-'}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div className="flex justify-between">
                 <span className="text-gray-500">Desvios</span>
-                <span className="font-medium text-red-600">{selected.desvios_count}</span>
+                <span className="font-medium text-red-600">{selected.total_desvios}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-500">Fotos</span>
-                <span className="font-medium text-gray-900">{selected.fotos_count}</span>
+                <span className="font-medium text-gray-900">{selected.total_fotos}</span>
               </div>
             </div>
 

@@ -896,8 +896,8 @@ class AuditConversationHandler:
         await meta_client.send_text(
             payload.telefono,
             f"✓ {bloque_label}: {score}/5{comparison}\n\n"
-            f"Documenta lo que observas 📸🎙️📝\n"
-            f"(fotos, audios, textos)\n\n"
+            f"📸 Enviá al menos UNA foto de este punto (esté bien o mal — la foto es obligatoria).\n"
+            f"También podés sumar audios y notas 🎙️📝\n\n"
             f"{bloque_desc}\n\n"
             f"Escribe 'SIGUIENTE' cuando termines este bloque"
         )
@@ -920,6 +920,16 @@ class AuditConversationHandler:
                 bloque_fotos = len([f for f in session.fotos if f.bloque == current_bloque])
                 bloque_audios = len([a for a in session.desvios if a.bloque == current_bloque and "[AUDIO]" in a.descripcion])
                 bloque_notas = len([d for d in session.desvios if d.bloque == current_bloque and "[AUDIO]" not in d.descripcion])
+
+                # Photo is mandatory for every controlled point, good or bad
+                if bloque_fotos == 0:
+                    await meta_client.send_text(
+                        payload.telefono,
+                        f"📸 Falta la foto de {bloque_label}.\n\n"
+                        f"Enviá al menos una foto de este punto (esté bien o mal) "
+                        f"para poder continuar."
+                    )
+                    return "photo_required"
 
                 summary_msg = f"✓ {bloque_label} completado!\n📸 {bloque_fotos} foto(s) · 🎙️ {bloque_audios} audio(s) · 📝 {bloque_notas} nota(s)\n\n"
 
@@ -1129,8 +1139,8 @@ class AuditConversationHandler:
         await meta_client.send_text(
             payload.telefono,
             f"✓ {BRAND_LABELS.get(current_brand, current_brand)}: {score}/5\n\n"
-            f"Documenta lo que observas en Ofertas 📸🎙️📝\n"
-            f"(fotos, audios, textos)\n\n"
+            f"📸 Enviá al menos UNA foto de Ofertas (esté bien o mal — la foto es obligatoria).\n"
+            f"También podés sumar audios y notas 🎙️📝\n\n"
             f"{bloque_desc}\n\n"
             f"Escribe 'SIGUIENTE' cuando termines este bloque"
         )

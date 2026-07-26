@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from audit_session import (
     AuditSession, AuditState, create_session, get_session, save_session,
-    delete_session, BloqueType, BLOQUE_ORDER, BRAND_ORDER
+    delete_session, BloqueType, BLOQUE_ORDER, BRAND_ORDER, FotoEvidence
 )
 from audit_handlers import AuditConversationHandler
 from models import WhatsAppPayload
@@ -137,6 +137,15 @@ async def test_complete_audit_flow():
 
         # If not the last bloque, send SIGUIENTE to move to next
         if i < len(BLOQUE_ORDER) - 1:
+            # Photo is mandatory per bloque: add one before advancing
+            session.add_foto(FotoEvidence(
+                id=f"foto_test_{bloque.lower()}",
+                media_id=f"media_test_{bloque.lower()}",
+                bloque=bloque,
+                validated=True,
+            ))
+            save_session(session)
+
             siguiente_payload = WhatsAppPayload(
                 telefono=telefono,
                 tipo="text",
@@ -257,7 +266,7 @@ async def test_evidence_collection():
     assert "[AUDIO]" in session.desvios[-1].descripcion
     print(f"    Audio saved: {session.desvios[-1].descripcion[:50]}...")
 
-    # Test SIGUIENTE
+    # Test SIGUIENTE without photo → must be blocked (photo is mandatory)
     print("\n[4] Testing SIGUIENTE keyword...")
     siguiente_payload = WhatsAppPayload(
         telefono=telefono,
@@ -270,7 +279,21 @@ async def test_evidence_collection():
     )
 
     result = await AuditConversationHandler.handle_bloque_evidence(siguiente_payload, meta_client, session)
-    print(f"    Result: {result}")
+    print(f"    Result (sin foto): {result}")
+    assert result == "photo_required", f"Expected photo_required, got {result}"
+
+    # Add mandatory photo and retry SIGUIENTE
+    session = get_session(telefono)
+    session.add_foto(FotoEvidence(
+        id="foto_test_limpieza",
+        media_id="media_test_limpieza",
+        bloque="LIMPIEZA",
+        validated=True,
+    ))
+    save_session(session)
+
+    result = await AuditConversationHandler.handle_bloque_evidence(siguiente_payload, meta_client, session)
+    print(f"    Result (con foto): {result}")
     assert result == "next_bloque", f"Expected next_bloque, got {result}"
 
     session = get_session(telefono)
