@@ -9,9 +9,12 @@ import {
   listPanelProfiles,
   updatePanelProfile,
   createPanelUser,
+  getMarcas,
+  createMarca,
+  updateMarca,
 } from '../lib/api';
 import { MODULE_OPTIONS, normalizeModulePermissions } from '../lib/permissions';
-import type { AdminTabKey, Auditor, ModulePermission, Role, UserProfile } from '../types';
+import type { AdminTabKey, Auditor, Marca, ModulePermission, Role, UserProfile } from '../types';
 import { useSucursales } from '../hooks/useSucursales';
 
 const ROLES: Role[] = ['admin', 'auditor', 'sucursal'];
@@ -62,12 +65,18 @@ export default function Admin() {
 
   const [auditores, setAuditores] = useState<Auditor[]>([]);
   const [profiles, setProfiles] = useState<UserProfile[]>([]);
+  const [marcas, setMarcas] = useState<Marca[]>([]);
   const [loadingAuditores, setLoadingAuditores] = useState(true);
   const [loadingUsuarios, setLoadingUsuarios] = useState(true);
+  const [loadingMarcas, setLoadingMarcas] = useState(true);
   const [error, setError] = useState('');
   const [showAuditorForm, setShowAuditorForm] = useState(false);
   const [formAuditor, setFormAuditor] = useState({ nombre: '', telefono: '', cuadrilla: '', activo: true });
   const [submittingAuditor, setSubmittingAuditor] = useState(false);
+  const [showMarcaForm, setShowMarcaForm] = useState(false);
+  const [formMarcaNombre, setFormMarcaNombre] = useState('');
+  const [submittingMarca, setSubmittingMarca] = useState(false);
+  const [togglingMarcaId, setTogglingMarcaId] = useState<string | null>(null);
   const [savingProfileId, setSavingProfileId] = useState<string | null>(null);
   const [showUserForm, setShowUserForm] = useState(false);
   const [userForm, setUserForm] = useState(EMPTY_USER_FORM);
@@ -109,6 +118,58 @@ export default function Admin() {
       loadUsuarios();
     }
   }, [tab]);
+
+  React.useEffect(() => {
+    const loadMarcas = async () => {
+      try {
+        setLoadingMarcas(true);
+        const data = await getMarcas();
+        setMarcas(data);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Error al cargar marcas');
+      } finally {
+        setLoadingMarcas(false);
+      }
+    };
+
+    if (tab === 'marcas') {
+      loadMarcas();
+    }
+  }, [tab]);
+
+  const handleAddMarca = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formMarcaNombre.trim()) {
+      setError('El nombre de la marca es obligatorio.');
+      return;
+    }
+    setSubmittingMarca(true);
+    setError('');
+
+    try {
+      const created = await createMarca(formMarcaNombre.trim());
+      setMarcas((current) => [...current, created].sort((a, b) => a.nombre.localeCompare(b.nombre)));
+      setFormMarcaNombre('');
+      setShowMarcaForm(false);
+      toast.success(`Marca ${created.nombre} creada correctamente`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al crear marca');
+    } finally {
+      setSubmittingMarca(false);
+    }
+  };
+
+  const handleToggleMarcaActive = async (marca: Marca) => {
+    setTogglingMarcaId(marca.id);
+    try {
+      const updated = await updateMarca(marca.id, { activo: !marca.activo });
+      setMarcas((current) => current.map((item) => (item.id === marca.id ? updated : item)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al actualizar marca');
+    } finally {
+      setTogglingMarcaId(null);
+    }
+  };
 
   const handleAddAuditor = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -252,7 +313,7 @@ export default function Admin() {
     }
   };
 
-  const loadingPrincipal = tab === 'auditores' ? loadingAuditores : loadingUsuarios;
+  const loadingPrincipal = tab === 'auditores' ? loadingAuditores : tab === 'marcas' ? loadingMarcas : loadingUsuarios;
 
   return (
     <AppLayout title="Administracion">
@@ -280,6 +341,15 @@ export default function Admin() {
           }`}
         >
           Usuarios del panel
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab('marcas')}
+          className={`rounded-md px-4 py-2 text-sm font-semibold transition ${
+            tab === 'marcas' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'
+          }`}
+        >
+          Marcas (campanas)
         </button>
       </div>
 
@@ -379,6 +449,88 @@ export default function Admin() {
                           }`}
                         >
                           {auditor.activo ? 'Activo' : 'Inactivo'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
+      ) : tab === 'marcas' ? (
+        <>
+          <div className="mb-6 flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-semibold">Catalogo de marcas</h2>
+              <p className="mt-1 text-sm text-gray-600">
+                Marcas disponibles para armar campanias (Modulo Campanias). Solo las marcas activas apareceran en el selector del asistente.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowMarcaForm(!showMarcaForm)}
+              className="rounded-lg bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700"
+            >
+              {showMarcaForm ? 'Cancelar' : '+ Agregar marca'}
+            </button>
+          </div>
+
+          {showMarcaForm && (
+            <form onSubmit={handleAddMarca} className="mb-6 rounded-lg bg-white p-6 shadow">
+              <label className="block max-w-md text-sm font-medium text-gray-700">
+                Nombre de la marca
+                <input
+                  type="text"
+                  autoFocus
+                  value={formMarcaNombre}
+                  onChange={(e) => setFormMarcaNombre(e.target.value)}
+                  required
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                  placeholder="Ej: Unilever"
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={submittingMarca}
+                className="mt-4 rounded-lg bg-green-600 px-6 py-2 font-medium text-white hover:bg-green-700 disabled:opacity-50"
+              >
+                {submittingMarca ? 'Creando...' : 'Crear marca'}
+              </button>
+            </form>
+          )}
+
+          <div className="overflow-hidden rounded-lg bg-white shadow">
+            <table className="w-full">
+              <thead className="border-b bg-gray-100">
+                <tr>
+                  <th className="px-6 py-3 text-left font-semibold">Marca</th>
+                  <th className="px-6 py-3 text-left font-semibold">Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {marcas.length === 0 ? (
+                  <tr>
+                    <td colSpan={2} className="px-6 py-8 text-center text-gray-500">
+                      No hay marcas cargadas. Agrega la primera para poder armar campanias.
+                    </td>
+                  </tr>
+                ) : (
+                  marcas.map((marca) => (
+                    <tr key={marca.id} className="border-b hover:bg-gray-50">
+                      <td className="px-6 py-4 font-medium">{marca.nombre}</td>
+                      <td className="px-6 py-4">
+                        <button
+                          type="button"
+                          disabled={togglingMarcaId === marca.id}
+                          onClick={() => handleToggleMarcaActive(marca)}
+                          className={`rounded px-3 py-1 text-xs font-semibold transition disabled:opacity-50 ${
+                            marca.activo
+                              ? 'bg-green-100 text-green-800 hover:bg-green-200'
+                              : 'bg-red-100 text-red-800 hover:bg-red-200'
+                          }`}
+                        >
+                          {marca.activo ? 'Activa' : 'Inactiva'}
                         </button>
                       </td>
                     </tr>

@@ -157,6 +157,72 @@ class MetaClient:
             logger.error(f"Failed to send document to {phone}: {e}")
             return False
 
+    async def send_template(
+        self,
+        phone: str,
+        template_name: str,
+        language_code: str = "es_AR",
+        body_params: Optional[List[str]] = None,
+        button_params: Optional[List[Dict[str, str]]] = None,
+    ) -> bool:
+        """Send a pre-approved WhatsApp message template (business-initiated messages,
+        outside the 24h session window). The template must already be approved in Meta
+        Business Manager before this call will succeed — see
+        ARQUITECTURA_DESVIOS_CAMPANIAS.md, seccion 2.4, for the templates a produccion
+        necesita (campana_nueva_sucursal, desvio_correccion_revisada,
+        campana_recordatorio_tareas, insumo_solicitud_confirmada, sla_auditor_revision_vencido).
+
+        Args:
+            phone: Phone number.
+            template_name: Exact template name registered in Meta.
+            language_code: Template locale (e.g. "es_AR", "es").
+            body_params: Positional {{1}}, {{2}}... values for the BODY component, in order.
+            button_params: Optional list of dicts {"sub_type": "quick_reply", "index": "0",
+                "payload": "..."} for interactive button components on the template.
+        """
+        try:
+            to_number = self._normalize_whatsapp_number(phone)
+            url = f"{self.BASE_URL}/{self.phone_number_id}/messages"
+
+            components = []
+            if body_params:
+                components.append({
+                    "type": "body",
+                    "parameters": [{"type": "text", "text": param} for param in body_params],
+                })
+            if button_params:
+                for button in button_params:
+                    components.append({
+                        "type": "button",
+                        "sub_type": button.get("sub_type", "quick_reply"),
+                        "index": button.get("index", "0"),
+                        "parameters": [{"type": "payload", "payload": button.get("payload", "")}],
+                    })
+
+            payload: dict = {
+                "messaging_product": "whatsapp",
+                "to": to_number,
+                "type": "template",
+                "template": {
+                    "name": template_name,
+                    "language": {"code": language_code},
+                },
+            }
+            if components:
+                payload["template"]["components"] = components
+
+            headers = {"Authorization": f"Bearer {self.access_token}"}
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json=payload, headers=headers, timeout=30)
+                if response.status_code == 200:
+                    logger.info(f"Sent template '{template_name}' to {phone}")
+                    return True
+                logger.error(f"Failed to send template '{template_name}' to {phone}: {response.status_code} {response.text}")
+                return False
+        except Exception as e:
+            logger.error(f"Failed to send template '{template_name}' to {phone}: {e}")
+            return False
+
     async def send_message(self, message: WhatsAppMessage) -> bool:
         """Send message (text or file)."""
         if message.file_url:

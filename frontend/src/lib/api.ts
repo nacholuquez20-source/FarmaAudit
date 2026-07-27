@@ -20,6 +20,7 @@ import type {
   CreatePanelUserInput,
   UpdatePanelUserInput,
   GestionRevisionAccion,
+  Marca,
 } from '../types';
 
 const VALID_STORAGE_BUCKETS = ['auditoria-respuestas', 'desvio-evidencias'] as const;
@@ -563,6 +564,41 @@ export async function updateAuditor(telefono: string, data: Partial<Auditor>): P
 
   if (error) throw new Error(handleApiError(error));
   return result;
+}
+
+export async function getMarcas(): Promise<Marca[]> {
+  const { data, error } = await supabase
+    .from('marcas')
+    .select('*')
+    .order('nombre');
+  if (error) {
+    if (isMissingTableError(error, 'marcas')) return [];
+    throw new Error(handleApiError(error));
+  }
+  return data || [];
+}
+
+export async function createMarca(nombre: string): Promise<Marca> {
+  const { data, error } = await supabase
+    .from('marcas')
+    .insert([{ nombre }])
+    .select()
+    .single();
+
+  if (error) throw new Error(handleApiError(error));
+  return data;
+}
+
+export async function updateMarca(id: string, patch: Partial<Pick<Marca, 'nombre' | 'activo'>>): Promise<Marca> {
+  const { data, error } = await supabase
+    .from('marcas')
+    .update(patch)
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) throw new Error(handleApiError(error));
+  return data;
 }
 
 export async function listPanelProfiles(): Promise<UserProfile[]> {

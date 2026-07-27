@@ -183,9 +183,45 @@ Identidad del encargado: reusar `get_encargado_by_phone` (`supabase_manager.py:7
 | `insumo_solicitud_confirmada` | UTILITY | insumo, ETA / o "escalado a laboratorio" (v2) | Confirmación de despacho o de escalamiento a labo/APM |
 | `sla_auditor_revision_vencido` | UTILITY (interno, no a encargado) | desvío, antigüedad | **(v2 — especialista)** Alerta a auditor/coordinador cuando `En_revision` supera 72h — puede resolverse como notificación in-app en vez de WhatsApp si el destinatario es interno |
 
-Redactar copy en tono operativo ("Tenés N tareas asignadas…"), NO promocional, para que Meta no lo reclasifique como MARKETING (costo mayor, opt-in requerido, riesgo de rechazo). Agregar soporte `type: template` a `meta_client.py` (hoy no existe).
+Redactar copy en tono operativo ("Tenés N tareas asignadas…"), NO promocional, para que Meta no lo reclasifique como MARKETING (costo mayor, opt-in requerido, riesgo de rechazo). Soporte `type: template` agregado en `meta_client.py` — `MetaClient.send_template(phone, template_name, language_code, body_params, button_params)` **(Fase 2, hecho)**.
 
 **Envío masivo**: fan-out con throttling vía el scheduler existente (APScheduler), no loop síncrono — límites de tier de Meta (250/1K/10K contactos únicos/24h) y sin retry/backoff en `meta_client.py` hoy.
+
+#### 2.4 bis — Copy exacto para dar de alta en Meta Business Manager (Fase 2)
+
+Categoría **Utility** en los 5 casos (no Marketing). Idioma sugerido: `es_AR` (fallback `es` si Meta no distingue variante para tu WABA). Las variables `{{n}}` van en el orden en que se pasan a `body_params`.
+
+**1. `campana_nueva_sucursal`**
+```
+Hola {{1}}, tenés {{2}} tareas nuevas asignadas para la campaña {{3}}. Respondé este mensaje para verlas.
+```
+`{{1}}` responsable/sucursal · `{{2}}` cantidad de tareas · `{{3}}` nombre de campaña/marca.
+Botón sugerido (quick reply): "Ver tareas".
+
+**2. `desvio_correccion_revisada`**
+```
+Hola, tu corrección del desvío "{{1}}" fue {{2}}. Respondé este mensaje para más detalles.
+```
+`{{1}}` descripción del desvío · `{{2}}` resultado, ej. "aprobada" o "rechazada — revisá el motivo en FarmaAudit".
+
+**3. `campana_recordatorio_tareas`**
+```
+Hola {{1}}, tenés {{2}} tareas de campaña pendientes de completar. Respondé este mensaje para verlas.
+```
+`{{1}}` responsable · `{{2}}` cantidad de tareas pendientes (digest agregado, no por campaña individual — ver §2.3).
+
+**4. `insumo_solicitud_confirmada`**
+```
+Hola, tu pedido de {{1}} fue registrado. Estado: {{2}}.
+```
+`{{1}}` insumo solicitado · `{{2}}` estado/ETA, o "escalado al laboratorio" cuando `proveedor = laboratorio_apm`.
+
+**5. `sla_auditor_revision_vencido`** (interno — a `coordinador_tel`, no al encargado)
+```
+FarmaAudit: el desvío {{1}} ({{2}}) lleva más de 72hs esperando revisión del auditor.
+```
+`{{1}}` id_gestion · `{{2}}` sucursal.
+Prioridad baja: hoy se manda como texto libre (`send_text`) porque el destinatario interno suele tener ventana de 24h abierta; solo hace falta el template si `coordinador_tel` deja de escribirle al bot regularmente.
 
 ### 2.5 Frontend
 
@@ -254,11 +290,11 @@ Nav en `AppLayout.tsx`: ícono `Megaphone`, entre "Desvíos" y "Sucursales". Mis
 
 ## 5. Fases de implementación propuestas
 
-**Fase 1 — Ciclo de revisión de desvíos** (sin dependencias externas):
-estado `En_revision` + campos nuevos en `gestion` (incluye `en_revision_desde` y estado `En_gestion_terceros`, **v2**) → endpoint `/api/gestion/{id}/revision` → badge de fila + tab "Revisión" + `AprobarRechazarPanel` → fix del placeholder de evidencias → feedback WhatsApp en ventana 24h → job `remind_sla_auditor_revision` **(v2)** → antigüedad visible en filtro "Pendiente de revisión" **(v2)**.
+**Fase 1 — Ciclo de revisión de desvíos** ✅ hecho (commit `2eb1d68`):
+estado `En_revision` + campos nuevos en `gestion` (incluye `en_revision_desde` y estado `En_gestion_terceros`, **v2**) → endpoint `/api/gestion/{id}/revision` → badge de fila + tab "Revisión" + `AprobarRechazarPanel` → fix del placeholder de evidencias → feedback WhatsApp en ventana 24h → job `remind_sla_auditor_revision` **(v2)** → antigüedad visible en filtro "Pendiente de revisión" **(v2)**. Migración: `frontend/docs/sql/etapa-14-desvio-revision.sql`.
 
-**Fase 2 — Infraestructura de campañas**:
-tablas + RLS (incluye `solicitudes_insumo.proveedor`/`contacto_trade`, `campania_resultados`, `campanias.vigencia_acuerdo`/`contraprestacion`, ALTER `sucursales` `categoria`/`tiene_perfumeria`, todo **v2**) → CRUD de marcas en Admin → soporte `type: template` en `meta_client.py` → **registrar templates en Meta (arrancar YA: 24-48h + posibles rechazos)**.
+**Fase 2 — Infraestructura de campañas** ✅ schema/CRUD/template hechos, falta el paso manual en Meta:
+tablas + RLS (incluye `solicitudes_insumo.proveedor`/`contacto_trade`, `campania_resultados`, `campanias.acuerdo_desde/acuerdo_hasta/contraprestacion`, ALTER `sucursales` `categoria`/`tiene_perfumeria`, todo **v2**) → CRUD de marcas en Admin → soporte `type: template` en `meta_client.py`. Migración: `frontend/docs/sql/etapa-15-campanias.sql` (**falta correrla en Supabase**). Templates redactados en §2.4 bis — **falta darlos de alta en Meta Business Manager (paso manual del usuario, 24-48h + posible rechazo)**.
 
 **Fase 3 — Módulo Campañas web**:
 wizard (carga de acuerdo comercial, filtro de alcance por segmentación, preview de WhatsApp opcional — **v2**) → tablero de seguimiento (celdas separadas `burbuja_precio`/`descuento_caja`, venta real como KPI central en vez de `%` completado — **v2**) → vista responsable → endpoints (incluye `POST /api/campanias/{id}/resultados`, **v2**).

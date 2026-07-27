@@ -14,7 +14,7 @@ export type DesvioEventoTipo = 'creacion' | 'contacto' | 'respuesta' | 'cierre' 
 export type DesvioOrigen = 'auditor' | 'sucursal';
 export type NotificacionTipo = 'mensaje_nuevo' | 'encargado_respondio' | 'estado_cambio' | 'vencimiento_proximo' | 'sla_revision_vencido';
 export type GestionRevisionAccion = 'aprobar' | 'rechazar' | 'en_gestion_terceros' | 'retomar';
-export type AdminTabKey = 'auditores' | 'usuarios';
+export type AdminTabKey = 'auditores' | 'usuarios' | 'marcas';
 export type DashboardView = 'general' | 'zona';
 export type SucursalDetailTab = 'reportes' | 'gestiones' | 'stock' | 'auditorias';
 export type SucursalEditableField = 'nombre' | 'direccion' | 'zona' | 'responsable' | 'tel_responsable';
@@ -179,6 +179,13 @@ export interface Auditor {
   nombre: string;
   cuadrilla: string;
   activo: boolean;
+}
+
+export interface Marca {
+  id: string;
+  nombre: string;
+  activo: boolean;
+  created_at?: string;
 }
 
 export interface UserProfile {
