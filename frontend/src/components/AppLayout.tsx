@@ -7,6 +7,7 @@ import {
   ClipboardCheck,
   Home,
   LogOut,
+  Megaphone,
   Settings,
   Store,
 } from 'lucide-react';
@@ -57,12 +58,16 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
       navItems.push({ to: '/dashboard', label: 'Inicio', icon: Home });
     if (hasModuleAccess(profile, 'gestion_desvios') || hasModuleAccess(profile, 'revision_desvios'))
       navItems.push({ to: '/desvios', label: 'Desvios', icon: ClipboardCheck });
+    if (hasModuleAccess(profile, 'campanias'))
+      navItems.push({ to: '/campanias', label: 'Campanias', icon: Megaphone });
     if (hasModuleAccess(profile, 'sucursales'))
       navItems.push({ to: '/sucursales', label: 'Sucursales', icon: Store });
     if (canAccessAdmin) navItems.push({ to: '/admin', label: 'Admin', icon: Settings });
   } else if (role === 'auditor') {
     if (hasModuleAccess(profile, 'gestion_desvios') || hasModuleAccess(profile, 'revision_desvios'))
       navItems.push({ to: '/desvios', label: 'Desvios', icon: ClipboardCheck });
+    if (hasModuleAccess(profile, 'campanias'))
+      navItems.push({ to: '/campanias', label: 'Campanias', icon: Megaphone });
     if (hasModuleAccess(profile, 'sucursales'))
       navItems.push({ to: '/sucursales', label: 'Sucursales', icon: Store });
   } else if (role === 'sucursal') {
@@ -70,6 +75,8 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
       navItems.push({ to: '/dashboard', label: 'Resumen', icon: Home });
     if (hasModuleAccess(profile, 'mis_desvios'))
       navItems.push({ to: '/mis-desvios', label: 'Desvios', icon: AlertTriangle });
+    if (hasModuleAccess(profile, 'mis_campanias'))
+      navItems.push({ to: '/mis-campanias', label: 'Campanias', icon: Megaphone });
     if (hasModuleAccess(profile, 'sucursales'))
       navItems.push({
         to: profile?.id_sucursal ? `/sucursales/${profile.id_sucursal}` : '/sucursales',

@@ -11,12 +11,14 @@ export const MODULE_OPTIONS: { key: ModulePermission; label: string; roles: Role
   { key: 'mis_desvios', label: 'Mis desvios', roles: ['sucursal'] },
   { key: 'sucursales', label: 'Sucursales', roles: ['admin', 'auditor', 'sucursal'] },
   { key: 'admin', label: 'Administracion', roles: ['admin'] },
+  { key: 'campanias', label: 'Campanias', roles: ['admin', 'auditor'] },
+  { key: 'mis_campanias', label: 'Mis campanias', roles: ['sucursal'] },
 ];
 
 export const DEFAULT_MODULES_BY_ROLE: Record<Role, ModulePermission[]> = {
   admin: MODULE_OPTIONS.map((module) => module.key),
-  auditor: ['gestion_desvios', 'revision_desvios', 'sucursales'],
-  sucursal: ['dashboard', 'mis_desvios', 'sucursales'],
+  auditor: ['gestion_desvios', 'revision_desvios', 'sucursales', 'campanias'],
+  sucursal: ['dashboard', 'mis_desvios', 'sucursales', 'mis_campanias'],
 };
 
 export function normalizeModulePermissions(role: Role, modules?: ModulePermission[] | null): ModulePermission[] {
@@ -45,6 +47,8 @@ export function firstAllowedPath(profile: UserProfile | null): string {
   if (modules.includes('gestion_desvios')) return '/gestion-desvios';
   if (modules.includes('revision_desvios')) return '/revision-desvios';
   if (modules.includes('mis_desvios')) return '/mis-desvios';
+  if (modules.includes('campanias')) return '/campanias';
+  if (modules.includes('mis_campanias')) return '/mis-campanias';
   if (modules.includes('sucursales')) return '/sucursales';
   if (modules.includes('admin')) return '/admin';
   return '/dashboard';

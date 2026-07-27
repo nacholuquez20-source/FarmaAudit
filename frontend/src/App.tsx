@@ -15,6 +15,11 @@ const Sucursales = lazy(() => import('./pages/Sucursales'));
 const SucursalDetail = lazy(() => import('./pages/SucursalDetail'));
 const AuditPerfumeriaV2 = lazy(() => import('./pages/AuditPerfumeriaV2'));
 const Admin = lazy(() => import('./pages/Admin'));
+const Campanias = lazy(() => import('./pages/Campanias'));
+const CampaniaWizard = lazy(() => import('./pages/CampaniaWizard'));
+const CampaniaDetail = lazy(() => import('./pages/CampaniaDetail'));
+const MisCampanias = lazy(() => import('./pages/MisCampanias'));
+const MisCampaniaDetail = lazy(() => import('./pages/MisCampaniaDetail'));
 
 function LoadingGate({ title }: { title: string }) {
   const [showRetry, setShowRetry] = useState(false);
@@ -217,6 +222,51 @@ export default function App() {
             element={
               <ProtectedRoute allowRoles={['auditor', 'admin']}>
                 <AuditPerfumeriaV2 />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/campanias"
+            element={
+              <ProtectedRoute allowRoles={['admin', 'auditor']} module="campanias">
+                <Campanias />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/campanias/nueva"
+            element={
+              <ProtectedRoute allowRoles={['admin', 'auditor']} module="campanias">
+                <CampaniaWizard />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/campanias/:id"
+            element={
+              <ProtectedRoute allowRoles={['admin', 'auditor']} module="campanias">
+                <CampaniaDetail />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/mis-campanias"
+            element={
+              <ProtectedRoute allowRoles={['sucursal']} module="mis_campanias">
+                <MisCampanias />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/mis-campanias/:id"
+            element={
+              <ProtectedRoute allowRoles={['sucursal']} module="mis_campanias">
+                <MisCampaniaDetail />
               </ProtectedRoute>
             }
           />

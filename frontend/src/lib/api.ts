@@ -21,6 +21,16 @@ import type {
   UpdatePanelUserInput,
   GestionRevisionAccion,
   Marca,
+  Campania,
+  CampaniaAccion,
+  CampaniaAccionTipo,
+  CampaniaTarea,
+  CampaniaEvento,
+  CampaniaEventoTipo,
+  SolicitudInsumo,
+  SolicitudInsumoProveedor,
+  SolicitudInsumoTipo,
+  CampaniaResultado,
 } from '../types';
 
 const VALID_STORAGE_BUCKETS = ['auditoria-respuestas', 'desvio-evidencias'] as const;
@@ -1045,6 +1055,223 @@ export async function submitPerfumeriaAudit(payload: {
   }
 
   return response.json();
+}
+
+// ============ Modulo Campanias (ver ARQUITECTURA_DESVIOS_CAMPANIAS.md, Modulo 2) ============
+
+export async function getCampanias(): Promise<Campania[]> {
+  const { data, error } = await supabase
+    .from('campanias')
+    .select('*, marcas(nombre)')
+    .order('created_at', { ascending: false });
+  if (error) {
+    if (isMissingTableError(error, 'campanias')) return [];
+    throw new Error(handleApiError(error));
+  }
+  return (data ?? []) as Campania[];
+}
+
+export async function getCampaniaById(id: string): Promise<Campania | null> {
+  const { data, error } = await supabase
+    .from('campanias')
+    .select('*, marcas(nombre)')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) throw new Error(handleApiError(error));
+  return data as Campania | null;
+}
+
+export async function createCampania(input: {
+  nombre: string;
+  marca_id: string;
+  acuerdo_desde?: string | null;
+  acuerdo_hasta?: string | null;
+  contraprestacion?: string | null;
+  creado_por?: string | null;
+}): Promise<Campania> {
+  const { data, error } = await supabase
+    .from('campanias')
+    .insert([input])
+    .select()
+    .single();
+  if (error) throw new Error(handleApiError(error));
+  return data;
+}
+
+export async function createCampaniaAcciones(
+  campaniaId: string,
+  acciones: { tipo: CampaniaAccionTipo; descripcion?: string; requiere_foto?: boolean; verificable_por_foto?: boolean }[],
+): Promise<CampaniaAccion[]> {
+  const rows = acciones.map((accion) => ({
+    campania_id: campaniaId,
+    tipo: accion.tipo,
+    descripcion: accion.descripcion || null,
+    requiere_foto: accion.requiere_foto ?? true,
+    // descuento_caja depende del sistema de caja, no de una foto del encargado (ver arquitectura).
+    verificable_por_foto: accion.verificable_por_foto ?? accion.tipo !== 'descuento_caja',
+  }));
+  const { data, error } = await supabase.from('campania_acciones').insert(rows).select();
+  if (error) throw new Error(handleApiError(error));
+  return data || [];
+}
+
+export async function getCampaniaAcciones(campaniaId: string): Promise<CampaniaAccion[]> {
+  const { data, error } = await supabase
+    .from('campania_acciones')
+    .select('*')
+    .eq('campania_id', campaniaId)
+    .order('created_at');
+  if (error) throw new Error(handleApiError(error));
+  return data || [];
+}
+
+export async function activarCampania(campaniaId: string, sucursalIds: string[]): Promise<{ status: string; tareas_creadas: number }> {
+  const apiUrl = getBotApiUrl();
+  if (!apiUrl) {
+    throw new Error('Falta configurar VITE_API_URL con la URL del bot.');
+  }
+  const response = await fetch(`${apiUrl}/api/campanias/${encodeURIComponent(campaniaId)}/activar`, {
+    method: 'POST',
+    headers: await getAuthHeaders(),
+    body: JSON.stringify({ sucursal_ids: sucursalIds }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail || 'No se pudo activar la campania.');
+  }
+  return response.json();
+}
+
+export async function getCampaniaTareas(campaniaId: string): Promise<CampaniaTarea[]> {
+  const { data, error } = await supabase
+    .from('campania_tareas')
+    .select('*, campania_acciones(*), sucursales(nombre)')
+    .eq('campania_id', campaniaId)
+    .order('created_at');
+  if (error) throw new Error(handleApiError(error));
+  return (data ?? []) as CampaniaTarea[];
+}
+
+export async function getMisCampaniaTareas(idSucursal: string): Promise<CampaniaTarea[]> {
+  const { data, error } = await supabase
+    .from('campania_tareas')
+    .select('*, campania_acciones(*), campanias!inner(nombre, estado, marcas(nombre))')
+    .eq('id_sucursal', idSucursal)
+    .in('campanias.estado', ['Activa', 'En_seguimiento'])
+    .order('created_at');
+  if (error) throw new Error(handleApiError(error));
+  return (data ?? []) as CampaniaTarea[];
+}
+
+export async function updateCampaniaTarea(tareaId: string, patch: Partial<Pick<CampaniaTarea, 'estado' | 'vista_at' | 'evidencia_path'>>): Promise<CampaniaTarea> {
+  const { data, error } = await supabase
+    .from('campania_tareas')
+    .update(patch)
+    .eq('id', tareaId)
+    .select()
+    .single();
+  if (error) throw new Error(handleApiError(error));
+  return data;
+}
+
+export async function getCampaniaEventos(tareaId: string): Promise<CampaniaEvento[]> {
+  const { data, error } = await supabase
+    .from('campania_eventos')
+    .select('*')
+    .eq('tarea_id', tareaId)
+    .order('created_at');
+  if (error) throw new Error(handleApiError(error));
+  return data || [];
+}
+
+export async function createCampaniaEvento(input: {
+  tarea_id: string;
+  tipo: CampaniaEventoTipo;
+  comentario?: string;
+  actor_id?: string | null;
+  actor_nombre?: string | null;
+  metadata?: Record<string, unknown>;
+}): Promise<CampaniaEvento> {
+  const { data, error } = await supabase.from('campania_eventos').insert([input]).select().single();
+  if (error) throw new Error(handleApiError(error));
+  return data;
+}
+
+export async function createSolicitudInsumo(input: {
+  tarea_id: string;
+  tipo_insumo: SolicitudInsumoTipo;
+  detalle?: string;
+  cantidad?: string;
+  proveedor: SolicitudInsumoProveedor;
+  contacto_trade?: string;
+}): Promise<SolicitudInsumo> {
+  const { data, error } = await supabase
+    .from('solicitudes_insumo')
+    .insert([{
+      ...input,
+      // El material del laboratorio/APM no lo controla la cadena: no hay
+      // "aprobacion" interna, se escala directo (ver arquitectura, Modulo 2).
+      estado: input.proveedor === 'laboratorio_apm' ? 'Escalado_a_labo' : 'Solicitado',
+    }])
+    .select()
+    .single();
+  if (error) throw new Error(handleApiError(error));
+  return data;
+}
+
+export async function getSolicitudesInsumoPorTareas(tareaIds: string[]): Promise<SolicitudInsumo[]> {
+  if (tareaIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from('solicitudes_insumo')
+    .select('*')
+    .in('tarea_id', tareaIds)
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(handleApiError(error));
+  return data || [];
+}
+
+export async function resolverSolicitudInsumo(
+  insumo: SolicitudInsumo,
+  nuevoEstado: SolicitudInsumo['estado'],
+  aprobadoPor?: string | null,
+): Promise<SolicitudInsumo> {
+  const { data, error } = await supabase
+    .from('solicitudes_insumo')
+    .update({ estado: nuevoEstado, aprobado_por: aprobadoPor || null })
+    .eq('id', insumo.id)
+    .select()
+    .single();
+  if (error) throw new Error(handleApiError(error));
+
+  if (nuevoEstado === 'Recibido') {
+    // El insumo llego: la tarea que estaba bloqueada vuelve a quedar disponible.
+    await updateCampaniaTarea(insumo.tarea_id, { estado: 'Pendiente' });
+  }
+
+  return data;
+}
+
+export async function createCampaniaResultado(input: {
+  campania_id: string;
+  id_sucursal: string;
+  venta_periodo_campania?: number | null;
+  venta_periodo_base?: number | null;
+  unidad: 'unidades' | 'pesos';
+  cargado_por?: string | null;
+}): Promise<CampaniaResultado> {
+  const { data, error } = await supabase.from('campania_resultados').insert([input]).select().single();
+  if (error) throw new Error(handleApiError(error));
+  return data;
+}
+
+export async function getCampaniaResultados(campaniaId: string): Promise<CampaniaResultado[]> {
+  const { data, error } = await supabase
+    .from('campania_resultados')
+    .select('*')
+    .eq('campania_id', campaniaId)
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(handleApiError(error));
+  return data || [];
 }
 
 export async function exportControlesPdf(filters: {

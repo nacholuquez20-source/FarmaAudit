@@ -60,6 +60,11 @@ class GestionRevisionRequest(BaseModel):
     plazo_dias: int | None = None
 
 
+class CampaniaActivarRequest(BaseModel):
+    sucursal_ids: list[str]
+    plazo_dias: int | None = None
+
+
 class InternalMessageRequest(BaseModel):
     comentario: str
     origen: str = "auditor"
@@ -666,6 +671,94 @@ async def revisar_gestion(id_gestion: str, payload: GestionRevisionRequest, requ
 
     updated_response = client.table("gestion").select("*").eq("id_gestion", id_gestion).maybe_single().execute()
     return updated_response.data or {"status": "ok"}
+
+
+@app.post("/api/campanias/{campania_id}/activar")
+async def activar_campania(campania_id: str, payload: CampaniaActivarRequest, request: Request):
+    """Genera las tareas de campania (accion x sucursal) para las sucursales elegidas
+    y activa la campania. El envio de WhatsApp es best-effort: requiere templates
+    aprobados en Meta Business Manager (ver ARQUITECTURA_DESVIOS_CAMPANIAS.md,
+    seccion 2.4 bis) que todavia pueden no estar registrados, asi que se intenta
+    y se ignora el fallo sin bloquear la activacion (mismo criterio que el resto
+    del bot, p. ej. send_alerta_coordinador)."""
+    await _require_admin_or_auditor(request)
+    client = _get_supabase_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="Supabase is not configured")
+
+    if not payload.sucursal_ids:
+        raise HTTPException(status_code=400, detail="Selecciona al menos una sucursal")
+
+    campania_response = client.table("campanias").select("*").eq("id", campania_id).maybe_single().execute()
+    campania = campania_response.data
+    if not campania:
+        raise HTTPException(status_code=404, detail="Campania not found")
+
+    acciones_response = client.table("campania_acciones").select("*").eq("campania_id", campania_id).execute()
+    acciones = acciones_response.data or []
+    if not acciones:
+        raise HTTPException(status_code=400, detail="La campania no tiene acciones cargadas")
+
+    sucursales_response = (
+        client.table("sucursales")
+        .select("id, nombre, responsable, tel_responsable")
+        .in_("id", payload.sucursal_ids)
+        .execute()
+    )
+    sucursales = {row["id"]: row for row in (sucursales_response.data or [])}
+
+    plazo_dias = payload.plazo_dias or 14
+    plazo_fecha = (datetime.now(timezone.utc) + timedelta(days=plazo_dias)).strftime("%Y-%m-%d")
+
+    tareas_nuevas = []
+    for sucursal_id in payload.sucursal_ids:
+        sucursal = sucursales.get(sucursal_id)
+        if not sucursal:
+            continue
+        for accion in acciones:
+            tareas_nuevas.append({
+                "campania_id": campania_id,
+                "accion_id": accion["id"],
+                "id_sucursal": sucursal_id,
+                "responsable": sucursal.get("responsable"),
+                "tel_responsable": sucursal.get("tel_responsable"),
+                "estado": "Pendiente",
+                "plazo_fecha": plazo_fecha,
+            })
+
+    if not tareas_nuevas:
+        raise HTTPException(status_code=400, detail="No se encontraron sucursales validas")
+
+    client.table("campanias").update({
+        "estado": "Activa",
+        "fecha_inicio": campania.get("fecha_inicio") or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+    }).eq("id", campania_id).execute()
+
+    client.table("campania_tareas").insert(tareas_nuevas).execute()
+
+    tareas_por_sucursal: dict[str, int] = {}
+    for tarea in tareas_nuevas:
+        tareas_por_sucursal[tarea["id_sucursal"]] = tareas_por_sucursal.get(tarea["id_sucursal"], 0) + 1
+
+    meta_client = MetaClient()
+    campania_nombre = campania.get("nombre") or "campania"
+    for sucursal_id, cantidad in tareas_por_sucursal.items():
+        sucursal = sucursales.get(sucursal_id) or {}
+        telefono = "".join(ch for ch in str(sucursal.get("tel_responsable") or "") if ch.isdigit())
+        if not telefono:
+            continue
+        sent = await meta_client.send_template(
+            telefono,
+            "campana_nueva_sucursal",
+            body_params=[sucursal.get("nombre") or "", campania_nombre, str(cantidad)],
+        )
+        if not sent:
+            logger.warning(
+                f"No se pudo enviar el template de campania a la sucursal {sucursal_id} "
+                f"(campania {campania_id}) — probablemente el template no esta aprobado aun en Meta."
+            )
+
+    return {"status": "ok", "tareas_creadas": len(tareas_nuevas)}
 
 
 @app.get("/api/admin/panel-users")
