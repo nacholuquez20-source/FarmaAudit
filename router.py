@@ -410,7 +410,12 @@ class ConversationRouter:
         meta_client: MetaClient,
         encargado: Dict[str, Any],
     ) -> str:
-        """Handle branch manager responses to open deviations."""
+        """Handle branch manager responses to open deviations and campaign tasks.
+
+        Pull-based on purpose for campanias: the bot never initiates the campaign
+        conversation (that needs a Meta template that isn't approved yet), the
+        encargado always writes first and the bot offers whatever is pending.
+        """
         conv = self.sheets.get_conversacion(payload.telefono)
         if not conv:
             conv = Conversacion(
@@ -424,6 +429,24 @@ class ConversationRouter:
         if conv.estado_actual == ConversationState.ENCARGADO_ESPERANDO_RESPUESTA:
             return await self._handle_encargado_respuesta(payload, conv, meta_client, encargado)
 
+        if conv.estado_actual == ConversationState.ENCARGADO_ELIGIENDO_MODULO:
+            return await self._handle_encargado_eligiendo_modulo(payload, conv, meta_client, encargado)
+
+        if conv.estado_actual == ConversationState.CAMPANIA_LISTANDO_TAREAS:
+            return await self._handle_campania_listando_tareas(payload, conv, meta_client, encargado)
+
+        if conv.estado_actual == ConversationState.CAMPANIA_TAREA_ACTIVA:
+            return await self._handle_campania_tarea_activa(payload, conv, meta_client, encargado)
+
+        if conv.estado_actual == ConversationState.CAMPANIA_ESPERANDO_EVIDENCIA:
+            return await self._handle_campania_esperando_evidencia(payload, conv, meta_client, encargado)
+
+        if conv.estado_actual == ConversationState.CAMPANIA_SOLICITANDO_INSUMO_DETALLE:
+            return await self._handle_campania_solicitando_insumo_detalle(payload, conv, meta_client, encargado)
+
+        if conv.estado_actual == ConversationState.CAMPANIA_SOLICITANDO_INSUMO_PROVEEDOR:
+            return await self._handle_campania_solicitando_insumo_proveedor(payload, conv, meta_client, encargado)
+
         return await self._start_encargado_flow(payload, meta_client, encargado)
 
     async def _start_encargado_flow(
@@ -432,15 +455,76 @@ class ConversationRouter:
         meta_client: MetaClient,
         encargado: Dict[str, Any],
     ) -> str:
-        gestiones = self.sheets.get_gestiones_pendientes_sucursal(str(encargado["id_sucursal"]))
-        if not gestiones:
+        """Entry point when the encargado has no flow in progress: offer whatever is
+        pending (desvios, campanias, both, or neither)."""
+        id_sucursal = str(encargado["id_sucursal"])
+        gestiones = self.sheets.get_gestiones_pendientes_sucursal(id_sucursal)
+        tareas = self.sheets.get_campania_tareas_pendientes_sucursal(id_sucursal)
+
+        if not gestiones and not tareas:
             await meta_client.send_text(
                 payload.telefono,
-                f"Hola {encargado.get('nombre') or ''}. No tenes desvios pendientes para responder.",
+                f"Hola {encargado.get('nombre') or ''}. No tenes desvios ni tareas de campana pendientes.",
             )
             self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
             return "encargado_sin_pendientes"
 
+        if gestiones and tareas:
+            await meta_client.send_quick_reply(
+                payload.telefono,
+                (
+                    f"Hola {encargado.get('nombre') or ''}. Tenes {len(gestiones)} desvio(s) y "
+                    f"{len(tareas)} tarea(s) de campana pendientes. Que queres ver?"
+                ),
+                buttons=[
+                    {"id": "ver_desvios", "title": "Desvios"},
+                    {"id": "ver_campanias", "title": "Campanias"},
+                ],
+            )
+            self.sheets.update_conversacion(payload.telefono, ConversationState.ENCARGADO_ELIGIENDO_MODULO)
+            return "encargado_menu_modulo_enviado"
+
+        if tareas:
+            return await self._start_campania_flow(payload, meta_client, encargado, tareas)
+
+        return await self._start_desvio_flow(payload, meta_client, encargado, gestiones)
+
+    async def _handle_encargado_eligiendo_modulo(
+        self,
+        payload: WhatsAppPayload,
+        conv: Conversacion,
+        meta_client: MetaClient,
+        encargado: Dict[str, Any],
+    ) -> str:
+        choice = (payload.contenido or "").strip().lower()
+        id_sucursal = str(encargado["id_sucursal"])
+
+        if choice == "ver_campanias":
+            tareas = self.sheets.get_campania_tareas_pendientes_sucursal(id_sucursal)
+            if not tareas:
+                await meta_client.send_text(payload.telefono, "No tenes tareas de campana pendientes.")
+                self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
+                return "encargado_campanias_vacio"
+            return await self._start_campania_flow(payload, meta_client, encargado, tareas)
+
+        if choice == "ver_desvios":
+            gestiones = self.sheets.get_gestiones_pendientes_sucursal(id_sucursal)
+            if not gestiones:
+                await meta_client.send_text(payload.telefono, "No tenes desvios pendientes.")
+                self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
+                return "encargado_desvios_vacio"
+            return await self._start_desvio_flow(payload, meta_client, encargado, gestiones)
+
+        await meta_client.send_text(payload.telefono, "Elegi una opcion: Desvios o Campanias.")
+        return "encargado_modulo_invalido"
+
+    async def _start_desvio_flow(
+        self,
+        payload: WhatsAppPayload,
+        meta_client: MetaClient,
+        encargado: Dict[str, Any],
+        gestiones: List[Dict[str, Any]],
+    ) -> str:
         opciones = gestiones[:9]
         lines = [
             f"Hola {encargado.get('nombre') or ''}. Tenes {len(gestiones)} desvio(s) pendiente(s):",
@@ -461,6 +545,305 @@ class ConversationRouter:
         )
         await meta_client.send_text(payload.telefono, "\n".join(lines))
         return "encargado_menu_enviado"
+
+    @staticmethod
+    def _format_tarea_row(tarea: Dict[str, Any]) -> Dict[str, str]:
+        accion = tarea.get("campania_acciones") or {}
+        campania = tarea.get("campanias") or {}
+        label = str(accion.get("descripcion") or accion.get("tipo") or "Tarea").strip()
+        prefix = "[Bloqueada] " if tarea.get("estado") == "Bloqueada_por_insumo" else ""
+        return {
+            "id": str(tarea["id"]),
+            "title": f"{prefix}{label}"[:24],
+            "description": str(campania.get("nombre") or "")[:72],
+        }
+
+    async def _start_campania_flow(
+        self,
+        payload: WhatsAppPayload,
+        meta_client: MetaClient,
+        encargado: Dict[str, Any],
+        tareas: List[Dict[str, Any]],
+    ) -> str:
+        opciones = tareas[:9]
+        rows = [self._format_tarea_row(tarea) for tarea in opciones]
+        context = {
+            "flujo": "campania",
+            "id_sucursal": encargado["id_sucursal"],
+            "tareas": [str(tarea["id"]) for tarea in opciones],
+        }
+        self.sheets.update_conversacion(
+            telefono=payload.telefono,
+            estado=ConversationState.CAMPANIA_LISTANDO_TAREAS,
+            ultimo_mensaje=json.dumps(context),
+        )
+        await meta_client.send_list_message(
+            payload.telefono,
+            header="Campanas",
+            body=f"Hola {encargado.get('nombre') or ''}. Tenes {len(tareas)} tarea(s) de campana pendientes.",
+            footer="",
+            button_text="Ver tareas",
+            options=rows,
+        )
+        return "campania_lista_enviada"
+
+    async def _handle_campania_listando_tareas(
+        self,
+        payload: WhatsAppPayload,
+        conv: Conversacion,
+        meta_client: MetaClient,
+        encargado: Dict[str, Any],
+    ) -> str:
+        context = self._safe_json_loads(conv.ultimo_mensaje)
+        tareas_raw = context.get("tareas")
+        tareas_ids: List[str] = tareas_raw if isinstance(tareas_raw, list) else []
+        tarea_id = (payload.contenido or "").strip()
+
+        if tarea_id not in tareas_ids:
+            await meta_client.send_text(payload.telefono, "Elegi una tarea de la lista que te mande.")
+            return "campania_seleccion_invalida"
+
+        tarea = self.sheets.get_campania_tarea_by_id(tarea_id)
+        if not tarea or tarea.get("id_sucursal") != encargado.get("id_sucursal"):
+            await meta_client.send_text(payload.telefono, "No pude encontrar esa tarea. Escribi cualquier mensaje para reiniciar.")
+            self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
+            return "campania_tarea_no_encontrada"
+
+        accion = tarea.get("campania_acciones") or {}
+        campania = tarea.get("campanias") or {}
+        context["tarea_id"] = tarea_id
+        self.sheets.update_conversacion(
+            telefono=payload.telefono,
+            estado=ConversationState.CAMPANIA_TAREA_ACTIVA,
+            id_pendiente=tarea_id,
+            ultimo_mensaje=json.dumps(context),
+        )
+        label = accion.get("descripcion") or accion.get("tipo") or "Tarea"
+        await meta_client.send_quick_reply(
+            payload.telefono,
+            f"{campania.get('nombre') or 'Campana'}: {label}\nQue queres hacer?",
+            buttons=[
+                {"id": "completada", "title": "Completada"},
+                {"id": "falta_insumo", "title": "Falta insumo"},
+            ],
+        )
+        return "campania_tarea_activa"
+
+    async def _handle_campania_tarea_activa(
+        self,
+        payload: WhatsAppPayload,
+        conv: Conversacion,
+        meta_client: MetaClient,
+        encargado: Dict[str, Any],
+    ) -> str:
+        context = self._safe_json_loads(conv.ultimo_mensaje)
+        tarea_id = conv.id_pendiente or context.get("tarea_id")
+        choice = (payload.contenido or "").strip().lower()
+
+        if not tarea_id:
+            self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
+            return await self._start_encargado_flow(payload, meta_client, encargado)
+
+        tarea = self.sheets.get_campania_tarea_by_id(str(tarea_id))
+        if not tarea or tarea.get("id_sucursal") != encargado.get("id_sucursal"):
+            await meta_client.send_text(payload.telefono, "Esa tarea ya no esta disponible.")
+            self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
+            return "campania_tarea_no_disponible"
+
+        accion = tarea.get("campania_acciones") or {}
+
+        if choice == "completada":
+            if accion.get("verificable_por_foto", True):
+                context["tarea_id"] = str(tarea_id)
+                self.sheets.update_conversacion(
+                    telefono=payload.telefono,
+                    estado=ConversationState.CAMPANIA_ESPERANDO_EVIDENCIA,
+                    id_pendiente=str(tarea_id),
+                    ultimo_mensaje=json.dumps(context),
+                )
+                await meta_client.send_text(payload.telefono, "Mandame una foto de evidencia.")
+                return "campania_esperando_evidencia"
+
+            self.sheets.update_campania_tarea_fields(str(tarea_id), {
+                "estado": "Completada",
+                "vista_at": tarea.get("vista_at") or datetime.now(timezone.utc).isoformat(),
+            })
+            self.sheets.save_campania_evento(
+                tarea_id=str(tarea_id),
+                tipo="completada",
+                comentario="Marcado como hecho desde WhatsApp.",
+                actor_nombre=str(encargado.get("nombre") or "Encargado"),
+                metadata={"canal": "whatsapp"},
+            )
+            await meta_client.send_text(payload.telefono, "Listo, marcada como completada.")
+            return await self._continue_campania_flow(payload, meta_client, encargado)
+
+        if choice == "falta_insumo":
+            context["tarea_id"] = str(tarea_id)
+            self.sheets.update_conversacion(
+                telefono=payload.telefono,
+                estado=ConversationState.CAMPANIA_SOLICITANDO_INSUMO_DETALLE,
+                id_pendiente=str(tarea_id),
+                ultimo_mensaje=json.dumps(context),
+            )
+            await meta_client.send_text(payload.telefono, "Que insumo te falta? Contame brevemente (y cantidad si aplica).")
+            return "campania_solicitando_insumo_detalle"
+
+        await meta_client.send_text(payload.telefono, "Elegi una opcion: Completada o Falta insumo.")
+        return "campania_tarea_activa_invalida"
+
+    async def _handle_campania_esperando_evidencia(
+        self,
+        payload: WhatsAppPayload,
+        conv: Conversacion,
+        meta_client: MetaClient,
+        encargado: Dict[str, Any],
+    ) -> str:
+        context = self._safe_json_loads(conv.ultimo_mensaje)
+        tarea_id = conv.id_pendiente or context.get("tarea_id")
+        if not tarea_id:
+            self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
+            return await self._start_encargado_flow(payload, meta_client, encargado)
+
+        tarea = self.sheets.get_campania_tarea_by_id(str(tarea_id))
+        if not tarea or tarea.get("id_sucursal") != encargado.get("id_sucursal"):
+            await meta_client.send_text(payload.telefono, "Esa tarea ya no esta disponible.")
+            self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
+            return "campania_tarea_no_disponible"
+
+        if payload.tipo != "image" or not payload.media_id:
+            await meta_client.send_text(payload.telefono, "Mandame una foto para continuar.")
+            return "campania_evidencia_invalida"
+
+        actor_nombre = str(encargado.get("nombre") or "Encargado")
+        try:
+            content, mime_type = await meta_client.download_media_with_metadata(payload.media_id)
+            upload_result = self.sheets.upload_campania_evidencia(str(tarea_id), content, mime_type)
+            path = upload_result["path"]
+            thumb_path = upload_result.get("thumb_path")
+
+            self.sheets.update_campania_tarea_fields(str(tarea_id), {
+                "estado": "Completada",
+                "evidencia_path": path,
+                "vista_at": tarea.get("vista_at") or datetime.now(timezone.utc).isoformat(),
+            })
+            self.sheets.save_campania_evento(
+                tarea_id=str(tarea_id),
+                tipo="evidencia",
+                comentario=(payload.contenido or "").strip() or "Foto de evidencia enviada por WhatsApp.",
+                actor_nombre=actor_nombre,
+                metadata={
+                    "canal": "whatsapp",
+                    "foto_path": path,
+                    "thumb_path": thumb_path,
+                    "mime_type": mime_type,
+                    "size_bytes": len(content),
+                },
+            )
+            await meta_client.send_text(payload.telefono, "Listo, marcada como completada.")
+            return await self._continue_campania_flow(payload, meta_client, encargado)
+        except Exception as e:
+            logger.error(f"Error saving campania evidencia for {tarea_id}: {e}", exc_info=True)
+            await meta_client.send_text(payload.telefono, "No pude guardar la foto. Intenta nuevamente.")
+            return "campania_evidencia_error"
+
+    async def _handle_campania_solicitando_insumo_detalle(
+        self,
+        payload: WhatsAppPayload,
+        conv: Conversacion,
+        meta_client: MetaClient,
+        encargado: Dict[str, Any],
+    ) -> str:
+        context = self._safe_json_loads(conv.ultimo_mensaje)
+        tarea_id = conv.id_pendiente or context.get("tarea_id")
+        if not tarea_id:
+            self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
+            return await self._start_encargado_flow(payload, meta_client, encargado)
+
+        detalle = (payload.contenido or "").strip()
+        if payload.tipo != "text" or not detalle:
+            await meta_client.send_text(payload.telefono, "Contame en texto que insumo te falta.")
+            return "campania_insumo_detalle_invalido"
+
+        context["tarea_id"] = str(tarea_id)
+        context["insumo_detalle"] = detalle
+        self.sheets.update_conversacion(
+            telefono=payload.telefono,
+            estado=ConversationState.CAMPANIA_SOLICITANDO_INSUMO_PROVEEDOR,
+            id_pendiente=str(tarea_id),
+            ultimo_mensaje=json.dumps(context),
+        )
+        await meta_client.send_quick_reply(
+            payload.telefono,
+            "Quien provee ese insumo?",
+            buttons=[
+                {"id": "laboratorio_apm", "title": "Laboratorio/APM"},
+                {"id": "cadena", "title": "Cadena"},
+            ],
+        )
+        return "campania_solicitando_insumo_proveedor"
+
+    async def _handle_campania_solicitando_insumo_proveedor(
+        self,
+        payload: WhatsAppPayload,
+        conv: Conversacion,
+        meta_client: MetaClient,
+        encargado: Dict[str, Any],
+    ) -> str:
+        context = self._safe_json_loads(conv.ultimo_mensaje)
+        tarea_id = conv.id_pendiente or context.get("tarea_id")
+        detalle = str(context.get("insumo_detalle") or "").strip()
+        proveedor = (payload.contenido or "").strip().lower()
+
+        if not tarea_id or not detalle:
+            self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
+            return await self._start_encargado_flow(payload, meta_client, encargado)
+
+        if proveedor not in {"laboratorio_apm", "cadena"}:
+            await meta_client.send_text(payload.telefono, "Elegi una opcion: Laboratorio/APM o Cadena.")
+            return "campania_insumo_proveedor_invalido"
+
+        tarea = self.sheets.get_campania_tarea_by_id(str(tarea_id))
+        if not tarea or tarea.get("id_sucursal") != encargado.get("id_sucursal"):
+            await meta_client.send_text(payload.telefono, "Esa tarea ya no esta disponible.")
+            self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
+            return "campania_tarea_no_disponible"
+
+        self.sheets.create_solicitud_insumo(
+            tarea_id=str(tarea_id),
+            tipo_insumo="otro",
+            detalle=detalle,
+            cantidad=None,
+            proveedor=proveedor,
+        )
+        self.sheets.update_campania_tarea_fields(str(tarea_id), {"estado": "Bloqueada_por_insumo"})
+        self.sheets.save_campania_evento(
+            tarea_id=str(tarea_id),
+            tipo="bloqueo_insumo",
+            comentario=f"Falta insumo: {detalle}",
+            actor_nombre=str(encargado.get("nombre") or "Encargado"),
+            metadata={"canal": "whatsapp", "proveedor": proveedor},
+        )
+
+        if proveedor == "laboratorio_apm":
+            mensaje = "Listo, quedo escalado al contacto de la marca/laboratorio para que te lo acerquen."
+        else:
+            mensaje = "Listo, tu pedido quedo enviado para aprobacion interna."
+        await meta_client.send_text(payload.telefono, mensaje)
+        return await self._continue_campania_flow(payload, meta_client, encargado)
+
+    async def _continue_campania_flow(
+        self,
+        payload: WhatsAppPayload,
+        meta_client: MetaClient,
+        encargado: Dict[str, Any],
+    ) -> str:
+        tareas = self.sheets.get_campania_tareas_pendientes_sucursal(str(encargado["id_sucursal"]))
+        if not tareas:
+            await meta_client.send_text(payload.telefono, "No te quedan mas tareas de campana pendientes. Gracias!")
+            self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
+            return "campania_completa"
+        return await self._start_campania_flow(payload, meta_client, encargado, tareas)
 
     async def _handle_encargado_seleccion(
         self,

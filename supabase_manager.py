@@ -1119,6 +1119,129 @@ class SupabaseManager:
         except Exception as e:
             logger.warning(f"Failed to create auditor notifications for {id_gestion}: {e}")
 
+    # ========== Campanias (bot WhatsApp, ver ARQUITECTURA_DESVIOS_CAMPANIAS.md Modulo 2) ==========
+
+    def get_campania_tareas_pendientes_sucursal(self, id_sucursal: str) -> List[Dict[str, Any]]:
+        """Get pending/blocked campaign tasks for a branch, for the WhatsApp bot digest.
+
+        Pull-based by design: the bot never initiates this (that needs a Meta template
+        that isn't approved yet), the encargado asks for it by messaging the bot.
+        """
+        try:
+            response = (
+                self.client.table("campania_tareas")
+                .select("*, campania_acciones(*), campanias!inner(nombre, estado)")
+                .eq("id_sucursal", id_sucursal)
+                .in_("estado", ["Pendiente", "Bloqueada_por_insumo"])
+                .in_("campanias.estado", ["Activa", "En_seguimiento"])
+                .order("created_at")
+                .execute()
+            )
+            return response.data or []
+        except Exception as e:
+            logger.error(f"Failed to get pending campania tareas for {id_sucursal}: {e}")
+            return []
+
+    def get_campania_tarea_by_id(self, tarea_id: str) -> Optional[Dict[str, Any]]:
+        """Get one campania_tarea with its accion/campania joined."""
+        try:
+            response = (
+                self.client.table("campania_tareas")
+                .select("*, campania_acciones(*), campanias(nombre, estado)")
+                .eq("id", tarea_id)
+                .execute()
+            )
+            data = response.data or []
+            return data[0] if data else None
+        except Exception as e:
+            logger.error(f"Failed to get campania tarea {tarea_id}: {e}")
+            return None
+
+    def update_campania_tarea_fields(self, tarea_id: str, fields: Dict[str, Any]) -> bool:
+        """Update arbitrary fields of a campania_tarea record."""
+        try:
+            self.client.table("campania_tareas").update(fields).eq("id", tarea_id).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to update campania tarea {tarea_id} with {fields}: {e}")
+            return False
+
+    def save_campania_evento(
+        self,
+        tarea_id: str,
+        tipo: str,
+        comentario: str,
+        metadata: Dict[str, Any],
+        actor_nombre: str = "Encargado",
+    ) -> None:
+        """Save a branch manager action (completada/evidencia/bloqueo_insumo) in campania_eventos."""
+        self.client.table("campania_eventos").insert({
+            "tarea_id": tarea_id,
+            "tipo": tipo,
+            "comentario": comentario,
+            "actor_id": None,
+            "actor_nombre": actor_nombre,
+            "metadata": metadata,
+        }).execute()
+
+    def upload_campania_evidencia(self, tarea_id: str, content: bytes, mime_type: str) -> Dict[str, str]:
+        """Upload campaign task evidence to the private desvio-evidencias bucket (reused,
+        same bucket/policies as desvios; only the path prefix differs) with a thumbnail."""
+        ext_by_mime = {
+            "image/jpeg": "jpg",
+            "image/png": "png",
+            "image/webp": "webp",
+            "application/pdf": "pdf",
+        }
+        ext = ext_by_mime.get(mime_type, "jpg")
+        uuid_hex = uuid.uuid4().hex
+        path = f"campania/{tarea_id}/whatsapp-{uuid_hex}.{ext}"
+
+        self.client.storage.from_("desvio-evidencias").upload(
+            path,
+            content,
+            {"content-type": mime_type, "upsert": "false"},
+        )
+
+        thumb_path = None
+        if mime_type.startswith("image/"):
+            thumb_content = self._generate_thumbnail(content, mime_type)
+            if thumb_content:
+                thumb_path = f"campania/{tarea_id}/whatsapp-{uuid_hex}-thumb.jpg"
+                try:
+                    self.client.storage.from_("desvio-evidencias").upload(
+                        thumb_path,
+                        thumb_content,
+                        {"content-type": "image/jpeg", "upsert": "false"},
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to upload campania evidencia thumbnail: {e}")
+                    thumb_path = None
+
+        return {"path": path, "thumb_path": thumb_path, "bucket": "desvio-evidencias"}
+
+    def create_solicitud_insumo(
+        self,
+        tarea_id: str,
+        tipo_insumo: str,
+        detalle: str,
+        cantidad: Optional[str],
+        proveedor: str,
+    ) -> Dict[str, Any]:
+        """Create a supply request. laboratorio_apm skips internal approval (the cadena
+        doesn't control that material) and starts already escalated."""
+        estado = "Escalado_a_labo" if proveedor == "laboratorio_apm" else "Solicitado"
+        response = self.client.table("solicitudes_insumo").insert({
+            "tarea_id": tarea_id,
+            "tipo_insumo": tipo_insumo,
+            "detalle": detalle,
+            "cantidad": cantidad,
+            "proveedor": proveedor,
+            "estado": estado,
+        }).execute()
+        data = response.data or []
+        return data[0] if data else {}
+
     # ========== Checklists ==========
 
     def get_checklist(self) -> List[ChecklistPunto]:
