@@ -9,9 +9,11 @@ import httpx
 from audit_session import AuditSession, BLOQUE_ORDER
 from audit_pdf_generator import generate_audit_pdf
 from supabase_manager import SupabaseManager
-from drive import DriveManager
 
 logger = logging.getLogger(__name__)
+
+# Signed URL validity for freshly generated PDF reports (Storage is private).
+_FICHA_URL_EXPIRY_SECONDS = 24 * 60 * 60  # 24 hours
 
 
 async def _download_photo_bytes(foto_url: str) -> Optional[bytes]:
@@ -37,10 +39,13 @@ class AuditFichesManager:
         responsable_desvios: Optional[str] = None,
         meta_client=None,  # MetaClient — optional, used to re-download fresh photos
     ) -> Optional[str]:
-        """Generate PDF ficha with photos, save to Google Drive, store metadata.
+        """Generate PDF ficha with photos, save to Supabase Storage, store metadata.
 
         Returns:
-            Public Google Drive view URL or None if error.
+            The Storage object path (not a URL — the bucket is private, so
+            callers must mint a fresh signed URL via
+            SupabaseManager.create_signed_ficha_url() whenever they need to
+            actually serve/send the file) or None on error.
         """
         try:
             db = SupabaseManager()
@@ -80,50 +85,45 @@ class AuditFichesManager:
                 photo_bytes=photo_bytes or None,
             )
 
-            # Upload to Google Drive
-            drive = DriveManager()
-            filename = f"Auditoria_{session.id_sesion}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.pdf"
-
-            file_id = await drive.upload_file_async(
-                file_bytes=pdf_bytes,
-                filename=filename,
-                mime_type="application/pdf",
-                folder_name="Auditorias_Perfumeria",
-            )
-
-            if not file_id:
-                logger.warning(f"Failed to upload PDF to Drive for session {session.id_sesion}")
+            # Upload to Supabase Storage (private bucket)
+            try:
+                upload_result = db.upload_audit_ficha_pdf(session.id_sesion, pdf_bytes)
+            except Exception as e:
+                logger.warning(f"Failed to upload PDF to Storage for session {session.id_sesion}: {e}")
                 return None
 
-            drive_url = f"https://drive.google.com/file/d/{file_id}/view"
+            storage_path = upload_result["path"]
+            signed_url = db.create_signed_ficha_url(storage_path, _FICHA_URL_EXPIRY_SECONDS)
             avg_score = sum(session.bloques.values()) / len(session.bloques) if session.bloques else 0
 
             ficha_data = {
-                "reporte_id": reporte_id,
+                # NOTE: the audit_fiches column is named id_reporte (FK to reportes.id),
+                # not reporte_id — using the wrong name here silently broke every
+                # insert until this fix (the table was empty despite audits running).
+                "id_reporte": reporte_id,
                 "sucursal_id": session.sucursal_id,
                 "auditor_nombre": session.auditor_nombre,
                 "responsable_desvios": responsable_desvios,
                 "fecha_auditoria": session.started_at or datetime.now(timezone.utc).isoformat(),
-                "url_pdf": drive_url,
-                "google_drive_id": file_id,
-                "total_desvios": len(session.desvios),
-                "total_fotos": len(session.fotos),
+                "url_pdf": signed_url,
+                # NOTE: this column predates the Supabase Storage migration and is
+                # named for its old Google Drive purpose — it now holds the
+                # Storage object path used to mint fresh signed URLs on demand.
+                "google_drive_id": storage_path,
+                "desvios_count": len(session.desvios),
+                "fotos_count": len(session.fotos),
                 "puntuacion_promedio": round(avg_score, 2),
-                "score_limpieza": session.bloques.get("LIMPIEZA"),
-                "score_stock": session.bloques.get("STOCK"),
-                "score_ofertas": session.bloques.get("OFERTAS"),
-                "score_burbujas": session.bloques.get("BURBUJAS"),
             }
 
             response = db.client.table("audit_fiches").insert(ficha_data).execute()
 
             if response.data:
-                logger.info(f"Saved ficha for session {session.id_sesion}, Drive: {file_id}")
-                return drive_url
+                logger.info(f"Saved ficha for session {session.id_sesion}, Storage: {storage_path}")
             else:
                 logger.error(f"Failed to save ficha metadata: {response.error}")
-                # Still return the URL since the file was uploaded
-                return drive_url
+            # Return the storage path (not the signed URL) so callers always
+            # mint a fresh one instead of relying on this one until it expires.
+            return storage_path
 
         except Exception as e:
             logger.error(f"Error generating/saving ficha: {e}", exc_info=True)

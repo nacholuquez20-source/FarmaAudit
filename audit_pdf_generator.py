@@ -3,7 +3,7 @@
 import logging
 from datetime import datetime
 from io import BytesIO
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
@@ -329,6 +329,169 @@ def generate_audit_pdf(
     story.append(sig_table)
 
     # ── Build ──────────────────────────────────────────────────────────────────
+    doc.build(story)
+    result = buf.getvalue()
+    buf.close()
+    return result
+
+
+def _fmt_fecha(value: Optional[str]) -> str:
+    if not value:
+        return "—"
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        return str(value)[:16]
+
+
+ESTADO_SESION_LABELS = {
+    "completa": "Completa",
+    "en_curso": "En curso",
+    "en_bloque": "En curso",
+    "confirmando_bloque": "En curso",
+    "stock_loop": "En curso",
+    "en_stock_item": "En curso",
+    "desvio_libre": "En curso",
+    "compromisos": "En curso",
+    "esperando_confirmacion": "En curso",
+    "esperando_edicion": "En curso",
+    "cancelada": "Cancelada",
+    "expirada": "Expirada",
+}
+
+
+def generate_controles_summary_pdf(
+    sesiones: List[Dict[str, Any]],
+    fichas: List[Dict[str, Any]],
+    sucursales_by_id: Dict[str, str],
+    auditores_by_tel: Dict[str, str],
+    fecha_desde: Optional[str] = None,
+    fecha_hasta: Optional[str] = None,
+) -> bytes:
+    """Generate a summary PDF of all audit controls performed, with links to full fichas."""
+
+    buf = BytesIO()
+    page_w, page_h = A4
+    margin = 1.5 * cm
+    usable_w = page_w - 2 * margin
+
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        rightMargin=margin,
+        leftMargin=margin,
+        topMargin=margin,
+        bottomMargin=margin,
+    )
+
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("H1", parent=styles["Normal"],
+                        fontSize=18, fontName="Helvetica-Bold",
+                        textColor=NAVY, alignment=TA_CENTER, spaceAfter=2)
+    sub = ParagraphStyle("Sub", parent=styles["Normal"],
+                         fontSize=10, textColor=GREY, alignment=TA_CENTER, spaceAfter=8)
+    section = ParagraphStyle("Section", parent=styles["Normal"],
+                              fontSize=11, fontName="Helvetica-Bold",
+                              textColor=NAVY, spaceBefore=14, spaceAfter=4)
+    body = ParagraphStyle("Body", parent=styles["Normal"], fontSize=8.5, leading=11)
+    body_link = ParagraphStyle("BodyLink", parent=body, textColor=NAVY, fontName="Helvetica-Bold")
+    small = ParagraphStyle("Small", parent=styles["Normal"], fontSize=8, textColor=GREY)
+
+    story = []
+    story.append(Paragraph("FarmaAudit", h1))
+    story.append(Paragraph("Resumen de Controles Realizados", sub))
+
+    bar = Table([[""]], colWidths=[usable_w], rowHeights=[4])
+    bar.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), NAVY)]))
+    story.append(bar)
+    story.append(Spacer(1, 8))
+
+    rango = "Todo el periodo disponible"
+    if fecha_desde or fecha_hasta:
+        rango = f"Desde {fecha_desde or '—'} hasta {fecha_hasta or '—'}"
+    story.append(Paragraph(
+        f"Generado el {datetime.now().strftime('%d/%m/%Y %H:%M')} — {rango} — "
+        f"{len(sesiones)} control(es), {len(fichas)} con ficha completa disponible",
+        small,
+    ))
+
+    # ── Tabla de controles (sesiones de auditoría) ──────────────────────────────
+    story.append(Paragraph(f"Controles realizados ({len(sesiones)})", section))
+
+    header = [Paragraph(f"<b>{h}</b>", body) for h in
+              ["Fecha", "Sucursal", "Auditor", "Estado", "Puntos evaluados"]]
+    rows = [header]
+    for s in sesiones:
+        sucursal_nombre = sucursales_by_id.get(s.get("sucursal_id", ""), s.get("sucursal_id", "—"))
+        auditor_nombre = auditores_by_tel.get(str(s.get("telefono_auditor", "")), s.get("telefono_auditor", "—"))
+        estado_label = ESTADO_SESION_LABELS.get(s.get("estado", ""), s.get("estado", "—"))
+        puntos = f"{s.get('punto_actual', 0)}/{s.get('total_puntos', 0)}"
+        rows.append([
+            Paragraph(_fmt_fecha(s.get("timestamp_inicio")), body),
+            Paragraph(str(sucursal_nombre), body),
+            Paragraph(str(auditor_nombre), body),
+            Paragraph(estado_label, body),
+            Paragraph(puntos, body),
+        ])
+
+    if len(rows) == 1:
+        rows.append([Paragraph("Sin controles registrados en este periodo.", body), "", "", "", ""])
+
+    table = Table(rows, colWidths=[usable_w * 0.22, usable_w * 0.28, usable_w * 0.24, usable_w * 0.14, usable_w * 0.12], repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.5, LINE),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+    ]))
+    story.append(table)
+
+    # ── Tabla de fichas completas (con link de descarga) ────────────────────────
+    story.append(Paragraph(f"Fichas completas disponibles ({len(fichas)})", section))
+    if not fichas:
+        story.append(Paragraph(
+            "Todavia no hay fichas en PDF con foto y detalle completo guardadas para este periodo. "
+            "Las auditorias que se completen de aqui en adelante van a aparecer en esta seccion.",
+            body,
+        ))
+    else:
+        fheader = [Paragraph(f"<b>{h}</b>", body) for h in
+                   ["Fecha", "Sucursal", "Auditor", "Desvios", "Ficha"]]
+        frows = [fheader]
+        for f in fichas:
+            sucursal_nombre = sucursales_by_id.get(f.get("sucursal_id", ""), f.get("sucursal_id", "—"))
+            link = f.get("url_pdf") or ""
+            link_cell = Paragraph(f'<link href="{link}">Ver ficha completa</link>', body_link) if link else Paragraph("—", body)
+            frows.append([
+                Paragraph(_fmt_fecha(f.get("fecha_auditoria")), body),
+                Paragraph(str(sucursal_nombre), body),
+                Paragraph(str(f.get("auditor_nombre") or "—"), body),
+                Paragraph(str(f.get("desvios_count", 0)), body),
+                link_cell,
+            ])
+
+        ftable = Table(frows, colWidths=[usable_w * 0.2, usable_w * 0.28, usable_w * 0.22, usable_w * 0.12, usable_w * 0.18], repeatRows=1)
+        ftable.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.5, LINE),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+        ]))
+        story.append(ftable)
+        story.append(Spacer(1, 6))
+        story.append(Paragraph(
+            "Los links de ficha son temporales (validos por unos dias desde que se genero este PDF).",
+            small,
+        ))
+
     doc.build(story)
     result = buf.getvalue()
     buf.close()

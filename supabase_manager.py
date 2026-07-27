@@ -530,7 +530,8 @@ class SupabaseManager:
             )
             reporte_id = self.create_reporte(reporte)
 
-            plazo = date.today() + timedelta(days=7)
+            hours = get_settings().severity_deadlines.get(severidad_enum.value, 168)
+            plazo = datetime.now(timezone.utc) + timedelta(hours=hours)
             gestion = Gestion(
                 id_gestion="",
                 id_reporte=reporte_id,
@@ -855,6 +856,50 @@ class SupabaseManager:
             logger.error(f"Failed to get sucursales con pendientes: {e}")
             return []
 
+    def get_overdue_gestiones(self) -> List[Dict[str, Any]]:
+        """Get open/in-progress/in-review gestiones whose plazo_fecha has already passed.
+
+        Excludes En_gestion_terceros: those depend on causes outside the branch manager's
+        control and must not be auto-marked as overdue (see ARQUITECTURA_DESVIOS_CAMPANIAS.md).
+        """
+        try:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            response = (
+                self.client.table("gestion")
+                .select("*")
+                .in_("estado", ["Abierta", "En_proceso", "En_revision"])
+                .lt("plazo_fecha", now_iso)
+                .execute()
+            )
+            return response.data or []
+        except Exception as e:
+            logger.error(f"Failed to get overdue gestiones: {e}")
+            return []
+
+    def get_gestiones_en_revision_stale(self, hours_min: int = 72, hours_max: int = 73) -> List[Dict[str, Any]]:
+        """Get gestiones stuck in En_revision longer than the auditor SLA window.
+
+        Uses a bounded window (hours_min..hours_max) instead of an open-ended "older than"
+        query so the recurring scheduler job (run hourly) fires the alert once per gestion
+        instead of re-notifying on every run.
+        """
+        try:
+            now = datetime.now(timezone.utc)
+            lower_bound = (now - timedelta(hours=hours_max)).isoformat()
+            upper_bound = (now - timedelta(hours=hours_min)).isoformat()
+            response = (
+                self.client.table("gestion")
+                .select("*")
+                .eq("estado", "En_revision")
+                .gte("en_revision_desde", lower_bound)
+                .lt("en_revision_desde", upper_bound)
+                .execute()
+            )
+            return response.data or []
+        except Exception as e:
+            logger.error(f"Failed to get stale en_revision gestiones: {e}")
+            return []
+
     def update_gestion_fields(self, id_gestion: str, fields: Dict[str, Any]) -> bool:
         """Update arbitrary fields of a gestion record."""
         try:
@@ -936,6 +981,27 @@ class SupabaseManager:
             return getattr(response, "signed_url", "") or getattr(response, "signedURL", "")
         except Exception as e:
             logger.warning(f"Failed to create signed URL for {path}: {e}")
+            return ""
+
+    def upload_audit_ficha_pdf(self, id_sesion: str, content: bytes) -> Dict[str, str]:
+        """Upload a generated audit report PDF to the private desvio-evidencias bucket."""
+        path = f"fichas/{id_sesion}/{uuid.uuid4().hex}.pdf"
+        self.client.storage.from_("desvio-evidencias").upload(
+            path,
+            content,
+            {"content-type": "application/pdf", "upsert": "false"},
+        )
+        return {"path": path, "bucket": "desvio-evidencias"}
+
+    def create_signed_ficha_url(self, path: str, expires_seconds: int = 86400) -> str:
+        """Create a signed URL for an audit report PDF in Storage."""
+        try:
+            response = self.client.storage.from_("desvio-evidencias").create_signed_url(path, expires_seconds)
+            if isinstance(response, dict):
+                return response.get("signedURL") or response.get("signedUrl") or ""
+            return getattr(response, "signed_url", "") or getattr(response, "signedURL", "")
+        except Exception as e:
+            logger.warning(f"Failed to create signed ficha URL for {path}: {e}")
             return ""
 
     def regenerate_missing_thumbnails(self) -> Dict[str, int]:
@@ -1034,22 +1100,22 @@ class SupabaseManager:
             "metadata": metadata,
         }).execute()
 
-    def create_notification_for_auditor(self, id_gestion: str, auditor_id: str) -> None:
+    def create_notification_for_auditor(self, id_gestion: str, auditor_id: str, tipo: str = "encargado_respondio") -> None:
         """Create one in-app notification for an auditor/admin user."""
         self.client.table("desvio_notificaciones").insert({
             "id_gestion": id_gestion,
             "user_id": auditor_id,
-            "tipo": "encargado_respondio",
+            "tipo": tipo,
         }).execute()
 
-    def create_notifications_for_auditors(self, id_gestion: str) -> None:
-        """Notify all auditor/admin users that a manager responded."""
+    def create_notifications_for_auditors(self, id_gestion: str, tipo: str = "encargado_respondio") -> None:
+        """Notify all auditor/admin users about an event on a gestion (manager responded, overdue, etc.)."""
         try:
             response = self.client.table("profiles").select("id, role").in_("role", ["admin", "auditor"]).execute()
             for row in response.data or []:
                 user_id = row.get("id")
                 if user_id:
-                    self.create_notification_for_auditor(id_gestion, str(user_id))
+                    self.create_notification_for_auditor(id_gestion, str(user_id), tipo)
         except Exception as e:
             logger.warning(f"Failed to create auditor notifications for {id_gestion}: {e}")
 
@@ -1358,6 +1424,27 @@ class SupabaseManager:
             logger.error(f"Failed to get expired sesiones: {e}")
             return []
 
+    def get_auditoria_sesiones_historicas(
+        self,
+        sucursal_id: Optional[str] = None,
+        fecha_desde: Optional[str] = None,
+        fecha_hasta: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get audit sessions (controles realizados) for the historical export report."""
+        try:
+            query = self.client.table("sesiones_auditoria").select("*")
+            if sucursal_id:
+                query = query.eq("sucursal_id", sucursal_id)
+            if fecha_desde:
+                query = query.gte("timestamp_inicio", fecha_desde)
+            if fecha_hasta:
+                query = query.lte("timestamp_inicio", fecha_hasta)
+            response = query.order("timestamp_inicio", desc=True).execute()
+            return response.data or []
+        except Exception as e:
+            logger.error(f"Failed to get historical auditoria sesiones: {e}")
+            return []
+
     # ========== Block-based Audit Methods ==========
 
     def save_bloque_resultado(
@@ -1401,7 +1488,8 @@ class SupabaseManager:
                     )
                     reporte_id = self.create_reporte(reporte)
 
-                    plazo = date.today() + timedelta(days=7)
+                    hours = get_settings().severity_deadlines.get(severidad.value, 168)
+                    plazo = datetime.now(timezone.utc) + timedelta(hours=hours)
                     gestion = Gestion(
                         id_gestion="",
                         id_reporte=reporte_id,
@@ -1484,7 +1572,8 @@ class SupabaseManager:
             )
             reporte_id = self.create_reporte(reporte)
 
-            plazo = date.today() + timedelta(days=7)
+            hours = get_settings().severity_deadlines.get(severidad.value, 168)
+            plazo = datetime.now(timezone.utc) + timedelta(hours=hours)
             gestion = Gestion(
                 id_gestion="",
                 id_reporte=reporte_id,

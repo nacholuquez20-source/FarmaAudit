@@ -63,6 +63,8 @@ class GestionState(str, Enum):
 
     ABIERTA = "Abierta"
     EN_PROCESO = "En_proceso"
+    EN_REVISION = "En_revision"
+    EN_GESTION_TERCEROS = "En_gestion_terceros"
     RESUELTA = "Resuelta"
     CERRADA = "Cerrada"
     VENCIDA = "Vencida"
@@ -277,6 +279,9 @@ class Gestion:
     fecha_cierre: Optional[datetime] = None
     cerrado_por: Optional[str] = None
     bloque: Optional[str] = None  # LIMPIEZA/STOCK/OFERTAS/BURBUJAS (perfumería v2)
+    plazo_fecha_original: Optional[datetime] = None
+    veces_rechazado: int = 0
+    en_revision_desde: Optional[datetime] = None
 
 
 @dataclass

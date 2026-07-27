@@ -19,6 +19,7 @@ import type {
   DesvioBorrador,
   CreatePanelUserInput,
   UpdatePanelUserInput,
+  GestionRevisionAccion,
 } from '../types';
 
 const VALID_STORAGE_BUCKETS = ['auditoria-respuestas', 'desvio-evidencias'] as const;
@@ -192,6 +193,35 @@ export async function updateGestion(id: string, estado: GestionState, cerrado_po
 
   if (error) throw new Error(handleApiError(error));
   return data;
+}
+
+export async function revisarGestion(input: {
+  idGestion: string;
+  accion: GestionRevisionAccion;
+  motivo?: string;
+  plazoDias?: number;
+}): Promise<Gestion> {
+  const apiUrl = getBotApiUrl();
+  if (!apiUrl) {
+    throw new Error('Falta configurar VITE_API_URL con la URL del bot.');
+  }
+
+  const response = await fetch(`${apiUrl}/api/gestion/${encodeURIComponent(input.idGestion)}/revision`, {
+    method: 'POST',
+    headers: await getAuthHeaders(),
+    body: JSON.stringify({
+      accion: input.accion,
+      motivo: input.motivo,
+      plazo_dias: input.plazoDias,
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail || 'No se pudo procesar la revision del desvio.');
+  }
+
+  return response.json();
 }
 
 export async function notificarEncargado(input: {
@@ -979,4 +1009,31 @@ export async function submitPerfumeriaAudit(payload: {
   }
 
   return response.json();
+}
+
+export async function exportControlesPdf(filters: {
+  sucursalId?: string;
+  fechaDesde?: string;
+  fechaHasta?: string;
+}): Promise<Blob> {
+  const apiUrl = getBotApiUrl();
+  if (!apiUrl) {
+    throw new Error('Falta configurar VITE_API_URL con la URL del bot.');
+  }
+
+  const params = new URLSearchParams();
+  if (filters.sucursalId) params.set('sucursal_id', filters.sucursalId);
+  if (filters.fechaDesde) params.set('fecha_desde', filters.fechaDesde);
+  if (filters.fechaHasta) params.set('fecha_hasta', `${filters.fechaHasta}T23:59:59`);
+
+  const headers = await getAuthHeaders();
+  const response = await fetch(`${apiUrl}/api/audit-fiches/export-pdf?${params.toString()}`, {
+    headers,
+  });
+
+  if (!response.ok) {
+    throw new Error('No se pudo generar el PDF de controles.');
+  }
+
+  return response.blob();
 }

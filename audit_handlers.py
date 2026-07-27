@@ -70,12 +70,18 @@ SCORE_OPTIONS = [
 SEVERITY_ESCALATION = {"Baja": "Media", "Media": "Alta", "Alta": "Alta"}
 
 
-def _drive_download_url(ficha_url: str) -> str:
-    """Convert a Drive viewer URL to a direct download URL for WhatsApp documents."""
-    if "/d/" in ficha_url:
-        file_id = ficha_url.split("/d/")[1].split("/")[0]
-        return f"https://drive.google.com/uc?export=download&id={file_id}"
-    return ficha_url
+async def _ficha_download_url(storage_path: str) -> str:
+    """Mint a fresh signed URL for a ficha PDF stored in Supabase Storage.
+
+    Storage is private — we generate a short-lived signed URL each time the
+    file is actually needed (sent over WhatsApp, or opened from the admin
+    panel) instead of relying on a permanently-public link.
+    """
+    if not storage_path:
+        return storage_path
+    db = SupabaseManager()
+    signed_url = db.create_signed_ficha_url(storage_path)
+    return signed_url or storage_path
 
 
 async def _send_ficha_to_responsable(
@@ -99,7 +105,8 @@ async def _send_ficha_to_responsable(
             f"Auditor: {session.auditor_nombre or '—'}"
         )
 
-        ok = await meta_client.send_document(tel, _drive_download_url(ficha_url), filename, caption)
+        download_url = await _ficha_download_url(ficha_url)
+        ok = await meta_client.send_document(tel, download_url, filename, caption)
         if ok:
             logger.info(f"PDF ficha sent to manager at {tel}")
         else:
@@ -214,9 +221,10 @@ async def _send_ficha_to_auditor(
         return
 
     filename = f"Auditoria_{session.id_sesion}.pdf"
+    download_url = await _ficha_download_url(ficha_url)
     ok = await meta_client.send_document(
         telefono,
-        _drive_download_url(ficha_url),
+        download_url,
         filename,
         caption=f"📋 Ficha de auditoría — {session.id_sesion}",
     )
@@ -225,7 +233,7 @@ async def _send_ficha_to_auditor(
     else:
         await meta_client.send_text(
             telefono,
-            f"⚠️ No pude enviar el archivo directamente.\nDescargalo desde:\n{ficha_url}",
+            f"⚠️ No pude enviar el archivo directamente.\nDescargalo desde:\n{download_url}",
         )
 
 
@@ -897,7 +905,8 @@ class AuditConversationHandler:
             payload.telefono,
             f"✓ {bloque_label}: {score}/5{comparison}\n\n"
             f"Documenta lo que observas 📸🎙️📝\n"
-            f"(fotos, audios, textos)\n\n"
+            f"Mandá al menos una foto de este bloque (obligatoria, haya o no desvío) "
+            f"— también podés agregar audios o textos\n\n"
             f"{bloque_desc}\n\n"
             f"Escribe 'SIGUIENTE' cuando termines este bloque"
         )
@@ -920,6 +929,18 @@ class AuditConversationHandler:
                 bloque_fotos = len([f for f in session.fotos if f.bloque == current_bloque])
                 bloque_audios = len([a for a in session.desvios if a.bloque == current_bloque and "[AUDIO]" in a.descripcion])
                 bloque_notas = len([d for d in session.desvios if d.bloque == current_bloque and "[AUDIO]" not in d.descripcion])
+
+                # Al menos una foto es obligatoria por bloque, haya o no desvío, para
+                # dejar registro de las condiciones del lugar (pedido de la auditora).
+                if bloque_fotos == 0:
+                    await meta_client.send_text(
+                        payload.telefono,
+                        f"📸 Falta la foto de {bloque_label}.\n\n"
+                        f"Necesito al menos una foto de este bloque para dejar registro, "
+                        f"aunque no hayas encontrado ningún desvío. Mandala y después "
+                        f"escribí 'SIGUIENTE' para continuar."
+                    )
+                    return "photo_required"
 
                 summary_msg = f"✓ {bloque_label} completado!\n📸 {bloque_fotos} foto(s) · 🎙️ {bloque_audios} audio(s) · 📝 {bloque_notas} nota(s)\n\n"
 
@@ -991,7 +1012,7 @@ class AuditConversationHandler:
                 if not validation.is_valid:
                     await meta_client.send_text(
                         payload.telefono,
-                        validation.message + "\n\nIntenta de nuevo o escribe 'SIGUIENTE' para continuar."
+                        validation.message + "\n\nIntenta de nuevo — necesito al menos una foto válida de este bloque para poder continuar."
                     )
                     return "photo_invalid"
 
@@ -1130,7 +1151,8 @@ class AuditConversationHandler:
             payload.telefono,
             f"✓ {BRAND_LABELS.get(current_brand, current_brand)}: {score}/5\n\n"
             f"Documenta lo que observas en Ofertas 📸🎙️📝\n"
-            f"(fotos, audios, textos)\n\n"
+            f"Mandá al menos una foto de este bloque (obligatoria, haya o no desvío) "
+            f"— también podés agregar audios o textos\n\n"
             f"{bloque_desc}\n\n"
             f"Escribe 'SIGUIENTE' cuando termines este bloque"
         )

@@ -9,7 +9,7 @@ import asyncio
 import uuid
 from collections import OrderedDict
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -52,6 +52,12 @@ class EncargadoNotificationRequest(BaseModel):
     telefono_encargado: str
     descripcion_desvio: str
     sucursal: str | None = None
+
+
+class GestionRevisionRequest(BaseModel):
+    accion: str  # 'aprobar' | 'rechazar' | 'en_gestion_terceros' | 'retomar'
+    motivo: str | None = None
+    plazo_dias: int | None = None
 
 
 class InternalMessageRequest(BaseModel):
@@ -434,6 +440,20 @@ async def startup_event():
         id="regenerate_thumbnails",
         max_instances=1,  # Prevent concurrent executions
     )
+    scheduler.add_job(
+        check_overdue_gestion,
+        "interval",
+        minutes=15,
+        id="overdue_gestion_check",
+        max_instances=1,  # Prevent concurrent executions
+    )
+    scheduler.add_job(
+        remind_sla_auditor_revision,
+        "interval",
+        hours=1,
+        id="sla_auditor_revision_check",
+        max_instances=1,  # Prevent concurrent executions
+    )
     # Disabled: Using Supabase directly, no longer syncing from Google Sheets
     # scheduler.add_job(
     #     sync_sheets_to_supabase,
@@ -521,8 +541,8 @@ async def create_internal_message(id_gestion: str, payload: InternalMessageReque
     if profile["role"] == "sucursal" and profile.get("id_sucursal") != gestion.get("id_sucursal"):
         raise HTTPException(status_code=403, detail="No autorizado para esta gestion")
 
-    actor_id = payload.actor_id or profile["id"]
-    actor_nombre = payload.actor_nombre or profile.get("nombre") or "Usuario"
+    actor_id = profile["id"]
+    actor_nombre = profile.get("nombre") or "Usuario"
     event_response = (
         client.table("desvio_eventos")
         .insert({
@@ -541,6 +561,111 @@ async def create_internal_message(id_gestion: str, payload: InternalMessageReque
     )
     data = event_response.data or []
     return data[0] if data else {"status": "ok"}
+
+
+@app.post("/api/gestion/{id_gestion}/revision")
+async def revisar_gestion(id_gestion: str, payload: GestionRevisionRequest, request: Request):
+    """Approve/reject a branch manager's correction, or flag/unblock a deviation that
+    depends on third parties (see ARQUITECTURA_DESVIOS_CAMPANIAS.md, Modulo 1)."""
+    profile = await _require_admin_or_auditor(request)
+    client = _get_supabase_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="Supabase is not configured")
+
+    accion = (payload.accion or "").strip()
+    if accion not in {"aprobar", "rechazar", "en_gestion_terceros", "retomar"}:
+        raise HTTPException(status_code=400, detail="accion invalida")
+
+    gestion_response = client.table("gestion").select("*").eq("id_gestion", id_gestion).maybe_single().execute()
+    gestion = gestion_response.data
+    if not gestion:
+        raise HTTPException(status_code=404, detail="Gestion not found")
+
+    motivo = (payload.motivo or "").strip()
+    if accion in {"rechazar", "en_gestion_terceros"} and not motivo:
+        raise HTTPException(status_code=400, detail="El motivo es obligatorio")
+
+    actor_id = profile["id"]
+    actor_nombre = profile.get("nombre") or "Auditor"
+    now = datetime.now(timezone.utc)
+    db = get_sheets()
+
+    veces_rechazado = int(gestion.get("veces_rechazado") or 0)
+    evento_tipo = "nota"
+    evento_comentario = motivo
+
+    if accion == "aprobar":
+        updates = {
+            "estado": "Resuelta",
+            "cerrado_por": actor_nombre,
+            "en_revision_desde": None,
+        }
+        evento_tipo = "cierre"
+        evento_comentario = motivo or "Correccion aprobada por el auditor."
+    elif accion == "rechazar":
+        plazo_dias = payload.plazo_dias or 2
+        nueva_plazo = (now + timedelta(days=plazo_dias)).strftime("%Y-%m-%d")
+        veces_rechazado += 1
+        updates = {
+            "estado": "En_proceso",
+            "plazo_fecha": nueva_plazo,
+            "plazo_fecha_original": gestion.get("plazo_fecha_original") or gestion.get("plazo_fecha"),
+            "veces_rechazado": veces_rechazado,
+            "en_revision_desde": None,
+        }
+        evento_tipo = "rechazo"
+    elif accion == "en_gestion_terceros":
+        updates = {"estado": "En_gestion_terceros", "en_revision_desde": None}
+    else:  # retomar
+        updates = {"estado": "En_proceso"}
+        evento_comentario = motivo or "Se retoma la gestion del desvio."
+
+    db.update_gestion_fields(id_gestion, updates)
+
+    client.table("desvio_eventos").insert({
+        "id_gestion": id_gestion,
+        "tipo": evento_tipo,
+        "comentario": evento_comentario,
+        "actor_id": actor_id,
+        "actor_nombre": actor_nombre,
+        "metadata": {"accion": accion},
+    }).execute()
+
+    try:
+        client.table("desvio_notificaciones").update({"leida": True}).eq("id_gestion", id_gestion).eq(
+            "tipo", "encargado_respondio"
+        ).eq("leida", False).execute()
+    except Exception as exc:
+        logger.warning(f"Failed to mark notifications read for {id_gestion}: {exc}")
+
+    telefono = "".join(ch for ch in str(gestion.get("tel_responsable") or "") if ch.isdigit())
+    if telefono and accion in {"aprobar", "rechazar"}:
+        meta_client = MetaClient()
+        try:
+            if accion == "aprobar":
+                mensaje = f"FarmaAudit: tu correccion para \"{gestion.get('desvio')}\" fue aprobada. Gracias!"
+            else:
+                mensaje = (
+                    f"FarmaAudit: tu correccion para \"{gestion.get('desvio')}\" fue rechazada.\n"
+                    f"Motivo: {motivo}\n"
+                    "Responde este WhatsApp para verla de nuevo y volver a enviar la correccion."
+                )
+            await meta_client.send_text(telefono, mensaje)
+        except Exception as exc:
+            logger.warning(f"Failed to send WhatsApp feedback for {id_gestion}: {exc}")
+
+        if accion == "rechazar" and veces_rechazado >= 3 and settings.coordinador_tel:
+            try:
+                await meta_client.send_text(
+                    settings.coordinador_tel,
+                    f"FarmaAudit: el desvio {id_gestion} ({gestion.get('sucursal')}) fue rechazado "
+                    f"{veces_rechazado} veces. Requiere seguimiento.",
+                )
+            except Exception as exc:
+                logger.warning(f"Failed to alert coordinator about repeated rejection {id_gestion}: {exc}")
+
+    updated_response = client.table("gestion").select("*").eq("id_gestion", id_gestion).maybe_single().execute()
+    return updated_response.data or {"status": "ok"}
 
 
 @app.get("/api/admin/panel-users")
@@ -1309,6 +1434,84 @@ Para mÃ¡s detalles, consulta la hoja de Reportes."""
         logger.error(f"Error in daily summary job: {e}")
 
 
+async def check_overdue_gestion(notify: bool = True):
+    """Background job: mark gestiones past their plazo_fecha as Vencida and notify.
+
+    notify=False is used for one-off backfills of a pre-existing backlog (so we
+    don't fire a burst of WhatsApp alerts for deviations that have been overdue
+    for months) — the recurring scheduled job always runs with notify=True.
+    """
+    try:
+        db = SupabaseManager()
+        overdue = db.get_overdue_gestiones()
+        if not overdue:
+            return
+
+        settings = get_settings()
+        meta_client = MetaClient() if notify else None
+
+        for gestion in overdue:
+            id_gestion = gestion.get("id_gestion")
+            if not id_gestion:
+                continue
+
+            db.update_gestion_fields(id_gestion, {"estado": "Vencida"})
+
+            if not notify:
+                continue
+
+            db.create_notifications_for_auditors(id_gestion, tipo="vencimiento_proximo")
+
+            if settings.coordinador_tel:
+                try:
+                    await meta_client.send_alerta_coordinador(
+                        settings.coordinador_tel,
+                        gestion.get("sucursal") or gestion.get("id_sucursal") or "",
+                        gestion.get("bloque") or "",
+                        gestion.get("desvio") or "",
+                        gestion.get("severidad") or "Media",
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to alert coordinator about overdue gestion {id_gestion}: {e}")
+
+        logger.info(f"Marked {len(overdue)} gestion(es) as Vencida (notify={notify})")
+    except Exception as e:
+        logger.error(f"Error in overdue gestion check job: {e}")
+
+
+async def remind_sla_auditor_revision():
+    """Background job: alert auditor/admin about corrections stuck in En_revision past the
+    72h SLA. Uses a bounded lookback window (see get_gestiones_en_revision_stale) so each
+    gestion is alerted once instead of every run."""
+    try:
+        db = SupabaseManager()
+        stale = db.get_gestiones_en_revision_stale(hours_min=72, hours_max=73)
+        if not stale:
+            return
+
+        for gestion in stale:
+            id_gestion = gestion.get("id_gestion")
+            if not id_gestion:
+                continue
+            db.create_notifications_for_auditors(id_gestion, tipo="sla_revision_vencido")
+
+        logger.info(f"SLA reminder: {len(stale)} gestion(es) en revision hace mas de 72h")
+
+        if settings.coordinador_tel:
+            meta_client = MetaClient()
+            for gestion in stale:
+                try:
+                    await meta_client.send_text(
+                        settings.coordinador_tel,
+                        f"FarmaAudit: el desvio {gestion.get('id_gestion')} ({gestion.get('sucursal')}) "
+                        "lleva mas de 72hs esperando revision del auditor.",
+                    )
+                except Exception as exc:
+                    logger.warning(f"Failed to alert coordinator about stale review {gestion.get('id_gestion')}: {exc}")
+    except Exception as e:
+        logger.error(f"Error in overdue gestion check job: {e}", exc_info=True)
+
+
 async def regenerate_thumbnails_job():
     """Background job: Regenerate missing thumbnails for existing evidences."""
     try:
@@ -1335,8 +1538,23 @@ async def regenerate_thumbnails_endpoint(request: Request):
 # ============== AUDIT FICHES ENDPOINTS ==============
 
 from audit_fiches_manager import AuditFichesManager
+from audit_pdf_generator import generate_controles_summary_pdf
 from fastapi import Query
 from typing import Optional
+
+
+async def _with_fresh_pdf_url(ficha: dict) -> dict:
+    """Replace a ficha's stored (private) Storage path with a fresh,
+    short-lived signed URL, minted on demand for this authenticated request.
+    """
+    # NOTE: google_drive_id predates the Supabase Storage migration; it now
+    # holds the Storage object path for this ficha's PDF.
+    storage_path = ficha.get("google_drive_id")
+    if storage_path:
+        fresh_url = SupabaseManager().create_signed_ficha_url(storage_path)
+        if fresh_url:
+            ficha = {**ficha, "url_pdf": fresh_url}
+    return ficha
 
 
 @app.get("/api/audit-fiches/list")
@@ -1360,6 +1578,7 @@ async def get_audit_fiches(
             limit=limit,
             offset=offset,
         )
+        fiches = [await _with_fresh_pdf_url(f) for f in fiches]
         return {
             "status": "ok",
             "count": len(fiches),
@@ -1375,6 +1594,50 @@ async def get_audit_fiches(
         raise
     except Exception as e:
         logger.error(f"Error fetching fiches: {e}")
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
+
+
+@app.get("/api/audit-fiches/export-pdf")
+async def export_audit_fiches_pdf(
+    request: Request,
+    sucursal_id: Optional[str] = Query(None),
+    fecha_desde: Optional[str] = Query(None),
+    fecha_hasta: Optional[str] = Query(None),
+):
+    """Export a summary PDF of all audit controls performed, with links to full fichas."""
+    await _require_admin_or_auditor(request)
+    try:
+        db = SupabaseManager()
+        sesiones = db.get_auditoria_sesiones_historicas(
+            sucursal_id=sucursal_id, fecha_desde=fecha_desde, fecha_hasta=fecha_hasta
+        )
+        fiches = await AuditFichesManager.get_fiches(
+            sucursal_id=sucursal_id, fecha_desde=fecha_desde, fecha_hasta=fecha_hasta, limit=1000
+        )
+        fiches = [await _with_fresh_pdf_url(f) for f in fiches]
+
+        sucursales_by_id = {s.id: s.nombre for s in db.get_all_sucursales()}
+        auditores_by_tel = {a.telefono: a.nombre for a in db.get_all_auditores()}
+
+        pdf_bytes = generate_controles_summary_pdf(
+            sesiones=sesiones,
+            fichas=fiches,
+            sucursales_by_id=sucursales_by_id,
+            auditores_by_tel=auditores_by_tel,
+            fecha_desde=fecha_desde,
+            fecha_hasta=fecha_hasta,
+        )
+
+        filename = f"FarmaAudit_Controles_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error exporting controles PDF: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 
@@ -1407,7 +1670,7 @@ async def get_audit_ficha(ficha_id: str, request: Request):
         db = SupabaseManager()
         response = db.client.table("audit_fiches").select("*").eq("id", ficha_id).single().execute()
         if response.data:
-            return {"status": "ok", "data": response.data}
+            return {"status": "ok", "data": await _with_fresh_pdf_url(response.data)}
         raise HTTPException(status_code=404, detail="Ficha not found")
     except HTTPException:
         raise

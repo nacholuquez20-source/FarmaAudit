@@ -7,12 +7,13 @@ export type ModulePermission =
   | 'sucursales'
   | 'admin';
 export type Severidad = 'Alta' | 'Media' | 'Baja';
-export type GestionState = 'Abierta' | 'En_proceso' | 'Resuelta' | 'Cerrada' | 'Vencida';
+export type GestionState = 'Abierta' | 'En_proceso' | 'En_revision' | 'En_gestion_terceros' | 'Resuelta' | 'Cerrada' | 'Vencida';
 export type SeverityType = Severidad;
 export type StatusType = GestionState;
-export type DesvioEventoTipo = 'creacion' | 'contacto' | 'respuesta' | 'cierre' | 'nota' | 'evidencia' | 'mensaje' | 'verificacion_auditoria' | 'reincidencia';
+export type DesvioEventoTipo = 'creacion' | 'contacto' | 'respuesta' | 'cierre' | 'nota' | 'evidencia' | 'mensaje' | 'verificacion_auditoria' | 'reincidencia' | 'rechazo';
 export type DesvioOrigen = 'auditor' | 'sucursal';
-export type NotificacionTipo = 'mensaje_nuevo' | 'encargado_respondio' | 'estado_cambio' | 'vencimiento_proximo';
+export type NotificacionTipo = 'mensaje_nuevo' | 'encargado_respondio' | 'estado_cambio' | 'vencimiento_proximo' | 'sla_revision_vencido';
+export type GestionRevisionAccion = 'aprobar' | 'rechazar' | 'en_gestion_terceros' | 'retomar';
 export type AdminTabKey = 'auditores' | 'usuarios';
 export type DashboardView = 'general' | 'zona';
 export type SucursalDetailTab = 'reportes' | 'gestiones' | 'stock' | 'auditorias';
@@ -69,6 +70,9 @@ export interface Gestion {
   cerrado_por: string | null;
   created_at?: string;
   updated_at?: string;
+  plazo_fecha_original?: string | null;
+  veces_rechazado?: number;
+  en_revision_desde?: string | null;
 }
 
 export interface GestionUpdate {

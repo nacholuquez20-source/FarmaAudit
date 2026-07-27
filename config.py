@@ -24,13 +24,6 @@ class Settings:
     meta_verify_token: str = os.getenv("META_VERIFY_TOKEN", "")
     meta_app_secret: str = os.getenv("META_APP_SECRET", "")
 
-    # Google Sheets
-    google_sheets_id: str = os.getenv("GOOGLE_SHEETS_ID", "")
-    google_service_account_json: Optional[str] = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
-
-    # Google Drive
-    google_drive_folder_id: str = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "")
-
     # Supabase
     supabase_url: Optional[str] = os.getenv("SUPABASE_URL")
     supabase_service_key: Optional[str] = os.getenv("SUPABASE_SERVICE_KEY")
@@ -71,6 +64,13 @@ class Settings:
         missing = [key for key in required if not getattr(self, key)]
         if missing:
             raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+        if not self.meta_app_secret:
+            import logging
+            logging.getLogger(__name__).warning(
+                "META_APP_SECRET no configurado: /webhook acepta requests SIN "
+                "verificar firma X-Hub-Signature-256 (cualquiera puede falsificar "
+                "mensajes de WhatsApp). Configuralo en Railway ASAP."
+            )
 
 
 @lru_cache(maxsize=1)

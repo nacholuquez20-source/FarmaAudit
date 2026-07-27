@@ -166,7 +166,9 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
                                 <span className="block text-sm font-medium text-gray-900">
                                   {notificacion.tipo === 'mensaje_nuevo' || notificacion.tipo === 'encargado_respondio'
                                     ? 'Nueva actividad en desvio'
-                                    : 'Notificacion de desvio'}
+                                    : notificacion.tipo === 'vencimiento_proximo'
+                                      ? 'Desvio vencido'
+                                      : 'Notificacion de desvio'}
                                 </span>
                                 <span className="block text-xs text-gray-500">{notificacion.id_gestion}</span>
                               </span>

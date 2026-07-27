@@ -36,8 +36,6 @@ from parser import AuditParser
 
 from audio import AudioTranscriber
 
-from drive import DriveManager
-
 from meta_client import MetaClient
 
 # NEW: Imports for perfumery audit v2 (structured flow)
@@ -122,8 +120,6 @@ class ConversationRouter:
         self.parser = AuditParser()
 
         self.transcriber = AudioTranscriber()
-
-        self.drive = DriveManager()
 
 
 
@@ -565,6 +561,13 @@ class ConversationRouter:
                 await meta_client.send_text(payload.telefono, "Envia una foto o un texto con la correccion.")
                 return "encargado_respuesta_invalida"
 
+            self.sheets.update_gestion_fields(
+                str(id_gestion),
+                {
+                    "estado": "En_revision",
+                    "en_revision_desde": datetime.now(timezone.utc).isoformat(),
+                },
+            )
             self.sheets.create_notifications_for_auditors(str(id_gestion))
             self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
             await meta_client.send_text(payload.telefono, "Recibida tu respuesta. El auditor la revisara en FarmaAudit.")
@@ -1601,33 +1604,10 @@ class ConversationRouter:
 
 
 
-        # If image with text, upload to Drive
-
+        # NOTE: inbound WhatsApp images are resolved via Meta media_id elsewhere
+        # in this flow; payload.media_url is not populated by the webhook, so
+        # there is nothing to upload here.
         photo_url = None
-
-        if payload.tipo == "image" and payload.media_url:
-
-            try:
-
-                import uuid
-
-                filename = f"audit_{uuid.uuid4().hex[:8]}.jpg"
-
-                photo_url = await self.drive.upload_photo_from_url(
-
-                    payload.media_url,
-
-                    filename,
-
-                )
-
-            except Exception as e:
-
-                logger.warning(f"Failed to upload photo: {e}")
-
-                # Continue without photo
-
-
 
         # Parse message
 
@@ -3704,10 +3684,8 @@ EDITAR → Hacer cambios""",
             # Handle photo first
             if payload.tipo == "image" and payload.media_url:
                 try:
-                    photo_url = await self.drive.upload_photo_from_url(
-                        payload.media_url,
-                        f"perf_audit_{sesion.id_sesion}_{bloque_id}_{uuid.uuid4().hex[:4]}.jpg"
-                    )
+                    # Drive removed; unreachable (payload.media_url is never populated by the webhook)
+                    photo_url = None
                     resultados = json.loads(sesion.resultados_json) if sesion.resultados_json else {}
                     if f"bloque_{bloque_id}_fotos" not in resultados:
                         resultados[f"bloque_{bloque_id}_fotos"] = []
@@ -4045,10 +4023,8 @@ EJEMPLO SI HAY DESVIOS:
             # If image received, ask for confirmation
             if payload.tipo == "image" and payload.media_url:
                 try:
-                    photo_url = await self.drive.upload_photo_from_url(
-                        payload.media_url,
-                        f"perf_audit_{sesion.id_sesion}_{punto.bloque_id}_{uuid.uuid4().hex[:4]}.jpg"
-                    )
+                    # Drive removed; unreachable (payload.media_url is never populated by the webhook)
+                    photo_url = None
 
                     # Store photo URL temporarily in session
                     resultados = json.loads(sesion.resultados_json) if sesion.resultados_json else {}
@@ -4373,10 +4349,8 @@ EJEMPLO SI HAY DESVIOS:
             # Handle photo
             if payload.tipo == "image" and payload.media_url:
                 try:
-                    foto_url = await self.drive.upload_photo_from_url(
-                        payload.media_url,
-                        f"perf_obs_{sesion.id_sesion}_{uuid.uuid4().hex[:4]}.jpg"
-                    )
+                    # Drive removed; unreachable (payload.media_url is never populated by the webhook)
+                    foto_url = None
                 except Exception as e:
                     logger.error(f"Error uploading observation photo: {e}")
 
@@ -4628,13 +4602,8 @@ EJEMPLO SI HAY DESVIOS:
 
                         filename = f"{fecha}_{sesion.sucursal_id}_{punto.area.replace(' ','_')}_{punto.punto_orden}.jpg"
 
-                        photo_url = await self.drive.upload_photo_from_url(
-
-                            payload.media_url,
-
-                            filename,
-
-                        )
+                        # Drive removed; unreachable (payload.media_url is never populated by the webhook)
+                        photo_url = None
 
                 except Exception as e:
 
