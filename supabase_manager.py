@@ -1046,21 +1046,28 @@ class SupabaseManager:
                     path = evidencia.get("path")
                     thumb_path = evidencia.get("thumb_path")
                     mime_type = evidencia.get("mime_type", "image/jpeg")
+                    # Evidence uploaded via save_perfumeria_desvio_borrador is stored in the
+                    # "auditoria-respuestas" bucket, not "desvio-evidencias" — using the wrong
+                    # bucket here made every regeneration fail with "Object not found".
+                    bucket = evidencia.get("bucket") or "desvio-evidencias"
 
                     if not path or thumb_path or not mime_type.startswith("image/"):
                         continue
 
                     processed += 1
                     try:
-                        file_content = self.client.storage.from_("desvio-evidencias").download(path)
+                        file_content = self.client.storage.from_(bucket).download(path)
                         thumb_content = self._generate_thumbnail(file_content, mime_type)
 
                         if thumb_content:
                             thumb_name = f"{path.rsplit('.', 1)[0]}-thumb.jpg"
-                            self.client.storage.from_("desvio-evidencias").upload(
+                            # x-upsert=true: a previous run may have uploaded the thumbnail but
+                            # failed before persisting thumb_path, leaving it orphaned but present.
+                            # (storage3 reads the literal header "x-upsert", not "upsert".)
+                            self.client.storage.from_(bucket).upload(
                                 thumb_name,
                                 thumb_content,
-                                {"content-type": "image/jpeg", "upsert": "false"},
+                                {"content-type": "image/jpeg", "x-upsert": "true"},
                             )
                             evidencia["thumb_path"] = thumb_name
                             generated += 1

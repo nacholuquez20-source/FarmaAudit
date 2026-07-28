@@ -26,7 +26,13 @@ function LoadingGate({ title }: { title: string }) {
   const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setShowRetry(true), 3000);
+    // Supabase's default navigator-lock timeout is 5s: a tab that gets
+    // closed doesn't always release its Web Lock instantly, so every
+    // reopen can briefly wait out that window before auth-js steals the
+    // orphaned lock and session init proceeds normally. Keep this above
+    // that so the "still loading, refresh?" prompt doesn't flash on every
+    // routine reopen.
+    const timer = window.setTimeout(() => setShowRetry(true), 6000);
     return () => window.clearTimeout(timer);
   }, []);
 
