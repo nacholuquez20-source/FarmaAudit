@@ -900,6 +900,63 @@ class SupabaseManager:
             logger.error(f"Failed to get stale en_revision gestiones: {e}")
             return []
 
+    def get_gestiones_pendientes_recordatorio(self, intervalo_dias: int = 3) -> List[Dict[str, Any]]:
+        """Group open gestiones by branch manager, for a recurring "you still have
+        pending desvios" reminder (separate from the one-time notice sent right
+        after the audit — see _notify_responsable_desvios_pendientes).
+
+        No extra "last reminded" column needed: this is meant to run once a day,
+        and only returns a manager's group when the age (in days, since the
+        oldest still-open gestion was created) is a multiple of intervalo_dias —
+        so a manager sees one reminder every N days for as long as something
+        stays open, and never twice on the same day.
+        """
+        try:
+            response = (
+                self.client.table("gestion")
+                .select("id_gestion, sucursal, tel_responsable, responsable, created_at")
+                .in_("estado", ["Abierta", "En_proceso", "Vencida"])
+                .execute()
+            )
+            rows = response.data or []
+            now = datetime.now(timezone.utc)
+
+            groups: Dict[str, Dict[str, Any]] = {}
+            for row in rows:
+                tel = row.get("tel_responsable")
+                if not tel:
+                    continue
+                created_at = row.get("created_at")
+                if not created_at:
+                    continue
+                try:
+                    created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+
+                group = groups.setdefault(tel, {
+                    "tel_responsable": tel,
+                    "responsable": row.get("responsable") or "",
+                    "sucursales": set(),
+                    "cantidad": 0,
+                    "dias_abierto_max": 0,
+                })
+                group["sucursales"].add(row.get("sucursal") or "")
+                group["cantidad"] += 1
+                dias_abierto = (now - created).days
+                group["dias_abierto_max"] = max(group["dias_abierto_max"], dias_abierto)
+
+            due = []
+            for group in groups.values():
+                dias = group["dias_abierto_max"]
+                if dias > 0 and dias % intervalo_dias == 0:
+                    group["sucursales"] = sorted(s for s in group["sucursales"] if s)
+                    due.append(group)
+            return due
+        except Exception as e:
+            logger.error(f"Failed to get gestiones pendientes for reminder: {e}")
+            return []
+
     def update_gestion_fields(self, id_gestion: str, fields: Dict[str, Any]) -> bool:
         """Update arbitrary fields of a gestion record."""
         try:

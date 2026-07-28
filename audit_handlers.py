@@ -21,6 +21,7 @@ from audit_database import save_audit_to_database, send_manager_notification, ge
 from supabase_manager import SupabaseManager
 from audit_pdf_generator import generate_audit_pdf
 from audit_fiches_manager import AuditFichesManager
+from config import get_settings
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -92,35 +93,68 @@ async def _ficha_download_url(storage_path: str) -> str:
     return signed_url or storage_path
 
 
-async def _send_ficha_to_responsable(
+async def _notify_responsable_desvios_pendientes(
     meta_client: MetaClient,
     session: AuditSession,
-    ficha_url: str,
-    id_sesion: str,
 ) -> None:
-    """Send PDF ficha to the branch manager via WhatsApp (best-effort, never raises)."""
+    """Send the branch manager a short heads-up (no PDF) that new desvíos were
+    found. This is a best-effort safety net so the manager finds out even if
+    the auditor never gets around to forwarding the full report personally —
+    the detailed PDF + evidence is delivered by the auditor, not by this bot
+    (see _send_forward_invitation_text).
+    """
     try:
         db = SupabaseManager()
         sucursal = db.get_sucursal(session.sucursal_id)
         tel = sucursal.tel_responsable if sucursal else None
         if not tel:
-            logger.info(f"No tel_responsable for sucursal {session.sucursal_id} — skipping PDF delivery")
+            logger.info(f"No tel_responsable for sucursal {session.sucursal_id} — skipping notice")
             return
 
-        filename = f"Auditoria_{id_sesion}.pdf"
-        caption = (
-            f"📋 Informe de auditoría — {sucursal.nombre if sucursal else session.sucursal_id}\n"
-            f"Auditor: {session.auditor_nombre or '—'}"
+        cantidad = len(session.desvios)
+        texto = (
+            f"🚨 Se detectaron {cantidad} desvío(s) en tu sucursal durante la auditoría de hoy.\n\n"
+            f"Tu auditor/a te va a compartir el detalle con fotos y comentarios por WhatsApp. "
+            f"Cuando resuelvas alguno, escribinos a este mismo número para actualizarlo."
+        )
+        ok = await meta_client.send_text(tel, texto)
+        if ok:
+            logger.info(f"Short desvios notice sent to manager at {tel}")
+        else:
+            logger.warning(f"Failed to send desvios notice to manager at {tel}")
+    except Exception as e:
+        logger.warning(f"Could not notify responsable: {e}")
+
+
+async def _send_forward_invitation_text(
+    meta_client: MetaClient,
+    session: AuditSession,
+    telefono: str,
+) -> None:
+    """Send the auditor a ready-to-forward message (with the bot's number)
+    to personally send to the branch manager along with the PDF, inviting
+    them to write to the bot as they resolve each desvío.
+    """
+    try:
+        db = SupabaseManager()
+        sucursal = db.get_sucursal(session.sucursal_id)
+        nombre = sucursal.nombre if sucursal else session.sucursal_id
+        responsable = sucursal.responsable if sucursal else ""
+        bot_phone = get_settings().bot_display_phone
+
+        saludo = f"Hola {responsable}!" if responsable else "Hola!"
+        mensaje_para_reenviar = (
+            f"{saludo} Te comparto el informe de la auditoría de hoy en {nombre}, "
+            f"con el detalle y las fotos de cada desvío encontrado.\n\n"
+            f"Cuando vayas resolviendo cada uno, escribile directo a este bot de WhatsApp "
+            f"({bot_phone}) para que quede registrado. ¡Gracias!"
         )
 
-        download_url = await _ficha_download_url(ficha_url)
-        ok = await meta_client.send_document(tel, download_url, filename, caption)
-        if ok:
-            logger.info(f"PDF ficha sent to manager at {tel}")
-        else:
-            logger.warning(f"Failed to send PDF ficha to manager at {tel}")
+        intro = "📤 *Para reenviar al encargado junto con el PDF:*"
+        await meta_client.send_text(telefono, intro)
+        await meta_client.send_text(telefono, mensaje_para_reenviar)
     except Exception as e:
-        logger.warning(f"Could not send PDF to responsable: {e}")
+        logger.warning(f"Could not send forward-invitation text to auditor: {e}")
 
 
 async def _send_desvios_summary(
@@ -345,10 +379,12 @@ class AuditConversationHandler:
                         await _send_desvios_summary(meta_client, session, payload.telefono)
 
                         if ficha_url:
-                            # Send PDF to branch manager
-                            await _send_ficha_to_responsable(
-                                meta_client, session, ficha_url, session.id_sesion
-                            )
+                            # Short heads-up to the manager (no PDF) — the detailed
+                            # report is sent by the auditor personally, see below.
+                            await _notify_responsable_desvios_pendientes(meta_client, session)
+                            # Give the auditor a ready-to-forward invitation text
+                            # (with the bot's number) to send along with the PDF.
+                            await _send_forward_invitation_text(meta_client, session, payload.telefono)
                             # Ask auditor if they want the PDF too
                             await _ask_ficha_download(
                                 meta_client, payload.telefono, session, ficha_url
@@ -1514,9 +1550,8 @@ class AuditConversationHandler:
                 )
 
                 if ficha_url:
-                    await _send_ficha_to_responsable(
-                        meta_client, session, ficha_url, session.id_sesion
-                    )
+                    # No desvíos found — nothing for the manager to resolve or
+                    # be notified about, just offer the auditor her PDF copy.
                     await _ask_ficha_download(
                         meta_client, payload.telefono, session, ficha_url
                     )

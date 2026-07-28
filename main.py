@@ -459,6 +459,15 @@ async def startup_event():
         id="sla_auditor_revision_check",
         max_instances=1,  # Prevent concurrent executions
     )
+    scheduler.add_job(
+        remind_responsable_desvios_pendientes,
+        "cron",
+        hour=13,  # UTC (10:00 ART)
+        minute=0,
+        id="responsable_desvios_reminder",
+        timezone=pytz.UTC,
+        max_instances=1,  # Prevent concurrent executions
+    )
     # Disabled: Using Supabase directly, no longer syncing from Google Sheets
     # scheduler.add_job(
     #     sync_sheets_to_supabase,
@@ -1603,6 +1612,41 @@ async def remind_sla_auditor_revision():
                     logger.warning(f"Failed to alert coordinator about stale review {gestion.get('id_gestion')}: {exc}")
     except Exception as e:
         logger.error(f"Error in overdue gestion check job: {e}", exc_info=True)
+
+
+async def remind_responsable_desvios_pendientes():
+    """Background job: recurring reminder to branch managers who still have open
+    desvios, on top of the one-time notice sent right when the audit finds them
+    (see _notify_responsable_desvios_pendientes in audit_handlers.py). Runs once
+    a day; a manager gets pinged again every N days for as long as something
+    stays open (see get_gestiones_pendientes_recordatorio)."""
+    try:
+        db = SupabaseManager()
+        due = db.get_gestiones_pendientes_recordatorio(intervalo_dias=3)
+        if not due:
+            return
+
+        meta_client = MetaClient()
+        for group in due:
+            tel = group["tel_responsable"]
+            cantidad = group["cantidad"]
+            dias = group["dias_abierto_max"]
+            sucursales = ", ".join(group["sucursales"]) or "tu sucursal"
+            texto = (
+                f"🔔 Recordatorio: tenés {cantidad} desvío(s) pendientes de resolver "
+                f"en {sucursales}, el más antiguo desde hace {dias} días.\n\n"
+                f"Escribinos a este mismo número a medida que los vayas gestionando."
+            )
+            try:
+                ok = await meta_client.send_text(tel, texto)
+                if not ok:
+                    logger.warning(f"Failed to send pending-desvios reminder to {tel}")
+            except Exception as exc:
+                logger.warning(f"Error sending pending-desvios reminder to {tel}: {exc}")
+
+        logger.info(f"Pending-desvios reminder sent to {len(due)} manager(s)")
+    except Exception as e:
+        logger.error(f"Error in responsable reminder job: {e}", exc_info=True)
 
 
 async def regenerate_thumbnails_job():
