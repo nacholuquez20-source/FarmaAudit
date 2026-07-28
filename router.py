@@ -525,9 +525,13 @@ class ConversationRouter:
         encargado: Dict[str, Any],
         gestiones: List[Dict[str, Any]],
     ) -> str:
-        opciones = gestiones[:9]
+        MAX_OPCIONES_DESVIO = 20
+        opciones = gestiones[:MAX_OPCIONES_DESVIO]
+        header = f"Hola {encargado.get('nombre') or ''}. Tenes {len(gestiones)} desvio(s) pendiente(s)"
+        if len(gestiones) > len(opciones):
+            header += f" (mostrando los primeros {len(opciones)})"
         lines = [
-            f"Hola {encargado.get('nombre') or ''}. Tenes {len(gestiones)} desvio(s) pendiente(s):",
+            f"{header}:",
             "",
             *[self._format_desvio_option(index, gestion) for index, gestion in enumerate(opciones, start=1)],
             "",
