@@ -58,6 +58,14 @@ NOTES_TEMPLATES = {
     ],
 }
 
+# Explicit "nothing to report" option, offered alongside NOTES_TEMPLATES after
+# an auditor saves a photo/audio. Selecting it must NOT create a desvío/nota.
+NO_PROBLEMS_OPTION = {"id": "sin_problemas", "title": "✅ Sin problemas"}
+
+# Id used for the "write a custom description" row appended to NOTES_TEMPLATES
+# list messages. Selecting it must prompt for free text, not save the id itself.
+CUSTOM_NOTE_OPTION_ID = "otro"
+
 
 SCORE_OPTIONS = [
     {"id": "1", "title": "Muy malo", "description": "Crítico, acción inmediata"},
@@ -961,9 +969,38 @@ class AuditConversationHandler:
 
                 return await AuditConversationHandler.send_summary(payload.telefono, meta_client, session)
 
-            # Text without "SIGUIENTE" → save as note/desvio for this bloque
-            texto = payload.contenido.strip()
-            session.add_desvio(bloque=current_bloque, descripcion=texto)
+            # Text without "SIGUIENTE" — could be free text, OR the id of a
+            # list_reply/button_reply (main.py maps list_reply.id -> contenido
+            # and sets tipo="text" for downstream handlers). Handle the
+            # special list ids before falling back to "save raw text as note".
+            raw_id = payload.contenido.strip()
+
+            # "✅ Sin problemas" — auditor confirms nothing to report for this
+            # evidence. Just acknowledge; do NOT create a desvío/nota.
+            if raw_id == NO_PROBLEMS_OPTION["id"]:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "👍 Perfecto, ¿algo más? (foto, audio, texto, o 'SIGUIENTE')"
+                )
+                return "no_problems_confirmed"
+
+            # "Escribir otro..." — the auditor still needs to type the real
+            # description. Prompt for it and wait for the next message;
+            # do NOT save the button id itself as the note.
+            if raw_id == CUSTOM_NOTE_OPTION_ID:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "Escribí tu descripción del problema:"
+                )
+                return "awaiting_custom_note"
+
+            # If the text matches a predefined template id, resolve it to its
+            # readable title before saving (never persist the raw numeric id).
+            templates = NOTES_TEMPLATES.get(current_bloque, [])
+            template_match = next((t for t in templates if t.get("id") == raw_id), None)
+            descripcion = template_match["title"] if template_match else raw_id
+
+            session.add_desvio(bloque=current_bloque, descripcion=descripcion)
             save_session(session)
 
             await meta_client.send_text(
@@ -1044,7 +1081,7 @@ class AuditConversationHandler:
                         body=f"Problemas comunes en {bloque_label}:",
                         footer="O envía tu propia descripción",
                         button_text="Selecciona o agrega",
-                        options=templates + [{"id": "otro", "title": "Escribir otro..."}]
+                        options=[NO_PROBLEMS_OPTION] + templates + [{"id": CUSTOM_NOTE_OPTION_ID, "title": "Escribir otro..."}]
                     )
 
                 return "photo_received"
@@ -1080,7 +1117,7 @@ class AuditConversationHandler:
                         body=f"Problemas comunes en {bloque_label}:",
                         footer="O envía 'SIGUIENTE'",
                         button_text="Agregar problema",
-                        options=templates[:4] + [{"id": "siguiente", "title": "Siguiente bloque"}]
+                        options=[NO_PROBLEMS_OPTION] + templates[:4] + [{"id": "siguiente", "title": "Siguiente bloque"}]
                     )
 
                 return "audio_received"

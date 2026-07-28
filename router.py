@@ -2469,7 +2469,16 @@ class ConversationRouter:
         conv: Conversacion,
         meta_client: MetaClient,
     ) -> str:
-        """Handle sucursal selection for perfumery audit."""
+        """Handle sucursal selection for perfumery audit.
+
+        Expects payload.contenido to be the plain numeric choice as text (the
+        menu sent by _iniciar_seleccion_sucursal is a numbered text list, not
+        an interactive WhatsApp list — see the note there). If this ever were
+        converted to interactive/list_reply, main.py already normalizes
+        `interactive.list_reply.id` into payload.contenido with tipo="text"
+        before routing here, so this int() parse would keep working as long
+        as row ids are set to the plain choice number.
+        """
         try:
             if not payload.contenido:
                 await meta_client.send_text(
@@ -2990,7 +2999,15 @@ EDITAR → Hacer cambios""",
                 )
                 return "no_sucursales"
 
-            # Build sucursal menu with auditor's escuadrón
+            # Build sucursal menu with auditor's escuadrón.
+            #
+            # NOTE: intentionally plain numbered text, not meta_client.send_list_message.
+            # WhatsApp interactive list messages cap out at MetaClient.MAX_LIST_ROWS_TOTAL
+            # (10) rows TOTAL across all sections combined (not 10 per section) — with
+            # up to ~25 sucursales this menu cannot fit in a single native list message,
+            # so a numbered text list (parsed as an int in
+            # _handle_seleccionando_sucursal_perfumeria) is the correct approach here.
+            # send_text() truncates at Meta's 4096-char text limit as a safety net.
             menu = f"👋 ¡Hola {auditor.nombre}! 🏪 Auditoría {auditor.cuadrilla}\n\n"
             menu += "Selecciona tu sucursal:\n\n"
             for i, s in enumerate(sucursales, 1):
