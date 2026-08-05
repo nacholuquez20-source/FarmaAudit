@@ -1816,6 +1816,28 @@ async def get_audit_ficha(ficha_id: str, request: Request):
         raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 
+@app.post("/api/analisis/ficha/{ficha_id}")
+async def analizar_ficha(ficha_id: str, request: Request):
+    """Run multi-agent analysis on a completed audit ficha.
+
+    Executes 5 specialized Claude agents in parallel (field auditor, quality
+    analyst, Argentine perfumery expert, ANMAT regulatory advisor, business
+    analyst) then synthesizes the results into an executive action plan.
+    """
+    await _require_admin_or_auditor(request)
+    try:
+        from analysis_agents import AuditAnalysisOrchestrator
+        result = await AuditAnalysisOrchestrator().analizar(ficha_id)
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error running audit analysis for ficha {ficha_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error al ejecutar el análisis")
+
+
 if __name__ == "__main__":
     import uvicorn
 

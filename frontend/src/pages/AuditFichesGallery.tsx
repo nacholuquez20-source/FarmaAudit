@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Calendar, Camera, Download, FileText, FilterX, X } from 'lucide-react';
+import { AlertTriangle, Brain, Calendar, Camera, CheckCircle2, Download, FileText, FilterX, Loader2, TrendingDown, TrendingUp, X } from 'lucide-react';
 import { AppLayout } from '../components/AppLayout';
 import { Button } from '../components/Button';
 import { FeedbackState } from '../components/FeedbackState';
 import { Input } from '../components/Input';
 import { Select } from '../components/Select';
-import { exportControlesPdf, getSucursales } from '../lib/api';
+import { analisisAuditoria, exportControlesPdf, getSucursales } from '../lib/api';
+import type { AnalisisAuditoria } from '../lib/api';
 import { supabase } from '../lib/supabase';
 import type { Sucursal } from '../types';
 import { toast } from 'sonner';
@@ -108,6 +109,8 @@ export default function AuditFichesGallery() {
 
   const [selected, setSelected] = useState<Ficha | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [analisis, setAnalisis] = useState<AnalisisAuditoria | null>(null);
+  const [loadingAnalisis, setLoadingAnalisis] = useState(false);
 
   const sucursalNombre = useMemo(() => {
     const map = new Map(sucursales.map((s) => [s.id, s.nombre]));
@@ -167,6 +170,26 @@ export default function AuditFichesGallery() {
     setFechaDesde('');
     setFechaHasta('');
     setPage(0);
+  };
+
+  const handleAnalizar = async () => {
+    if (!selected) return;
+    setLoadingAnalisis(true);
+    setAnalisis(null);
+    try {
+      const result = await analisisAuditoria(selected.id);
+      setAnalisis(result);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'No se pudo ejecutar el análisis');
+    } finally {
+      setLoadingAnalisis(false);
+    }
+  };
+
+  const handleSelectFicha = (ficha: Ficha) => {
+    setSelected(ficha);
+    setAnalisis(null);
+    setLoadingAnalisis(false);
   };
 
   const updateFilter = <T,>(setter: (value: T) => void) => (value: T) => {
@@ -316,7 +339,7 @@ export default function AuditFichesGallery() {
                     <button
                       key={ficha.id}
                       type="button"
-                      onClick={() => setSelected(ficha)}
+                      onClick={() => handleSelectFicha(ficha)}
                       className="flex flex-col rounded-lg border border-gray-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-200"
                     >
                       <div className="mb-3 flex items-center justify-between">
@@ -392,7 +415,7 @@ export default function AuditFichesGallery() {
           onClick={() => setSelected(null)}
         >
           <div
-            className="w-full max-w-md rounded-lg bg-white shadow-xl"
+            className={`w-full rounded-lg bg-white shadow-xl transition-all ${analisis ? 'max-w-2xl' : 'max-w-md'}`}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
@@ -464,9 +487,122 @@ export default function AuditFichesGallery() {
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 border-t border-gray-200 px-5 py-4">
+            {/* Panel de análisis multi-agente */}
+            {(loadingAnalisis || analisis) && (
+              <div className="border-t border-gray-200 px-5 py-4">
+                {loadingAnalisis && (
+                  <div className="flex flex-col items-center gap-3 py-6 text-center">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary-navy" />
+                    <p className="text-sm font-medium text-gray-700">Consultando 5 agentes especializados…</p>
+                    <p className="text-xs text-gray-400">Auditor · Calidad · Perfumería · Normativo · Negocio</p>
+                  </div>
+                )}
+
+                {analisis && !loadingAnalisis && (
+                  <div className="space-y-4">
+                    {/* Header */}
+                    <div className="flex items-center gap-2">
+                      <Brain className="h-4 w-4 text-primary-navy" />
+                      <span className="text-sm font-semibold text-primary-navy">Análisis IA</span>
+                      <span
+                        className={`ml-auto rounded-full px-2.5 py-0.5 text-xs font-bold text-white ${
+                          analisis.sintesis.nivel_urgencia === 'critico'
+                            ? 'bg-red-600'
+                            : analisis.sintesis.nivel_urgencia === 'urgente'
+                              ? 'bg-orange-500'
+                              : 'bg-green-600'
+                        }`}
+                      >
+                        {analisis.sintesis.nivel_urgencia.toUpperCase()}
+                      </span>
+                    </div>
+
+                    {/* Diagnóstico */}
+                    <p className="text-sm text-gray-700">{analisis.sintesis.diagnostico_integral}</p>
+
+                    {/* Métricas rápidas */}
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="rounded-lg bg-gray-50 p-2 text-center">
+                        <p className="text-xs text-gray-500">Riesgo global</p>
+                        <p className={`text-lg font-bold ${analisis.sintesis.score_riesgo_global >= 70 ? 'text-red-600' : analisis.sintesis.score_riesgo_global >= 40 ? 'text-orange-500' : 'text-green-600'}`}>
+                          {analisis.sintesis.score_riesgo_global}
+                        </p>
+      </div>
+                      <div className="rounded-lg bg-gray-50 p-2 text-center">
+                        <p className="text-xs text-gray-500">Tendencia</p>
+                        <div className="flex justify-center pt-1">
+                          {analisis.agentes.calidad.tendencia_general === 'mejorando'
+                            ? <TrendingUp className="h-5 w-5 text-green-600" />
+                            : analisis.agentes.calidad.tendencia_general === 'deteriorando'
+                              ? <TrendingDown className="h-5 w-5 text-red-600" />
+                              : <span className="text-sm font-semibold text-gray-500">—</span>}
+                        </div>
+                      </div>
+                      <div className="rounded-lg bg-gray-50 p-2 text-center">
+                        <p className="text-xs text-gray-500">Próxima audit.</p>
+                        <p className="text-sm font-bold text-gray-800">{analisis.sintesis.proxima_auditoria_en_dias}d</p>
+                      </div>
+                    </div>
+
+                    {/* Alertas de agentes */}
+                    <div className="flex flex-wrap gap-2">
+                      {analisis.agentes.normativo.requiere_accion_inmediata && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700">
+                          <AlertTriangle className="h-3 w-3" /> ANMAT: {analisis.agentes.normativo.nivel_alerta_anmat}
+                        </span>
+                      )}
+                      {analisis.agentes.perfumeria.planograma_comprometido && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-orange-50 px-2 py-0.5 text-xs font-medium text-orange-700">
+                          <AlertTriangle className="h-3 w-3" /> Planograma comprometido
+                        </span>
+                      )}
+                      {analisis.agentes.calidad.desvios_reincidentes.length > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-yellow-50 px-2 py-0.5 text-xs font-medium text-yellow-700">
+                          <AlertTriangle className="h-3 w-3" /> {analisis.agentes.calidad.desvios_reincidentes.length} desvio(s) reincidente(s)
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Top 3 acciones */}
+                    <div>
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Acciones inmediatas</p>
+                      <ul className="space-y-1">
+                        {analisis.sintesis.top_3_acciones_inmediatas.map((accion, i) => (
+                          <li key={i} className="flex items-start gap-2 text-sm text-gray-700">
+                            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary-navy" />
+                            {accion}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    {/* Mensaje para encargado (colapsable) */}
+                    <details className="rounded-lg border border-gray-200 text-sm">
+                      <summary className="cursor-pointer px-3 py-2 font-medium text-gray-700 hover:bg-gray-50">
+                        Mensaje para el encargado
+                      </summary>
+                      <p className="whitespace-pre-line px-3 pb-3 pt-1 text-gray-600">
+                        {analisis.sintesis.mensaje_para_encargado}
+                      </p>
+                    </details>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex flex-wrap justify-end gap-2 border-t border-gray-200 px-5 py-4">
               <Button variant="secondary" onClick={() => setSelected(null)}>
                 Cerrar
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => void handleAnalizar()}
+                disabled={loadingAnalisis}
+              >
+                {loadingAnalisis
+                  ? <Loader2 className="mr-2 inline h-4 w-4 animate-spin" />
+                  : <Brain className="mr-2 inline h-4 w-4" />}
+                {analisis ? 'Re-analizar' : 'Analizar con IA'}
               </Button>
               {selected.url_pdf && (
                 <Button onClick={() => window.open(selected.url_pdf as string, '_blank', 'noopener')}>

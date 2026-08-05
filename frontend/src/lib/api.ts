@@ -1300,3 +1300,91 @@ export async function exportControlesPdf(filters: {
 
   return response.blob();
 }
+
+// ─── Multi-agent audit analysis ──────────────────────────────────────────────
+
+export interface AgenteCampo {
+  resumen_ejecutivo: string;
+  bloques_criticos: string[];
+  bloques_destacados: string[];
+  calidad_evidencia: 'alta' | 'media' | 'baja';
+  diagnostico_general: 'positivo' | 'regular' | 'critico';
+}
+
+export interface AgenteCalidad {
+  tendencia_general: 'mejorando' | 'estable' | 'deteriorando';
+  variacion_score_vs_anterior: number | null;
+  desvios_reincidentes: string[];
+  bloques_mejorando: string[];
+  bloques_deteriorando: string[];
+  nivel_riesgo_historico: 'bajo' | 'medio' | 'alto' | 'critico';
+  recomendacion_frecuencia_auditoria: 'quincenal' | 'mensual' | 'bimestral';
+}
+
+export interface AgentePerfumeria {
+  marcas_potencialmente_afectadas: string[];
+  riesgo_acuerdo_comercial: 'bajo' | 'medio' | 'alto';
+  desvios_criticos_perfumeria: string[];
+  impacto_exhibicion: string;
+  acciones_urgentes: string[];
+  planograma_comprometido: boolean;
+}
+
+export interface AgenteNormativo {
+  nivel_alerta_anmat: 'verde' | 'amarillo' | 'naranja' | 'rojo';
+  desvios_con_riesgo_regulatorio: string[];
+  areas_riesgo: string[];
+  recomendacion_normativa: string;
+  requiere_accion_inmediata: boolean;
+  plazo_regularizacion_max_dias: number;
+}
+
+export interface AgenteNegocio {
+  score_salud_negocio: number;
+  riesgo_perdida_ventas: 'bajo' | 'medio' | 'alto' | 'critico';
+  desvios_mayor_impacto_economico: string[];
+  prioridades: { desvio: string; prioridad: number; impacto: string; plazo_dias: number }[];
+  inversion_requerida: 'baja' | 'media' | 'alta';
+  retorno_esperado: string;
+}
+
+export interface Sintesis {
+  diagnostico_integral: string;
+  nivel_urgencia: 'normal' | 'urgente' | 'critico';
+  score_riesgo_global: number;
+  top_3_acciones_inmediatas: string[];
+  proxima_auditoria_en_dias: number;
+  mensaje_para_encargado: string;
+}
+
+export interface AnalisisAuditoria {
+  ficha_id: string;
+  sucursal_id: string;
+  fecha_auditoria: string;
+  agentes: {
+    campo: AgenteCampo;
+    calidad: AgenteCalidad;
+    perfumeria: AgentePerfumeria;
+    normativo: AgenteNormativo;
+    negocio: AgenteNegocio;
+  };
+  sintesis: Sintesis;
+  generado_en: string;
+}
+
+export async function analisisAuditoria(fichaId: string): Promise<AnalisisAuditoria> {
+  const apiUrl = getBotApiUrl();
+  if (!apiUrl) throw new Error('Falta configurar VITE_API_URL con la URL del bot.');
+
+  const response = await fetch(`${apiUrl}/api/analisis/ficha/${encodeURIComponent(fichaId)}`, {
+    method: 'POST',
+    headers: await getAuthHeaders(),
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail || 'No se pudo ejecutar el análisis.');
+  }
+
+  return response.json();
+}
