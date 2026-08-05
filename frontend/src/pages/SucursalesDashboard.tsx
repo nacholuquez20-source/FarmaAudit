@@ -3,13 +3,18 @@ import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
   Calendar,
+  Check,
+  CircleDot,
   ClipboardCheck,
+  Minus,
   MessageCircle,
   Pencil,
   Search,
   SprayCan,
   Star,
+  Triangle,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { getSucursalesDashboard } from '../lib/api';
@@ -17,15 +22,18 @@ import { whatsappLink } from '../lib/utils';
 import { useAuth } from '../hooks/useAuth';
 import type { EstadoSalud, SucursalDashboard } from '../types';
 
-type Filtro = 'todas' | 'critica' | 'atencion' | 'ok' | 'perfumeria';
+type Filtro = 'todas' | 'critica' | 'atencion' | 'ok' | 'sin_datos' | 'perfumeria';
 
-// Orden por urgencia: las críticas primero.
-const RANK: Record<EstadoSalud, number> = { critica: 0, atencion: 1, ok: 2 };
+// Orden por urgencia: las críticas primero, "sin datos" al final (no arde).
+const RANK: Record<EstadoSalud, number> = { critica: 0, atencion: 1, ok: 2, sin_datos: 3 };
 
-const SALUD_META: Record<EstadoSalud, { dot: string; ring: string; label: string }> = {
-  critica: { dot: 'bg-red-500', ring: 'hover:border-red-300', label: 'Crítica' },
-  atencion: { dot: 'bg-amber-500', ring: 'hover:border-amber-300', label: 'Atención' },
-  ok: { dot: 'bg-green-500', ring: 'hover:border-green-300', label: 'Al día' },
+// El estado se comunica por COLOR + FORMA (ícono), no solo color, para que sea
+// legible con daltonismo. El borde izquierdo es el ancla visual de la tarjeta.
+const SALUD_META: Record<EstadoSalud, { dot: string; border: string; icon: LucideIcon; label: string }> = {
+  critica:   { dot: 'bg-red-500',   border: 'border-l-red-500',   icon: Triangle,   label: 'Crítica' },
+  atencion:  { dot: 'bg-amber-500', border: 'border-l-amber-500', icon: CircleDot,  label: 'Atención' },
+  ok:        { dot: 'bg-green-500', border: 'border-l-green-500', icon: Check,      label: 'Al día' },
+  sin_datos: { dot: 'bg-gray-300',  border: 'border-l-gray-300',  icon: Minus,      label: 'Sin datos' },
 };
 
 function scoreClasses(score: number | null): string {
@@ -104,7 +112,7 @@ export default function SucursalesDashboard() {
         acc[s.estado_salud] += 1;
         return acc;
       },
-      { critica: 0, atencion: 0, ok: 0 } as Record<EstadoSalud, number>,
+      { critica: 0, atencion: 0, ok: 0, sin_datos: 0 } as Record<EstadoSalud, number>,
     );
   }, [scoped]);
 
@@ -134,6 +142,7 @@ export default function SucursalesDashboard() {
     { key: 'critica', label: 'Críticas', count: conteos.critica, dot: 'bg-red-500' },
     { key: 'atencion', label: 'Atención', count: conteos.atencion, dot: 'bg-amber-500' },
     { key: 'ok', label: 'Al día', count: conteos.ok, dot: 'bg-green-500' },
+    { key: 'sin_datos', label: 'Sin datos', count: conteos.sin_datos, dot: 'bg-gray-300' },
     { key: 'perfumeria', label: '🧴 Perfumería' },
   ];
 
@@ -213,66 +222,82 @@ export default function SucursalesDashboard() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {visibles.map((s) => {
             const meta = SALUD_META[s.estado_salud];
+            const Icon = meta.icon;
             const wa = whatsappLink(s.tel_responsable);
+            const sinDatos = s.estado_salud === 'sin_datos';
             return (
               <div
                 key={s.id}
                 onClick={() => navigate(`/sucursales/${s.id}`)}
-                className={`flex cursor-pointer flex-col rounded-lg border border-gray-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${meta.ring}`}
+                className={`flex cursor-pointer flex-col rounded-lg border border-l-4 border-gray-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${meta.border}`}
               >
-                {/* Header: nombre + semáforo */}
+                {/* Header: nombre + estado (color + forma + label) */}
                 <div className="mb-1 flex items-start justify-between gap-2">
                   <h3 className="font-semibold leading-tight text-gray-900">{s.nombre}</h3>
                   <span
-                    className={`mt-1 h-3 w-3 shrink-0 rounded-full ${meta.dot}`}
+                    className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-white ${meta.dot}`}
                     title={meta.label}
-                  />
+                    aria-label={meta.label}
+                  >
+                    <Icon className="h-3 w-3" strokeWidth={3} />
+                  </span>
                 </div>
-                <div className="mb-3 flex items-center gap-2 text-xs text-gray-500">
-                  <span>{s.zona || 'Sin zona'}</span>
-                  {s.tiene_perfumeria && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-primary-orange/10 px-1.5 py-0.5 font-medium text-primary-orange">
-                      <SprayCan className="h-3 w-3" />
-                      Perfumería
-                    </span>
-                  )}
-                </div>
-
-                {/* Métricas */}
-                <div className="space-y-1.5 text-sm">
-                  <div className="flex items-center gap-2">
-                    {s.desvios_abiertos > 0 ? (
-                      <>
-                        <AlertTriangle className="h-4 w-4 text-red-500" />
-                        <span className="text-gray-700">
-                          {s.desvios_abiertos} desvío{s.desvios_abiertos === 1 ? '' : 's'}
-                          {s.desvios_vencidos > 0 && (
-                            <span className="font-semibold text-red-600"> · {s.desvios_vencidos} vencido{s.desvios_vencidos === 1 ? '' : 's'}</span>
-                          )}
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-green-100 text-[10px] font-bold text-green-700">✓</span>
-                        <span className="text-gray-500">Sin desvíos</span>
-                      </>
+                {(s.zona || s.tiene_perfumeria) && (
+                  <div className="mb-3 flex items-center gap-2 text-xs text-gray-500">
+                    {s.zona && <span>{s.zona}</span>}
+                    {s.tiene_perfumeria && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-primary-orange/10 px-1.5 py-0.5 font-medium text-primary-orange">
+                        <SprayCan className="h-3 w-3" />
+                        Perfumería
+                      </span>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 text-gray-600">
-                    <Calendar className="h-4 w-4 text-gray-400" />
-                    {diasLabel(s.dias_desde_auditoria)}
+                )}
+
+                {/* Métricas — para "sin datos" se colapsa a una línea muteada */}
+                {sinDatos ? (
+                  <div className="flex items-center gap-2 text-sm text-gray-400">
+                    <Calendar className="h-4 w-4" />
+                    Sin auditorías todavía
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Star className={`h-4 w-4 ${scoreClasses(s.ultimo_score)}`} />
-                    <span className={`font-semibold ${scoreClasses(s.ultimo_score)}`}>
-                      {s.ultimo_score != null ? `${Number(s.ultimo_score).toFixed(1)}/5` : 'Sin puntaje'}
-                    </span>
+                ) : (
+                  <div className="space-y-1.5 text-sm">
+                    <div className="flex items-center gap-2">
+                      {s.desvios_abiertos > 0 ? (
+                        <>
+                          <AlertTriangle className="h-4 w-4 text-red-500" />
+                          <span className="text-gray-700">
+                            {s.desvios_abiertos} desvío{s.desvios_abiertos === 1 ? '' : 's'}
+                            {s.desvios_vencidos > 0 && (
+                              <span className="font-semibold text-red-600"> · {s.desvios_vencidos} vencido{s.desvios_vencidos === 1 ? '' : 's'}</span>
+                            )}
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-green-100 text-[10px] font-bold text-green-700">✓</span>
+                          <span className="text-gray-500">Sin desvíos</span>
+                        </>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 text-gray-600">
+                      <Calendar className="h-4 w-4 text-gray-400" />
+                      {diasLabel(s.dias_desde_auditoria)}
+                    </div>
+                    {s.ultimo_score != null && (
+                      <div className="flex items-center gap-2">
+                        <Star className={`h-4 w-4 ${scoreClasses(s.ultimo_score)}`} />
+                        <span className={`font-semibold ${scoreClasses(s.ultimo_score)}`}>
+                          {`${Number(s.ultimo_score).toFixed(1)}/5`}
+                        </span>
+                      </div>
+                    )}
                   </div>
-                </div>
+                )}
 
                 {/* Footer: encargado + acciones */}
                 <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-3">
-                  <span className="truncate text-xs text-gray-500" title={s.responsable || ''}>
+                  <span className={`truncate text-xs ${s.responsable ? 'text-gray-500' : 'text-gray-300'}`} title={s.responsable || ''}>
                     👤 {s.responsable || 'Sin encargado'}
                   </span>
                   <div className="flex items-center gap-1">

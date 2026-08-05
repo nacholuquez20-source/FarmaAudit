@@ -96,7 +96,7 @@ export function cn(...classes: (string | undefined | null | false)[]): string {
 // Enlace directo de WhatsApp normalizando teléfonos argentinos.
 // Quita el 0 de trunk, antepone 54 y descarta números demasiado cortos
 // (evita links basura como wa.me/54 que no abren ningún chat).
-export function whatsappLink(tel: string | null | undefined): string | null {
+export function whatsappLink(tel: string | null | undefined, mensaje?: string): string | null {
   if (!tel) return null;
   let d = tel.replace(/\D/g, '');
   if (!d) return null;
@@ -105,7 +105,8 @@ export function whatsappLink(tel: string | null | undefined): string | null {
     d = `54${d}`;
   }
   if (d.length < 10) return null;
-  return `https://wa.me/${d}`;
+  const base = `https://wa.me/${d}`;
+  return mensaje ? `${base}?text=${encodeURIComponent(mensaje)}` : base;
 }
 
 // Diferencia en días CALENDARIO usando la hora local del navegador

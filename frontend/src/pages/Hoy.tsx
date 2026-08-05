@@ -89,7 +89,7 @@ export default function Hoy() {
           acc[s.estado_salud] += 1;
           return acc;
         },
-        { critica: 0, atencion: 0, ok: 0 } as Record<SucursalDashboard['estado_salud'], number>,
+        { critica: 0, atencion: 0, ok: 0, sin_datos: 0 } as Record<SucursalDashboard['estado_salud'], number>,
       ),
     [rows],
   );
@@ -149,7 +149,7 @@ export default function Hoy() {
           <p className="text-sm text-gray-500">{fechaLarga()}</p>
         </div>
         {!loading && (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1 text-sm">
               <span className="h-2.5 w-2.5 rounded-full bg-red-500" /> {conteos.critica} críticas
             </span>
@@ -159,6 +159,11 @@ export default function Hoy() {
             <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1 text-sm">
               <span className="h-2.5 w-2.5 rounded-full bg-green-500" /> {conteos.ok} al día
             </span>
+            {conteos.sin_datos > 0 && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1 text-sm text-gray-500">
+                <span className="h-2.5 w-2.5 rounded-full bg-gray-300" /> {conteos.sin_datos} sin datos
+              </span>
+            )}
           </div>
         )}
       </div>

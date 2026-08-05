@@ -65,15 +65,21 @@ SELECT
   COALESCE(da.desvios_abiertos, 0) AS desvios_abiertos,
   COALESCE(da.desvios_vencidos, 0) AS desvios_vencidos,
 
-  -- Semáforo de salud: se evalúan primero las condiciones críticas.
+  -- Semáforo de salud (4 estados). Se evalúan primero las condiciones críticas.
+  -- 'sin_datos' (gris) separa "nunca auditada y sin desvíos pendientes" de una
+  -- 'critica' real: sin este estado, un sistema recién arrancado pinta TODO en
+  -- rojo y el semáforo pierde su señal. Una sucursal sin ficha PERO con desvíos
+  -- vencidos/abiertos igual cae en critica/atencion (hay algo que accionar).
   CASE
     WHEN COALESCE(da.desvios_vencidos, 0) > 0                                    THEN 'critica'
-    WHEN uf.fecha_efectiva IS NULL                                              THEN 'critica'
-    WHEN ((SELECT d FROM hoy_ar) - (uf.fecha_efectiva AT TIME ZONE 'America/Argentina/Buenos_Aires')::date) > 30  THEN 'critica'
+    WHEN uf.fecha_efectiva IS NOT NULL
+     AND ((SELECT d FROM hoy_ar) - (uf.fecha_efectiva AT TIME ZONE 'America/Argentina/Buenos_Aires')::date) > 30  THEN 'critica'
     WHEN uf.puntuacion_promedio IS NOT NULL AND uf.puntuacion_promedio < 3.0    THEN 'critica'
     WHEN COALESCE(da.desvios_abiertos, 0) > 0                                   THEN 'atencion'
-    WHEN ((SELECT d FROM hoy_ar) - (uf.fecha_efectiva AT TIME ZONE 'America/Argentina/Buenos_Aires')::date) BETWEEN 15 AND 30  THEN 'atencion'
+    WHEN uf.fecha_efectiva IS NOT NULL
+     AND ((SELECT d FROM hoy_ar) - (uf.fecha_efectiva AT TIME ZONE 'America/Argentina/Buenos_Aires')::date) BETWEEN 15 AND 30  THEN 'atencion'
     WHEN uf.puntuacion_promedio IS NOT NULL AND uf.puntuacion_promedio < 4.0    THEN 'atencion'
+    WHEN uf.fecha_efectiva IS NULL                                              THEN 'sin_datos'
     ELSE 'ok'
   END                          AS estado_salud
 FROM sucursales s

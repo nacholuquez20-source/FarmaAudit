@@ -50,6 +50,7 @@ const SALUD_META: Record<EstadoSalud, { dot: string; pill: string; label: string
   critica: { dot: 'bg-red-500', pill: 'bg-red-50 text-red-700', label: 'Crítica' },
   atencion: { dot: 'bg-amber-500', pill: 'bg-amber-50 text-amber-700', label: 'Atención' },
   ok: { dot: 'bg-green-500', pill: 'bg-green-50 text-green-700', label: 'Al día' },
+  sin_datos: { dot: 'bg-gray-300', pill: 'bg-gray-100 text-gray-600', label: 'Sin datos' },
 };
 
 function scoreColor(score: number | null) {
@@ -59,14 +60,16 @@ function scoreColor(score: number | null) {
   return 'text-red-600 font-semibold';
 }
 
+// Mismo criterio que la vista sucursales_dashboard (4 estados). "sin_datos"
+// (nunca auditada y sin desvíos pendientes) se distingue de una crítica real.
 function calcSalud(vencidos: number, dias: number | null, score: number | null, abiertos: number): EstadoSalud {
   if (vencidos > 0) return 'critica';
-  if (dias === null) return 'critica';
-  if (dias > 30) return 'critica';
+  if (dias !== null && dias > 30) return 'critica';
   if (score !== null && score < 3) return 'critica';
   if (abiertos > 0) return 'atencion';
-  if (dias >= 15 && dias <= 30) return 'atencion';
+  if (dias !== null && dias >= 15 && dias <= 30) return 'atencion';
   if (score !== null && score < 4) return 'atencion';
+  if (dias === null) return 'sin_datos';
   return 'ok';
 }
 
@@ -304,13 +307,25 @@ export default function SucursalDetail() {
                 </p>
                 <div className="space-y-2">
                   {(() => {
-                    const acciones: { tone: string; text: string; onClick: () => void }[] = [];
-                    if (resumen.vencidos > 0)
+                    const acciones: { tone: string; text: string; onClick?: () => void; href?: string }[] = [];
+                    if (resumen.vencidos > 0) {
+                      // La acción EJECUTA: si hay teléfono, abre WhatsApp con el
+                      // reclamo ya redactado; si no, cae a la pestaña Gestiones.
+                      const reclamo = whatsappLink(
+                        sucursal.tel_responsable,
+                        `Hola${sucursal.responsable ? ' ' + sucursal.responsable : ''}, te escribo de la auditoría de ${sucursal.nombre}. ` +
+                          `Tenés ${resumen.vencidos} desvío${resumen.vencidos === 1 ? '' : 's'} vencido${resumen.vencidos === 1 ? '' : 's'} sin resolver. ` +
+                          `¿Los podemos regularizar? Gracias.`,
+                      );
                       acciones.push({
                         tone: 'text-red-700 bg-red-50 border-red-100',
-                        text: `${resumen.vencidos} desvío${resumen.vencidos === 1 ? '' : 's'} vencido${resumen.vencidos === 1 ? '' : 's'} — reclamar al encargado`,
-                        onClick: () => setActiveTab('gestiones'),
+                        text: reclamo
+                          ? `${resumen.vencidos} desvío${resumen.vencidos === 1 ? '' : 's'} vencido${resumen.vencidos === 1 ? '' : 's'} — reclamar por WhatsApp`
+                          : `${resumen.vencidos} desvío${resumen.vencidos === 1 ? '' : 's'} vencido${resumen.vencidos === 1 ? '' : 's'} — ver gestiones`,
+                        href: reclamo || undefined,
+                        onClick: reclamo ? undefined : () => setActiveTab('gestiones'),
                       });
+                    }
                     if (resumen.enRevision > 0)
                       acciones.push({
                         tone: 'text-amber-700 bg-amber-50 border-amber-100',
@@ -341,20 +356,38 @@ export default function SucursalDetail() {
                         </div>
                       );
 
-                    return acciones.map((a, i) => (
-                      <button
-                        key={i}
-                        type="button"
-                        onClick={a.onClick}
-                        className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-3 text-left text-sm font-medium transition hover:brightness-95 ${a.tone}`}
-                      >
-                        <span className="flex items-center gap-2">
-                          <AlertTriangle className="h-4 w-4 shrink-0" />
-                          {a.text}
-                        </span>
-                        <ArrowRight className="h-4 w-4 shrink-0 opacity-60" />
-                      </button>
-                    ));
+                    const claseAccion = (tone: string) =>
+                      `flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-3 text-left text-sm font-medium transition hover:brightness-95 ${tone}`;
+                    return acciones.map((a, i) =>
+                      a.href ? (
+                        <a
+                          key={i}
+                          href={a.href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={claseAccion(a.tone)}
+                        >
+                          <span className="flex items-center gap-2">
+                            <MessageCircle className="h-4 w-4 shrink-0" />
+                            {a.text}
+                          </span>
+                          <ArrowRight className="h-4 w-4 shrink-0 opacity-60" />
+                        </a>
+                      ) : (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={a.onClick}
+                          className={claseAccion(a.tone)}
+                        >
+                          <span className="flex items-center gap-2">
+                            <AlertTriangle className="h-4 w-4 shrink-0" />
+                            {a.text}
+                          </span>
+                          <ArrowRight className="h-4 w-4 shrink-0 opacity-60" />
+                        </button>
+                      ),
+                    );
                   })()}
                 </div>
               </div>

@@ -33,7 +33,7 @@ export interface Sucursal {
   tiene_perfumeria?: boolean;
 }
 
-export type EstadoSalud = 'critica' | 'atencion' | 'ok';
+export type EstadoSalud = 'critica' | 'atencion' | 'ok' | 'sin_datos';
 
 // Fila de la vista sucursales_dashboard (Centro de Operaciones).
 // Métricas precalculadas por la base para el semáforo de salud.
