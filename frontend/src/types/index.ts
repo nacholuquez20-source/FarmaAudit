@@ -18,7 +18,7 @@ export type NotificacionTipo = 'mensaje_nuevo' | 'encargado_respondio' | 'estado
 export type GestionRevisionAccion = 'aprobar' | 'rechazar' | 'en_gestion_terceros' | 'retomar';
 export type AdminTabKey = 'auditores' | 'usuarios' | 'marcas';
 export type DashboardView = 'general' | 'zona';
-export type SucursalDetailTab = 'reportes' | 'gestiones' | 'stock' | 'auditorias';
+export type SucursalDetailTab = 'resumen' | 'reportes' | 'gestiones' | 'stock' | 'auditorias';
 export type SucursalEditableField = 'nombre' | 'direccion' | 'zona' | 'responsable' | 'tel_responsable';
 export type AutosaveStatus = 'idle' | 'pending' | 'saving' | 'saved' | 'error';
 
