@@ -11,6 +11,7 @@ import {
   Megaphone,
   Settings,
   Store,
+  Sun,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useAuth, logout } from '../hooks/useAuth';
@@ -55,6 +56,7 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
 
   const navItems: NavItem[] = [];
   if (role === 'admin') {
+    navItems.push({ to: '/hoy', label: 'Hoy', icon: Sun });
     if (hasModuleAccess(profile, 'dashboard'))
       navItems.push({ to: '/dashboard', label: 'Inicio', icon: Home });
     if (hasModuleAccess(profile, 'gestion_desvios') || hasModuleAccess(profile, 'revision_desvios'))
@@ -66,6 +68,7 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
       navItems.push({ to: '/sucursales', label: 'Sucursales', icon: Store });
     if (canAccessAdmin) navItems.push({ to: '/admin', label: 'Admin', icon: Settings });
   } else if (role === 'auditor') {
+    navItems.push({ to: '/hoy', label: 'Hoy', icon: Sun });
     if (hasModuleAccess(profile, 'gestion_desvios') || hasModuleAccess(profile, 'revision_desvios'))
       navItems.push({ to: '/desvios', label: 'Desvios', icon: ClipboardCheck });
     navItems.push({ to: '/auditorias', label: 'Auditorias', icon: CalendarDays });

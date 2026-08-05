@@ -8,6 +8,7 @@ import type { ModulePermission, Role } from './types';
 const Login = lazy(() => import('./pages/Login'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Hoy = lazy(() => import('./pages/Hoy'));
 const DesvioDetail = lazy(() => import('./pages/DesvioDetail'));
 const Desvios = lazy(() => import('./pages/Desvios'));
 const MisDesvios = lazy(() => import('./pages/MisDesvios'));
@@ -133,13 +134,13 @@ function ProtectedRoute({
   if (!role) return <ProfileError message={profileError} />;
 
   if (adminOnly && role !== 'admin') {
-    if (role === 'auditor') return <Navigate to="/desvios" replace />;
+    if (role === 'auditor') return <Navigate to="/hoy" replace />;
     if (role === 'sucursal') return <Navigate to="/dashboard" replace />;
     return <Navigate to="/dashboard" replace />;
   }
 
   if (allowRoles?.length && !allowRoles.includes(role)) {
-    if (role === 'auditor') return <Navigate to="/desvios" replace />;
+    if (role === 'auditor') return <Navigate to="/hoy" replace />;
     return <Navigate to="/dashboard" replace />;
   }
 
@@ -157,6 +158,15 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/reset-password" element={<ResetPassword />} />
+
+          <Route
+            path="/hoy"
+            element={
+              <ProtectedRoute allowRoles={['admin', 'auditor']}>
+                <Hoy />
+              </ProtectedRoute>
+            }
+          />
 
           <Route
             path="/dashboard"

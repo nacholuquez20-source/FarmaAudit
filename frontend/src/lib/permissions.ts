@@ -42,6 +42,8 @@ export function hasModuleAccess(profile: UserProfile | null, module: ModulePermi
 
 export function firstAllowedPath(profile: UserProfile | null): string {
   if (!profile) return '/dashboard';
+  // El auditor arranca en el Panel "Hoy" (su centro de trabajo diario).
+  if (profile.role === 'auditor') return '/hoy';
   const modules = normalizeModulePermissions(profile.role, profile.permisos_modulos);
   if (modules.includes('dashboard')) return '/dashboard';
   if (modules.includes('gestion_desvios')) return '/gestion-desvios';
