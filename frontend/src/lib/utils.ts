@@ -92,3 +92,40 @@ export function timeSince(dateString: string): string {
 export function cn(...classes: (string | undefined | null | false)[]): string {
   return classes.filter(Boolean).join(' ');
 }
+
+// Enlace directo de WhatsApp normalizando teléfonos argentinos.
+// Quita el 0 de trunk, antepone 54 y descarta números demasiado cortos
+// (evita links basura como wa.me/54 que no abren ningún chat).
+export function whatsappLink(tel: string | null | undefined): string | null {
+  if (!tel) return null;
+  let d = tel.replace(/\D/g, '');
+  if (!d) return null;
+  if (!d.startsWith('54')) {
+    if (d.startsWith('0')) d = d.slice(1);
+    d = `54${d}`;
+  }
+  if (d.length < 10) return null;
+  return `https://wa.me/${d}`;
+}
+
+// Diferencia en días CALENDARIO usando la hora local del navegador
+// (Argentina), no UTC — así "hace X días" coincide con la percepción real
+// y con la vista SQL cuando esta usa la misma zona horaria.
+export function diasDesde(fecha: string | null | undefined): number | null {
+  if (!fecha) return null;
+  const d = new Date(fecha);
+  if (Number.isNaN(d.getTime())) return null;
+  const desde = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const hoy = new Date();
+  const hoyInicio = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
+  return Math.round((hoyInicio.getTime() - desde.getTime()) / 86_400_000);
+}
+
+// ¿La fecha cae en el mes calendario actual (hora local)?
+export function esMesActual(fecha: string | null | undefined): boolean {
+  if (!fecha) return false;
+  const d = new Date(fecha);
+  if (Number.isNaN(d.getTime())) return false;
+  const hoy = new Date();
+  return d.getFullYear() === hoy.getFullYear() && d.getMonth() === hoy.getMonth();
+}

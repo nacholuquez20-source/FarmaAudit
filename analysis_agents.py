@@ -7,7 +7,7 @@ executive action plan. Call AuditAnalysisOrchestrator.analizar(ficha_id).
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from anthropic import AsyncAnthropic
 
@@ -77,19 +77,26 @@ class AuditAnalysisOrchestrator:
             return {}, [], []
         ficha = ficha_resp.data[0]
 
-        # Gestiones created on the same calendar day as the ficha
+        # Gestiones created on the same calendar day as the ficha.
+        # Se usa un límite superior EXCLUSIVo del día siguiente (< dia+1) en vez
+        # de "23:59:59", para no perder desvíos con fracción de segundo en el
+        # último segundo del día.
         dia = (ficha.get("fecha_auditoria") or ficha.get("created_at") or "")[:10]
         gestiones: list[dict] = []
         if dia and ficha.get("sucursal_id"):
-            g_resp = (
+            try:
+                dia_sig = (datetime.fromisoformat(dia) + timedelta(days=1)).date().isoformat()
+            except ValueError:
+                dia_sig = None
+            query = (
                 db.client.table("gestion")
                 .select("id_gestion,desvio,severidad,responsable,plazo_fecha,plan_accion,estado,area")
                 .eq("id_sucursal", ficha["sucursal_id"])
                 .gte("created_at", f"{dia}T00:00:00")
-                .lte("created_at", f"{dia}T23:59:59")
-                .order("created_at")
-                .execute()
             )
+            if dia_sig:
+                query = query.lt("created_at", f"{dia_sig}T00:00:00")
+            g_resp = query.order("created_at").execute()
             gestiones = g_resp.data or []
 
         # Last 5 fichas for the same sucursal (historical context)
@@ -323,7 +330,13 @@ Respondé EXCLUSIVAMENTE con JSON válido, sin markdown ni texto extra:
             "negocio":    safe(results[4]),
         }
 
-        sintesis = await self._sintetizar(agentes)
+        # Si TODOS los agentes fallaron, no sintetizamos sobre basura: sería un
+        # plan ejecutivo aparentemente válido construido sobre errores.
+        if all(isinstance(a, dict) and "error" in a for a in agentes.values()):
+            logger.error("Todos los agentes fallaron para ficha %s — se omite la síntesis", ficha_id)
+            sintesis = {"error": "analysis_failed", "diagnostico_integral": "No se pudo completar el análisis. Reintentá."}
+        else:
+            sintesis = await self._sintetizar(agentes)
 
         return {
             "ficha_id":        ficha_id,

@@ -13,6 +13,7 @@ import {
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { getSucursalesDashboard } from '../lib/api';
+import { whatsappLink } from '../lib/utils';
 import { useAuth } from '../hooks/useAuth';
 import type { EstadoSalud, SucursalDashboard } from '../types';
 
@@ -39,15 +40,6 @@ function diasLabel(dias: number | null): string {
   if (dias === 0) return 'Hoy';
   if (dias === 1) return 'Hace 1 día';
   return `Hace ${dias} días`;
-}
-
-function waLink(tel: string | null): string | null {
-  if (!tel) return null;
-  const digits = tel.replace(/\D/g, '');
-  if (!digits) return null;
-  // Números argentinos: anteponer 54 si no viene con código de país.
-  const full = digits.startsWith('54') ? digits : `54${digits}`;
-  return `https://wa.me/${full}`;
 }
 
 function SkeletonCard() {
@@ -221,7 +213,7 @@ export default function SucursalesDashboard() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {visibles.map((s) => {
             const meta = SALUD_META[s.estado_salud];
-            const wa = waLink(s.tel_responsable);
+            const wa = whatsappLink(s.tel_responsable);
             return (
               <div
                 key={s.id}

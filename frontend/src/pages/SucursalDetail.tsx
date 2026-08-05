@@ -20,7 +20,7 @@ import { useGestion } from '../hooks/useGestion';
 import { useReportes } from '../hooks/useReportes';
 import { getSucursal } from '../lib/api';
 import { supabase } from '../lib/supabase';
-import { formatDate, gestionStateLabel, severidadColor } from '../lib/utils';
+import { diasDesde, esMesActual, formatDate, gestionStateLabel, severidadColor, whatsappLink } from '../lib/utils';
 import type { EstadoSalud, Sucursal, SucursalDetailTab } from '../types';
 
 interface AuditFiche {
@@ -77,14 +77,6 @@ function diasLabel(dias: number | null): string {
   return `Hace ${dias} días`;
 }
 
-function waLink(tel: string | null | undefined): string | null {
-  if (!tel) return null;
-  const digits = tel.replace(/\D/g, '');
-  if (!digits) return null;
-  const full = digits.startsWith('54') ? digits : `54${digits}`;
-  return `https://wa.me/${full}`;
-}
-
 export default function SucursalDetail() {
   const { id } = useParams<{ id: string }>();
   const [sucursal, setSucursal] = useState<Sucursal | null>(null);
@@ -119,24 +111,33 @@ export default function SucursalDetail() {
 
   // Las fichas alimentan tanto el Resumen (última auditoría, evolución) como
   // la pestaña Auditorías, así que se cargan una vez al entrar.
+  // Se ordena por fecha_auditoria (igual que la vista sucursales_dashboard)
+  // para que la "última auditoría" del header coincida con el listado.
   React.useEffect(() => {
     if (!id) return;
+    let active = true;
     setFichasLoading(true);
     supabase
       .from('audit_fiches')
       .select('*')
       .eq('sucursal_id', id)
+      .order('fecha_auditoria', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
       .then(({ data, error: err }) => {
+        if (!active) return;
         if (!err && data) setFichas(data as AuditFiche[]);
         setFichasLoading(false);
       });
+    return () => {
+      active = false;
+    };
   }, [id]);
 
   // Métricas derivadas para el Resumen (mismo criterio que la vista SQL).
   const resumen = useMemo(() => {
     const isOpen = (estado: string) => estado !== 'Resuelta' && estado !== 'Cerrada';
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const now = new Date();
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const isOverdue = (g: (typeof gestiones)[number]) =>
       isOpen(g.estado) &&
       (g.estado === 'Vencida' || (!!g.plazo_fecha && g.plazo_fecha.slice(0, 10) < todayStr));
@@ -147,15 +148,11 @@ export default function SucursalDetail() {
 
     const ultima = fichas[0] ?? null;
     const ultimaFechaStr = ultima ? ultima.fecha_auditoria || ultima.created_at : null;
-    const dias = ultimaFechaStr
-      ? Math.floor((Date.now() - new Date(ultimaFechaStr).getTime()) / 86_400_000)
-      : null;
+    const dias = diasDesde(ultimaFechaStr);
     const score = ultima?.puntuacion_promedio ?? null;
     const salud = calcSalud(vencidos, dias, score, abiertos);
 
-    const auditadaEsteMes = ultimaFechaStr
-      ? new Date(ultimaFechaStr).toISOString().slice(0, 7) === todayStr.slice(0, 7)
-      : false;
+    const auditadaEsteMes = esMesActual(ultimaFechaStr);
 
     // Evolución: hasta 5 fichas en orden cronológico (vieja → nueva).
     const evolucion = fichas.slice(0, 5).reverse();
@@ -188,7 +185,7 @@ export default function SucursalDetail() {
   ];
 
   const salud = SALUD_META[resumen.salud];
-  const wa = waLink(sucursal.tel_responsable);
+  const wa = whatsappLink(sucursal.tel_responsable);
 
   return (
     <AppLayout title={sucursal.nombre}>
@@ -373,14 +370,14 @@ export default function SucursalDetail() {
                       <div key={bloque.key as string} className="rounded-lg border border-gray-100 p-3">
                         <p className="mb-2 text-xs font-medium text-gray-600">{bloque.label}</p>
                         <div className="flex h-12 items-end gap-1">
-                          {resumen.evolucion.map((f, i) => {
+                          {resumen.evolucion.map((f) => {
                             const v = f[bloque.key] as number | null;
                             const h = v != null ? Math.max(8, (v / 5) * 100) : 4;
                             const color =
                               v == null ? 'bg-gray-200' : v >= 4 ? 'bg-green-500' : v >= 3 ? 'bg-amber-400' : 'bg-red-500';
                             return (
                               <div
-                                key={i}
+                                key={f.id}
                                 className={`flex-1 rounded-t ${color}`}
                                 style={{ height: `${h}%` }}
                                 title={v != null ? `${v}/5` : 'Sin dato'}

@@ -13,6 +13,7 @@ import {
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { getSucursalesDashboard } from '../lib/api';
+import { esMesActual } from '../lib/utils';
 import { supabase } from '../lib/supabase';
 import type { SucursalDashboard } from '../types';
 
@@ -45,11 +46,6 @@ function fechaLarga(): string {
     month: 'long',
   });
   return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-function esteMes(fecha: string | null): boolean {
-  if (!fecha) return false;
-  return new Date(fecha).toISOString().slice(0, 7) === new Date().toISOString().slice(0, 7);
 }
 
 export default function Hoy() {
@@ -114,7 +110,7 @@ export default function Hoy() {
     const vencidos = take(
       (s) => s.desvios_vencidos > 0,
       (s) => `${s.desvios_vencidos} desvío${s.desvios_vencidos === 1 ? '' : 's'} vencido${s.desvios_vencidos === 1 ? '' : 's'}`,
-    ).sort();
+    ).sort((a, b) => a.nombre.localeCompare(b.nombre));
 
     const revision = take(
       (s) => (enRevision.get(s.id) ?? 0) > 0,
@@ -127,7 +123,7 @@ export default function Hoy() {
     );
 
     const perfumeria = take(
-      (s) => s.tiene_perfumeria && !esteMes(s.ultima_auditoria),
+      (s) => s.tiene_perfumeria && !esMesActual(s.ultima_auditoria),
       () => 'Perfumería sin auditar este mes',
     );
 
