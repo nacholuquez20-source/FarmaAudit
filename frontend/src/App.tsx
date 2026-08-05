@@ -12,6 +12,7 @@ const DesvioDetail = lazy(() => import('./pages/DesvioDetail'));
 const Desvios = lazy(() => import('./pages/Desvios'));
 const MisDesvios = lazy(() => import('./pages/MisDesvios'));
 const Sucursales = lazy(() => import('./pages/Sucursales'));
+const SucursalesDashboard = lazy(() => import('./pages/SucursalesDashboard'));
 const SucursalDetail = lazy(() => import('./pages/SucursalDetail'));
 const AuditPerfumeriaV2 = lazy(() => import('./pages/AuditPerfumeriaV2'));
 const AuditFichesGallery = lazy(() => import('./pages/AuditFichesGallery'));
@@ -208,6 +209,15 @@ export default function App() {
 
           <Route
             path="/sucursales"
+            element={
+              <ProtectedRoute module="sucursales">
+                <SucursalesDashboard />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/sucursales/editar"
             element={
               <ProtectedRoute module="sucursales">
                 <Sucursales />

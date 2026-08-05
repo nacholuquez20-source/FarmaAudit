@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import type {
   Sucursal,
+  SucursalDashboard,
   SucursalUpdate,
   Reporte,
   Gestion,
@@ -63,6 +64,16 @@ export async function getSucursales(): Promise<Sucursal[]> {
     .order('nombre');
   if (error) throw new Error(handleApiError(error));
   return data || [];
+}
+
+// Centro de Operaciones: una sola query a la vista precalculada.
+export async function getSucursalesDashboard(): Promise<SucursalDashboard[]> {
+  const { data, error } = await supabase
+    .from('sucursales_dashboard')
+    .select('*')
+    .order('nombre');
+  if (error) throw new Error(handleApiError(error));
+  return (data as SucursalDashboard[]) || [];
 }
 
 export async function getSucursal(id: string): Promise<Sucursal> {
