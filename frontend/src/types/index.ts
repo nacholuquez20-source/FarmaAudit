@@ -5,15 +5,18 @@ export type ModulePermission =
   | 'revision_desvios'
   | 'mis_desvios'
   | 'sucursales'
-  | 'admin';
+  | 'admin'
+  | 'campanias'
+  | 'mis_campanias';
 export type Severidad = 'Alta' | 'Media' | 'Baja';
-export type GestionState = 'Abierta' | 'En_proceso' | 'Resuelta' | 'Cerrada' | 'Vencida';
+export type GestionState = 'Abierta' | 'En_proceso' | 'En_revision' | 'En_gestion_terceros' | 'Resuelta' | 'Cerrada' | 'Vencida';
 export type SeverityType = Severidad;
 export type StatusType = GestionState;
-export type DesvioEventoTipo = 'creacion' | 'contacto' | 'respuesta' | 'cierre' | 'nota' | 'evidencia' | 'mensaje' | 'verificacion_auditoria' | 'reincidencia';
+export type DesvioEventoTipo = 'creacion' | 'contacto' | 'respuesta' | 'cierre' | 'nota' | 'evidencia' | 'mensaje' | 'verificacion_auditoria' | 'reincidencia' | 'rechazo';
 export type DesvioOrigen = 'auditor' | 'sucursal';
-export type NotificacionTipo = 'mensaje_nuevo' | 'encargado_respondio' | 'estado_cambio' | 'vencimiento_proximo';
-export type AdminTabKey = 'auditores' | 'usuarios';
+export type NotificacionTipo = 'mensaje_nuevo' | 'encargado_respondio' | 'estado_cambio' | 'vencimiento_proximo' | 'sla_revision_vencido';
+export type GestionRevisionAccion = 'aprobar' | 'rechazar' | 'en_gestion_terceros' | 'retomar';
+export type AdminTabKey = 'auditores' | 'usuarios' | 'marcas';
 export type DashboardView = 'general' | 'zona';
 export type SucursalDetailTab = 'reportes' | 'gestiones' | 'stock' | 'auditorias';
 export type SucursalEditableField = 'nombre' | 'direccion' | 'zona' | 'responsable' | 'tel_responsable';
@@ -26,6 +29,8 @@ export interface Sucursal {
   responsable: string;
   tel_responsable: string;
   zona: string;
+  categoria?: string | null;
+  tiene_perfumeria?: boolean;
 }
 
 export interface SucursalUpdate {
@@ -69,6 +74,9 @@ export interface Gestion {
   cerrado_por: string | null;
   created_at?: string;
   updated_at?: string;
+  plazo_fecha_original?: string | null;
+  veces_rechazado?: number;
+  en_revision_desde?: string | null;
 }
 
 export interface GestionUpdate {
@@ -175,6 +183,13 @@ export interface Auditor {
   nombre: string;
   cuadrilla: string;
   activo: boolean;
+}
+
+export interface Marca {
+  id: string;
+  nombre: string;
+  activo: boolean;
+  created_at?: string;
 }
 
 export interface UserProfile {
@@ -340,4 +355,96 @@ export interface AuditSession {
   estado: 'en_progreso' | 'enviada' | 'procesada';
   timestamp_inicio: string;
   timestamp_fin?: string;
+}
+
+// ============ Modulo Campanias (ver ARQUITECTURA_DESVIOS_CAMPANIAS.md, Modulo 2) ============
+
+export type CampaniaEstado = 'Borrador' | 'Activa' | 'En_seguimiento' | 'Finalizada' | 'Cancelada';
+export type CampaniaAccionTipo = 'exhibicion' | 'material_pop' | 'burbuja_precio' | 'descuento_caja' | 'custom';
+export type CampaniaTareaEstado = 'Pendiente' | 'Completada' | 'Bloqueada_por_insumo' | 'Verificada';
+export type CampaniaEventoTipo = 'creacion' | 'vista' | 'completada' | 'evidencia' | 'bloqueo_insumo' | 'rechazo' | 'verificacion' | 'nota';
+export type SolicitudInsumoProveedor = 'laboratorio_apm' | 'cadena';
+export type SolicitudInsumoEstado = 'Solicitado' | 'Escalado_a_labo' | 'Aprobado' | 'Rechazado' | 'Enviado' | 'Recibido';
+export type SolicitudInsumoTipo = 'carteleria' | 'material_pop' | 'stock' | 'otro';
+
+export interface Campania {
+  id: string;
+  nombre: string;
+  marca_id: string;
+  estado: CampaniaEstado;
+  fecha_inicio: string | null;
+  fecha_fin: string | null;
+  acuerdo_desde: string | null;
+  acuerdo_hasta: string | null;
+  contraprestacion: string | null;
+  creado_por: string | null;
+  created_at: string;
+  updated_at: string;
+  /** Presente cuando se pide con el join a marcas (ver getCampanias). */
+  marcas?: { nombre: string } | null;
+}
+
+export interface CampaniaAccion {
+  id: string;
+  campania_id: string;
+  tipo: CampaniaAccionTipo;
+  descripcion: string | null;
+  requiere_foto: boolean;
+  verificable_por_foto: boolean;
+  created_at?: string;
+}
+
+export interface CampaniaTarea {
+  id: string;
+  campania_id: string;
+  accion_id: string;
+  id_sucursal: string;
+  responsable: string | null;
+  tel_responsable: string | null;
+  estado: CampaniaTareaEstado;
+  vista_at: string | null;
+  plazo_fecha: string | null;
+  evidencia_path: string | null;
+  created_at: string;
+  updated_at: string;
+  /** Presentes cuando se piden con join (ver getCampaniaTareas / getMisCampaniaTareas). */
+  campania_acciones?: CampaniaAccion | null;
+  sucursales?: { nombre: string } | null;
+  campanias?: { nombre: string; estado: CampaniaEstado; marcas?: { nombre: string } | null } | null;
+}
+
+export interface CampaniaEvento {
+  id: string;
+  tarea_id: string;
+  tipo: CampaniaEventoTipo;
+  comentario: string | null;
+  actor_id: string | null;
+  actor_nombre: string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface SolicitudInsumo {
+  id: string;
+  tarea_id: string;
+  tipo_insumo: SolicitudInsumoTipo;
+  detalle: string | null;
+  cantidad: string | null;
+  proveedor: SolicitudInsumoProveedor;
+  estado: SolicitudInsumoEstado;
+  contacto_trade: string | null;
+  aprobado_por: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CampaniaResultado {
+  id: string;
+  campania_id: string;
+  id_sucursal: string;
+  venta_periodo_campania: number | null;
+  venta_periodo_base: number | null;
+  unidad: 'unidades' | 'pesos';
+  cargado_por: string | null;
+  created_at: string;
 }

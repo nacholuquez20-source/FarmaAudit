@@ -23,13 +23,10 @@ class Settings:
     meta_access_token: str = os.getenv("META_ACCESS_TOKEN", "")
     meta_verify_token: str = os.getenv("META_VERIFY_TOKEN", "")
     meta_app_secret: str = os.getenv("META_APP_SECRET", "")
-
-    # Google Sheets
-    google_sheets_id: str = os.getenv("GOOGLE_SHEETS_ID", "")
-    google_service_account_json: Optional[str] = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
-
-    # Google Drive
-    google_drive_folder_id: str = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "")
+    # Human-readable WhatsApp number for the bot, used only in message copy
+    # (e.g. "escribinos al +54 9 381 619-9195") — not used for API calls,
+    # those go through meta_phone_number_id.
+    bot_display_phone: str = os.getenv("BOT_DISPLAY_PHONE", "+54 9 381 619-9195")
 
     # Supabase
     supabase_url: Optional[str] = os.getenv("SUPABASE_URL")
@@ -71,6 +68,13 @@ class Settings:
         missing = [key for key in required if not getattr(self, key)]
         if missing:
             raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+        if not self.meta_app_secret:
+            import logging
+            logging.getLogger(__name__).warning(
+                "META_APP_SECRET no configurado: /webhook acepta requests SIN "
+                "verificar firma X-Hub-Signature-256 (cualquiera puede falsificar "
+                "mensajes de WhatsApp). Configuralo en Railway ASAP."
+            )
 
 
 @lru_cache(maxsize=1)

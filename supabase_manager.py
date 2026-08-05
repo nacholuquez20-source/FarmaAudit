@@ -530,7 +530,8 @@ class SupabaseManager:
             )
             reporte_id = self.create_reporte(reporte)
 
-            plazo = date.today() + timedelta(days=7)
+            hours = get_settings().severity_deadlines.get(severidad_enum.value, 168)
+            plazo = datetime.now(timezone.utc) + timedelta(hours=hours)
             gestion = Gestion(
                 id_gestion="",
                 id_reporte=reporte_id,
@@ -855,6 +856,107 @@ class SupabaseManager:
             logger.error(f"Failed to get sucursales con pendientes: {e}")
             return []
 
+    def get_overdue_gestiones(self) -> List[Dict[str, Any]]:
+        """Get open/in-progress/in-review gestiones whose plazo_fecha has already passed.
+
+        Excludes En_gestion_terceros: those depend on causes outside the branch manager's
+        control and must not be auto-marked as overdue (see ARQUITECTURA_DESVIOS_CAMPANIAS.md).
+        """
+        try:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            response = (
+                self.client.table("gestion")
+                .select("*")
+                .in_("estado", ["Abierta", "En_proceso", "En_revision"])
+                .lt("plazo_fecha", now_iso)
+                .execute()
+            )
+            return response.data or []
+        except Exception as e:
+            logger.error(f"Failed to get overdue gestiones: {e}")
+            return []
+
+    def get_gestiones_en_revision_stale(self, hours_min: int = 72, hours_max: int = 73) -> List[Dict[str, Any]]:
+        """Get gestiones stuck in En_revision longer than the auditor SLA window.
+
+        Uses a bounded window (hours_min..hours_max) instead of an open-ended "older than"
+        query so the recurring scheduler job (run hourly) fires the alert once per gestion
+        instead of re-notifying on every run.
+        """
+        try:
+            now = datetime.now(timezone.utc)
+            lower_bound = (now - timedelta(hours=hours_max)).isoformat()
+            upper_bound = (now - timedelta(hours=hours_min)).isoformat()
+            response = (
+                self.client.table("gestion")
+                .select("*")
+                .eq("estado", "En_revision")
+                .gte("en_revision_desde", lower_bound)
+                .lt("en_revision_desde", upper_bound)
+                .execute()
+            )
+            return response.data or []
+        except Exception as e:
+            logger.error(f"Failed to get stale en_revision gestiones: {e}")
+            return []
+
+    def get_gestiones_pendientes_recordatorio(self, intervalo_dias: int = 3) -> List[Dict[str, Any]]:
+        """Group open gestiones by branch manager, for a recurring "you still have
+        pending desvios" reminder (separate from the one-time notice sent right
+        after the audit — see _notify_responsable_desvios_pendientes).
+
+        No extra "last reminded" column needed: this is meant to run once a day,
+        and only returns a manager's group when the age (in days, since the
+        oldest still-open gestion was created) is a multiple of intervalo_dias —
+        so a manager sees one reminder every N days for as long as something
+        stays open, and never twice on the same day.
+        """
+        try:
+            response = (
+                self.client.table("gestion")
+                .select("id_gestion, sucursal, tel_responsable, responsable, created_at")
+                .in_("estado", ["Abierta", "En_proceso", "Vencida"])
+                .execute()
+            )
+            rows = response.data or []
+            now = datetime.now(timezone.utc)
+
+            groups: Dict[str, Dict[str, Any]] = {}
+            for row in rows:
+                tel = row.get("tel_responsable")
+                if not tel:
+                    continue
+                created_at = row.get("created_at")
+                if not created_at:
+                    continue
+                try:
+                    created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+
+                group = groups.setdefault(tel, {
+                    "tel_responsable": tel,
+                    "responsable": row.get("responsable") or "",
+                    "sucursales": set(),
+                    "cantidad": 0,
+                    "dias_abierto_max": 0,
+                })
+                group["sucursales"].add(row.get("sucursal") or "")
+                group["cantidad"] += 1
+                dias_abierto = (now - created).days
+                group["dias_abierto_max"] = max(group["dias_abierto_max"], dias_abierto)
+
+            due = []
+            for group in groups.values():
+                dias = group["dias_abierto_max"]
+                if dias > 0 and dias % intervalo_dias == 0:
+                    group["sucursales"] = sorted(s for s in group["sucursales"] if s)
+                    due.append(group)
+            return due
+        except Exception as e:
+            logger.error(f"Failed to get gestiones pendientes for reminder: {e}")
+            return []
+
     def update_gestion_fields(self, id_gestion: str, fields: Dict[str, Any]) -> bool:
         """Update arbitrary fields of a gestion record."""
         try:
@@ -938,6 +1040,27 @@ class SupabaseManager:
             logger.warning(f"Failed to create signed URL for {path}: {e}")
             return ""
 
+    def upload_audit_ficha_pdf(self, id_sesion: str, content: bytes) -> Dict[str, str]:
+        """Upload a generated audit report PDF to the private desvio-evidencias bucket."""
+        path = f"fichas/{id_sesion}/{uuid.uuid4().hex}.pdf"
+        self.client.storage.from_("desvio-evidencias").upload(
+            path,
+            content,
+            {"content-type": "application/pdf", "upsert": "false"},
+        )
+        return {"path": path, "bucket": "desvio-evidencias"}
+
+    def create_signed_ficha_url(self, path: str, expires_seconds: int = 86400) -> str:
+        """Create a signed URL for an audit report PDF in Storage."""
+        try:
+            response = self.client.storage.from_("desvio-evidencias").create_signed_url(path, expires_seconds)
+            if isinstance(response, dict):
+                return response.get("signedURL") or response.get("signedUrl") or ""
+            return getattr(response, "signed_url", "") or getattr(response, "signedURL", "")
+        except Exception as e:
+            logger.warning(f"Failed to create signed ficha URL for {path}: {e}")
+            return ""
+
     def regenerate_missing_thumbnails(self) -> Dict[str, int]:
         """
         Find evidences without thumbnails in desvios_borrador and regenerate them.
@@ -980,21 +1103,28 @@ class SupabaseManager:
                     path = evidencia.get("path")
                     thumb_path = evidencia.get("thumb_path")
                     mime_type = evidencia.get("mime_type", "image/jpeg")
+                    # Evidence uploaded via save_perfumeria_desvio_borrador is stored in the
+                    # "auditoria-respuestas" bucket, not "desvio-evidencias" — using the wrong
+                    # bucket here made every regeneration fail with "Object not found".
+                    bucket = evidencia.get("bucket") or "desvio-evidencias"
 
                     if not path or thumb_path or not mime_type.startswith("image/"):
                         continue
 
                     processed += 1
                     try:
-                        file_content = self.client.storage.from_("desvio-evidencias").download(path)
+                        file_content = self.client.storage.from_(bucket).download(path)
                         thumb_content = self._generate_thumbnail(file_content, mime_type)
 
                         if thumb_content:
                             thumb_name = f"{path.rsplit('.', 1)[0]}-thumb.jpg"
-                            self.client.storage.from_("desvio-evidencias").upload(
+                            # x-upsert=true: a previous run may have uploaded the thumbnail but
+                            # failed before persisting thumb_path, leaving it orphaned but present.
+                            # (storage3 reads the literal header "x-upsert", not "upsert".)
+                            self.client.storage.from_(bucket).upload(
                                 thumb_name,
                                 thumb_content,
-                                {"content-type": "image/jpeg", "upsert": "false"},
+                                {"content-type": "image/jpeg", "x-upsert": "true"},
                             )
                             evidencia["thumb_path"] = thumb_name
                             generated += 1
@@ -1034,24 +1164,147 @@ class SupabaseManager:
             "metadata": metadata,
         }).execute()
 
-    def create_notification_for_auditor(self, id_gestion: str, auditor_id: str) -> None:
+    def create_notification_for_auditor(self, id_gestion: str, auditor_id: str, tipo: str = "encargado_respondio") -> None:
         """Create one in-app notification for an auditor/admin user."""
         self.client.table("desvio_notificaciones").insert({
             "id_gestion": id_gestion,
             "user_id": auditor_id,
-            "tipo": "encargado_respondio",
+            "tipo": tipo,
         }).execute()
 
-    def create_notifications_for_auditors(self, id_gestion: str) -> None:
-        """Notify all auditor/admin users that a manager responded."""
+    def create_notifications_for_auditors(self, id_gestion: str, tipo: str = "encargado_respondio") -> None:
+        """Notify all auditor/admin users about an event on a gestion (manager responded, overdue, etc.)."""
         try:
             response = self.client.table("profiles").select("id, role").in_("role", ["admin", "auditor"]).execute()
             for row in response.data or []:
                 user_id = row.get("id")
                 if user_id:
-                    self.create_notification_for_auditor(id_gestion, str(user_id))
+                    self.create_notification_for_auditor(id_gestion, str(user_id), tipo)
         except Exception as e:
             logger.warning(f"Failed to create auditor notifications for {id_gestion}: {e}")
+
+    # ========== Campanias (bot WhatsApp, ver ARQUITECTURA_DESVIOS_CAMPANIAS.md Modulo 2) ==========
+
+    def get_campania_tareas_pendientes_sucursal(self, id_sucursal: str) -> List[Dict[str, Any]]:
+        """Get pending/blocked campaign tasks for a branch, for the WhatsApp bot digest.
+
+        Pull-based by design: the bot never initiates this (that needs a Meta template
+        that isn't approved yet), the encargado asks for it by messaging the bot.
+        """
+        try:
+            response = (
+                self.client.table("campania_tareas")
+                .select("*, campania_acciones(*), campanias!inner(nombre, estado)")
+                .eq("id_sucursal", id_sucursal)
+                .in_("estado", ["Pendiente", "Bloqueada_por_insumo"])
+                .in_("campanias.estado", ["Activa", "En_seguimiento"])
+                .order("created_at")
+                .execute()
+            )
+            return response.data or []
+        except Exception as e:
+            logger.error(f"Failed to get pending campania tareas for {id_sucursal}: {e}")
+            return []
+
+    def get_campania_tarea_by_id(self, tarea_id: str) -> Optional[Dict[str, Any]]:
+        """Get one campania_tarea with its accion/campania joined."""
+        try:
+            response = (
+                self.client.table("campania_tareas")
+                .select("*, campania_acciones(*), campanias(nombre, estado)")
+                .eq("id", tarea_id)
+                .execute()
+            )
+            data = response.data or []
+            return data[0] if data else None
+        except Exception as e:
+            logger.error(f"Failed to get campania tarea {tarea_id}: {e}")
+            return None
+
+    def update_campania_tarea_fields(self, tarea_id: str, fields: Dict[str, Any]) -> bool:
+        """Update arbitrary fields of a campania_tarea record."""
+        try:
+            self.client.table("campania_tareas").update(fields).eq("id", tarea_id).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to update campania tarea {tarea_id} with {fields}: {e}")
+            return False
+
+    def save_campania_evento(
+        self,
+        tarea_id: str,
+        tipo: str,
+        comentario: str,
+        metadata: Dict[str, Any],
+        actor_nombre: str = "Encargado",
+    ) -> None:
+        """Save a branch manager action (completada/evidencia/bloqueo_insumo) in campania_eventos."""
+        self.client.table("campania_eventos").insert({
+            "tarea_id": tarea_id,
+            "tipo": tipo,
+            "comentario": comentario,
+            "actor_id": None,
+            "actor_nombre": actor_nombre,
+            "metadata": metadata,
+        }).execute()
+
+    def upload_campania_evidencia(self, tarea_id: str, content: bytes, mime_type: str) -> Dict[str, str]:
+        """Upload campaign task evidence to the private desvio-evidencias bucket (reused,
+        same bucket/policies as desvios; only the path prefix differs) with a thumbnail."""
+        ext_by_mime = {
+            "image/jpeg": "jpg",
+            "image/png": "png",
+            "image/webp": "webp",
+            "application/pdf": "pdf",
+        }
+        ext = ext_by_mime.get(mime_type, "jpg")
+        uuid_hex = uuid.uuid4().hex
+        path = f"campania/{tarea_id}/whatsapp-{uuid_hex}.{ext}"
+
+        self.client.storage.from_("desvio-evidencias").upload(
+            path,
+            content,
+            {"content-type": mime_type, "upsert": "false"},
+        )
+
+        thumb_path = None
+        if mime_type.startswith("image/"):
+            thumb_content = self._generate_thumbnail(content, mime_type)
+            if thumb_content:
+                thumb_path = f"campania/{tarea_id}/whatsapp-{uuid_hex}-thumb.jpg"
+                try:
+                    self.client.storage.from_("desvio-evidencias").upload(
+                        thumb_path,
+                        thumb_content,
+                        {"content-type": "image/jpeg", "upsert": "false"},
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to upload campania evidencia thumbnail: {e}")
+                    thumb_path = None
+
+        return {"path": path, "thumb_path": thumb_path, "bucket": "desvio-evidencias"}
+
+    def create_solicitud_insumo(
+        self,
+        tarea_id: str,
+        tipo_insumo: str,
+        detalle: str,
+        cantidad: Optional[str],
+        proveedor: str,
+    ) -> Dict[str, Any]:
+        """Create a supply request. laboratorio_apm skips internal approval (the cadena
+        doesn't control that material) and starts already escalated."""
+        estado = "Escalado_a_labo" if proveedor == "laboratorio_apm" else "Solicitado"
+        response = self.client.table("solicitudes_insumo").insert({
+            "tarea_id": tarea_id,
+            "tipo_insumo": tipo_insumo,
+            "detalle": detalle,
+            "cantidad": cantidad,
+            "proveedor": proveedor,
+            "estado": estado,
+        }).execute()
+        data = response.data or []
+        return data[0] if data else {}
 
     # ========== Checklists ==========
 
@@ -1358,6 +1611,27 @@ class SupabaseManager:
             logger.error(f"Failed to get expired sesiones: {e}")
             return []
 
+    def get_auditoria_sesiones_historicas(
+        self,
+        sucursal_id: Optional[str] = None,
+        fecha_desde: Optional[str] = None,
+        fecha_hasta: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get audit sessions (controles realizados) for the historical export report."""
+        try:
+            query = self.client.table("sesiones_auditoria").select("*")
+            if sucursal_id:
+                query = query.eq("sucursal_id", sucursal_id)
+            if fecha_desde:
+                query = query.gte("timestamp_inicio", fecha_desde)
+            if fecha_hasta:
+                query = query.lte("timestamp_inicio", fecha_hasta)
+            response = query.order("timestamp_inicio", desc=True).execute()
+            return response.data or []
+        except Exception as e:
+            logger.error(f"Failed to get historical auditoria sesiones: {e}")
+            return []
+
     # ========== Block-based Audit Methods ==========
 
     def save_bloque_resultado(
@@ -1401,7 +1675,8 @@ class SupabaseManager:
                     )
                     reporte_id = self.create_reporte(reporte)
 
-                    plazo = date.today() + timedelta(days=7)
+                    hours = get_settings().severity_deadlines.get(severidad.value, 168)
+                    plazo = datetime.now(timezone.utc) + timedelta(hours=hours)
                     gestion = Gestion(
                         id_gestion="",
                         id_reporte=reporte_id,
@@ -1484,7 +1759,8 @@ class SupabaseManager:
             )
             reporte_id = self.create_reporte(reporte)
 
-            plazo = date.today() + timedelta(days=7)
+            hours = get_settings().severity_deadlines.get(severidad.value, 168)
+            plazo = datetime.now(timezone.utc) + timedelta(hours=hours)
             gestion = Gestion(
                 id_gestion="",
                 id_reporte=reporte_id,

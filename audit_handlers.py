@@ -21,6 +21,7 @@ from audit_database import save_audit_to_database, send_manager_notification, ge
 from supabase_manager import SupabaseManager
 from audit_pdf_generator import generate_audit_pdf
 from audit_fiches_manager import AuditFichesManager
+from config import get_settings
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,14 @@ NOTES_TEMPLATES = {
     ],
 }
 
+# Explicit "nothing to report" option, offered alongside NOTES_TEMPLATES after
+# an auditor saves a photo/audio. Selecting it must NOT create a desvío/nota.
+NO_PROBLEMS_OPTION = {"id": "sin_problemas", "title": "✅ Sin problemas"}
+
+# Id used for the "write a custom description" row appended to NOTES_TEMPLATES
+# list messages. Selecting it must prompt for free text, not save the id itself.
+CUSTOM_NOTE_OPTION_ID = "otro"
+
 
 SCORE_OPTIONS = [
     {"id": "1", "title": "Muy malo", "description": "Crítico, acción inmediata"},
@@ -70,42 +79,82 @@ SCORE_OPTIONS = [
 SEVERITY_ESCALATION = {"Baja": "Media", "Media": "Alta", "Alta": "Alta"}
 
 
-def _drive_download_url(ficha_url: str) -> str:
-    """Convert a Drive viewer URL to a direct download URL for WhatsApp documents."""
-    if "/d/" in ficha_url:
-        file_id = ficha_url.split("/d/")[1].split("/")[0]
-        return f"https://drive.google.com/uc?export=download&id={file_id}"
-    return ficha_url
+async def _ficha_download_url(storage_path: str) -> str:
+    """Mint a fresh signed URL for a ficha PDF stored in Supabase Storage.
+
+    Storage is private — we generate a short-lived signed URL each time the
+    file is actually needed (sent over WhatsApp, or opened from the admin
+    panel) instead of relying on a permanently-public link.
+    """
+    if not storage_path:
+        return storage_path
+    db = SupabaseManager()
+    signed_url = db.create_signed_ficha_url(storage_path)
+    return signed_url or storage_path
 
 
-async def _send_ficha_to_responsable(
+async def _notify_responsable_desvios_pendientes(
     meta_client: MetaClient,
     session: AuditSession,
-    ficha_url: str,
-    id_sesion: str,
 ) -> None:
-    """Send PDF ficha to the branch manager via WhatsApp (best-effort, never raises)."""
+    """Send the branch manager a short heads-up (no PDF) that new desvíos were
+    found. This is a best-effort safety net so the manager finds out even if
+    the auditor never gets around to forwarding the full report personally —
+    the detailed PDF + evidence is delivered by the auditor, not by this bot
+    (see _send_forward_invitation_text).
+    """
     try:
         db = SupabaseManager()
         sucursal = db.get_sucursal(session.sucursal_id)
         tel = sucursal.tel_responsable if sucursal else None
         if not tel:
-            logger.info(f"No tel_responsable for sucursal {session.sucursal_id} — skipping PDF delivery")
+            logger.info(f"No tel_responsable for sucursal {session.sucursal_id} — skipping notice")
             return
 
-        filename = f"Auditoria_{id_sesion}.pdf"
-        caption = (
-            f"📋 Informe de auditoría — {sucursal.nombre if sucursal else session.sucursal_id}\n"
-            f"Auditor: {session.auditor_nombre or '—'}"
+        cantidad = len(session.desvios)
+        texto = (
+            f"🚨 Se detectaron {cantidad} desvío(s) en tu sucursal durante la auditoría de hoy.\n\n"
+            f"Tu auditor/a te va a compartir el detalle con fotos y comentarios por WhatsApp. "
+            f"Cuando resuelvas alguno, escribinos a este mismo número para actualizarlo."
+        )
+        ok = await meta_client.send_text(tel, texto)
+        if ok:
+            logger.info(f"Short desvios notice sent to manager at {tel}")
+        else:
+            logger.warning(f"Failed to send desvios notice to manager at {tel}")
+    except Exception as e:
+        logger.warning(f"Could not notify responsable: {e}")
+
+
+async def _send_forward_invitation_text(
+    meta_client: MetaClient,
+    session: AuditSession,
+    telefono: str,
+) -> None:
+    """Send the auditor a ready-to-forward message (with the bot's number)
+    to personally send to the branch manager along with the PDF, inviting
+    them to write to the bot as they resolve each desvío.
+    """
+    try:
+        db = SupabaseManager()
+        sucursal = db.get_sucursal(session.sucursal_id)
+        nombre = sucursal.nombre if sucursal else session.sucursal_id
+        responsable = sucursal.responsable if sucursal else ""
+        bot_phone = get_settings().bot_display_phone
+
+        saludo = f"Hola {responsable}!" if responsable else "Hola!"
+        mensaje_para_reenviar = (
+            f"{saludo} Te comparto el informe de la auditoría de hoy en {nombre}, "
+            f"con el detalle y las fotos de cada desvío encontrado.\n\n"
+            f"Cuando vayas resolviendo cada uno, escribile directo a este bot de WhatsApp "
+            f"({bot_phone}) para que quede registrado. ¡Gracias!"
         )
 
-        ok = await meta_client.send_document(tel, _drive_download_url(ficha_url), filename, caption)
-        if ok:
-            logger.info(f"PDF ficha sent to manager at {tel}")
-        else:
-            logger.warning(f"Failed to send PDF ficha to manager at {tel}")
+        intro = "📤 *Para reenviar al encargado junto con el PDF:*"
+        await meta_client.send_text(telefono, intro)
+        await meta_client.send_text(telefono, mensaje_para_reenviar)
     except Exception as e:
-        logger.warning(f"Could not send PDF to responsable: {e}")
+        logger.warning(f"Could not send forward-invitation text to auditor: {e}")
 
 
 async def _send_desvios_summary(
@@ -214,9 +263,10 @@ async def _send_ficha_to_auditor(
         return
 
     filename = f"Auditoria_{session.id_sesion}.pdf"
+    download_url = await _ficha_download_url(ficha_url)
     ok = await meta_client.send_document(
         telefono,
-        _drive_download_url(ficha_url),
+        download_url,
         filename,
         caption=f"📋 Ficha de auditoría — {session.id_sesion}",
     )
@@ -225,7 +275,7 @@ async def _send_ficha_to_auditor(
     else:
         await meta_client.send_text(
             telefono,
-            f"⚠️ No pude enviar el archivo directamente.\nDescargalo desde:\n{ficha_url}",
+            f"⚠️ No pude enviar el archivo directamente.\nDescargalo desde:\n{download_url}",
         )
 
 
@@ -327,10 +377,12 @@ class AuditConversationHandler:
                         await _send_desvios_summary(meta_client, session, payload.telefono)
 
                         if ficha_url:
-                            # Send PDF to branch manager
-                            await _send_ficha_to_responsable(
-                                meta_client, session, ficha_url, session.id_sesion
-                            )
+                            # Short heads-up to the manager (no PDF) — the detailed
+                            # report is sent by the auditor personally, see below.
+                            await _notify_responsable_desvios_pendientes(meta_client, session)
+                            # Give the auditor a ready-to-forward invitation text
+                            # (with the bot's number) to send along with the PDF.
+                            await _send_forward_invitation_text(meta_client, session, payload.telefono)
                             # Ask auditor if they want the PDF too
                             await _ask_ficha_download(
                                 meta_client, payload.telefono, session, ficha_url
@@ -1034,9 +1086,38 @@ class AuditConversationHandler:
 
                 return await AuditConversationHandler.send_summary(payload.telefono, meta_client, session)
 
-            # Text without "SIGUIENTE" → save as note/desvio for this bloque
-            texto = payload.contenido.strip()
-            session.add_desvio(bloque=current_bloque, descripcion=texto)
+            # Text without "SIGUIENTE" — could be free text, OR the id of a
+            # list_reply/button_reply (main.py maps list_reply.id -> contenido
+            # and sets tipo="text" for downstream handlers). Handle the
+            # special list ids before falling back to "save raw text as note".
+            raw_id = payload.contenido.strip()
+
+            # "✅ Sin problemas" — auditor confirms nothing to report for this
+            # evidence. Just acknowledge; do NOT create a desvío/nota.
+            if raw_id == NO_PROBLEMS_OPTION["id"]:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "👍 Perfecto, ¿algo más? (foto, audio, texto, o 'SIGUIENTE')"
+                )
+                return "no_problems_confirmed"
+
+            # "Escribir otro..." — the auditor still needs to type the real
+            # description. Prompt for it and wait for the next message;
+            # do NOT save the button id itself as the note.
+            if raw_id == CUSTOM_NOTE_OPTION_ID:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "Escribí tu descripción del problema:"
+                )
+                return "awaiting_custom_note"
+
+            # If the text matches a predefined template id, resolve it to its
+            # readable title before saving (never persist the raw numeric id).
+            templates = NOTES_TEMPLATES.get(current_bloque, [])
+            template_match = next((t for t in templates if t.get("id") == raw_id), None)
+            descripcion = template_match["title"] if template_match else raw_id
+
+            session.add_desvio(bloque=current_bloque, descripcion=descripcion)
             save_session(session)
 
             await meta_client.send_text(
@@ -1085,7 +1166,7 @@ class AuditConversationHandler:
                 if not validation.is_valid:
                     await meta_client.send_text(
                         payload.telefono,
-                        validation.message + "\n\nIntenta de nuevo o escribe 'SIGUIENTE' para continuar."
+                        validation.message + "\n\nIntenta de nuevo — necesito al menos una foto válida de este bloque para poder continuar."
                     )
                     return "photo_invalid"
 
@@ -1117,7 +1198,7 @@ class AuditConversationHandler:
                         body=f"Problemas comunes en {bloque_label}:",
                         footer="O envía tu propia descripción",
                         button_text="Selecciona o agrega",
-                        options=templates + [{"id": "otro", "title": "Escribir otro..."}]
+                        options=[NO_PROBLEMS_OPTION] + templates + [{"id": CUSTOM_NOTE_OPTION_ID, "title": "Escribir otro..."}]
                     )
 
                 return "photo_received"
@@ -1153,7 +1234,7 @@ class AuditConversationHandler:
                         body=f"Problemas comunes en {bloque_label}:",
                         footer="O envía 'SIGUIENTE'",
                         button_text="Agregar problema",
-                        options=templates[:4] + [{"id": "siguiente", "title": "Siguiente bloque"}]
+                        options=[NO_PROBLEMS_OPTION] + templates[:4] + [{"id": "siguiente", "title": "Siguiente bloque"}]
                     )
 
                 return "audio_received"
@@ -1549,9 +1630,8 @@ class AuditConversationHandler:
                 )
 
                 if ficha_url:
-                    await _send_ficha_to_responsable(
-                        meta_client, session, ficha_url, session.id_sesion
-                    )
+                    # No desvíos found — nothing for the manager to resolve or
+                    # be notified about, just offer the auditor her PDF copy.
                     await _ask_ficha_download(
                         meta_client, payload.telefono, session, ficha_url
                     )

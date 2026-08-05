@@ -52,6 +52,8 @@ export function gestionStateColor(estado: GestionState): string {
   const colors: Record<GestionState, string> = {
     'Abierta': 'bg-blue-100 text-blue-800',
     'En_proceso': 'bg-purple-100 text-purple-800',
+    'En_revision': 'bg-emerald-100 text-emerald-800',
+    'En_gestion_terceros': 'bg-gray-100 text-gray-700',
     'Resuelta': 'bg-emerald-100 text-emerald-800',
     'Cerrada': 'bg-green-100 text-green-800',
     'Vencida': 'bg-red-100 text-red-800',
@@ -63,11 +65,28 @@ export function gestionStateLabel(estado: GestionState): string {
   const labels: Record<GestionState, string> = {
     'Abierta': 'Abierta',
     'En_proceso': 'En proceso',
+    'En_revision': 'Corregido · en revision',
+    'En_gestion_terceros': 'Depende de terceros',
     'Resuelta': 'Resuelta',
     'Cerrada': 'Cerrada',
     'Vencida': 'Vencida',
   };
   return labels[estado] || estado;
+}
+
+export function timeSince(dateString: string): string {
+  try {
+    const then = new Date(dateString).getTime();
+    if (Number.isNaN(then)) return '';
+    const diffMs = Date.now() - then;
+    const hours = Math.floor(diffMs / 3_600_000);
+    if (hours < 1) return 'hace instantes';
+    if (hours < 24) return `hace ${hours}h`;
+    const days = Math.floor(hours / 24);
+    return `hace ${days}d`;
+  } catch {
+    return '';
+  }
 }
 
 export function cn(...classes: (string | undefined | null | false)[]): string {

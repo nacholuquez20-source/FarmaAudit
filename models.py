@@ -32,6 +32,12 @@ class ConversationState(str, Enum):
     RECOLECTANDO_RESPUESTA = "recolectando_respuesta"
     ENCARGADO_SELECCIONANDO_DESVIO = "encargado_seleccionando_desvio"
     ENCARGADO_ESPERANDO_RESPUESTA = "encargado_esperando_respuesta"
+    ENCARGADO_ELIGIENDO_MODULO = "encargado_eligiendo_modulo"
+    CAMPANIA_LISTANDO_TAREAS = "campania_listando_tareas"
+    CAMPANIA_TAREA_ACTIVA = "campania_tarea_activa"
+    CAMPANIA_ESPERANDO_EVIDENCIA = "campania_esperando_evidencia"
+    CAMPANIA_SOLICITANDO_INSUMO_DETALLE = "campania_solicitando_insumo_detalle"
+    CAMPANIA_SOLICITANDO_INSUMO_PROVEEDOR = "campania_solicitando_insumo_proveedor"
     AUDITORIA_PERFUMERIA_LIBRE = "auditoria_perfumeria_libre"
     PERFUMERIA_SELECCIONANDO_BLOQUE = "perfumeria_seleccionando_bloque"
     PERFUMERIA_ESPERANDO_CALIFICACION = "perfumeria_esperando_calificacion"
@@ -63,6 +69,8 @@ class GestionState(str, Enum):
 
     ABIERTA = "Abierta"
     EN_PROCESO = "En_proceso"
+    EN_REVISION = "En_revision"
+    EN_GESTION_TERCEROS = "En_gestion_terceros"
     RESUELTA = "Resuelta"
     CERRADA = "Cerrada"
     VENCIDA = "Vencida"
@@ -277,6 +285,9 @@ class Gestion:
     fecha_cierre: Optional[datetime] = None
     cerrado_por: Optional[str] = None
     bloque: Optional[str] = None  # LIMPIEZA/STOCK/OFERTAS/BURBUJAS (perfumería v2)
+    plazo_fecha_original: Optional[datetime] = None
+    veces_rechazado: int = 0
+    en_revision_desde: Optional[datetime] = None
 
 
 @dataclass

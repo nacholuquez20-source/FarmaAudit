@@ -14,7 +14,7 @@ import {
 } from '../components/desvio-detail';
 import { useAuth } from '../hooks/useAuth';
 import { useDesvioDetail } from '../hooks/useDesvioDetail';
-import type { Gestion } from '../types';
+import type { DesvioEvento, Gestion } from '../types';
 import { notificarEncargado, resolveEvidenceUrl } from '../lib/api';
 import { getWhatsappUrl } from '../lib/utils';
 import { ResolutionFormSchema } from '../lib/validation';
@@ -223,6 +223,16 @@ export default function DesvioDetail() {
     }
   };
 
+  const handleEvidenceUploaded = (evento: DesvioEvento) => {
+    const signedUrl =
+      evento.metadata && typeof evento.metadata.foto_url_signed === 'string' ? evento.metadata.foto_url_signed : '';
+    if (signedUrl) {
+      // Prefill the resolution form's evidence URL so it doesn't need to be copy-pasted by hand.
+      setEvidenceUrl((current) => current || signedUrl);
+    }
+    reload();
+  };
+
   const handleClose = async () => {
     if (!gestion) return;
 
@@ -329,7 +339,7 @@ export default function DesvioDetail() {
         </div>
 
         <div>
-          <EvidenciaUploader idGestion={gestion.id_gestion} onUploaded={reload} />
+          <EvidenciaUploader idGestion={gestion.id_gestion} onUploaded={handleEvidenceUploaded} />
         </div>
 
         <div className="lg:col-span-3">

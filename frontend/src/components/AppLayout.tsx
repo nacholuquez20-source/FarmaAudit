@@ -8,6 +8,7 @@ import {
   ClipboardCheck,
   Home,
   LogOut,
+  Megaphone,
   Settings,
   Store,
 } from 'lucide-react';
@@ -59,6 +60,8 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
     if (hasModuleAccess(profile, 'gestion_desvios') || hasModuleAccess(profile, 'revision_desvios'))
       navItems.push({ to: '/desvios', label: 'Desvios', icon: ClipboardCheck });
     navItems.push({ to: '/auditorias', label: 'Auditorias', icon: CalendarDays });
+    if (hasModuleAccess(profile, 'campanias'))
+      navItems.push({ to: '/campanias', label: 'Campanias', icon: Megaphone });
     if (hasModuleAccess(profile, 'sucursales'))
       navItems.push({ to: '/sucursales', label: 'Sucursales', icon: Store });
     if (canAccessAdmin) navItems.push({ to: '/admin', label: 'Admin', icon: Settings });
@@ -66,6 +69,8 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
     if (hasModuleAccess(profile, 'gestion_desvios') || hasModuleAccess(profile, 'revision_desvios'))
       navItems.push({ to: '/desvios', label: 'Desvios', icon: ClipboardCheck });
     navItems.push({ to: '/auditorias', label: 'Auditorias', icon: CalendarDays });
+    if (hasModuleAccess(profile, 'campanias'))
+      navItems.push({ to: '/campanias', label: 'Campanias', icon: Megaphone });
     if (hasModuleAccess(profile, 'sucursales'))
       navItems.push({ to: '/sucursales', label: 'Sucursales', icon: Store });
   } else if (role === 'sucursal') {
@@ -73,6 +78,8 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
       navItems.push({ to: '/dashboard', label: 'Resumen', icon: Home });
     if (hasModuleAccess(profile, 'mis_desvios'))
       navItems.push({ to: '/mis-desvios', label: 'Desvios', icon: AlertTriangle });
+    if (hasModuleAccess(profile, 'mis_campanias'))
+      navItems.push({ to: '/mis-campanias', label: 'Campanias', icon: Megaphone });
     if (hasModuleAccess(profile, 'sucursales'))
       navItems.push({
         to: profile?.id_sucursal ? `/sucursales/${profile.id_sucursal}` : '/sucursales',
@@ -169,7 +176,9 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
                                 <span className="block text-sm font-medium text-gray-900">
                                   {notificacion.tipo === 'mensaje_nuevo' || notificacion.tipo === 'encargado_respondio'
                                     ? 'Nueva actividad en desvio'
-                                    : 'Notificacion de desvio'}
+                                    : notificacion.tipo === 'vencimiento_proximo'
+                                      ? 'Desvio vencido'
+                                      : 'Notificacion de desvio'}
                                 </span>
                                 <span className="block text-xs text-gray-500">{notificacion.id_gestion}</span>
                               </span>

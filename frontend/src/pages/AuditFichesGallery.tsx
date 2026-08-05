@@ -6,9 +6,10 @@ import { Button } from '../components/Button';
 import { FeedbackState } from '../components/FeedbackState';
 import { Input } from '../components/Input';
 import { Select } from '../components/Select';
-import { getSucursales } from '../lib/api';
+import { exportControlesPdf, getSucursales } from '../lib/api';
 import { supabase } from '../lib/supabase';
 import type { Sucursal } from '../types';
+import { toast } from 'sonner';
 
 interface Ficha {
   id: string;
@@ -106,6 +107,7 @@ export default function AuditFichesGallery() {
   const [page, setPage] = useState(0);
 
   const [selected, setSelected] = useState<Ficha | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const sucursalNombre = useMemo(() => {
     const map = new Map(sucursales.map((s) => [s.id, s.nombre]));
@@ -178,6 +180,30 @@ export default function AuditFichesGallery() {
     setPage(0);
   };
 
+  const handleExportPdf = async () => {
+    setExporting(true);
+    try {
+      const blob = await exportControlesPdf({
+        sucursalId: sucursalId || undefined,
+        fechaDesde: fechaDesde || undefined,
+        fechaHasta: fechaHasta || undefined,
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `FarmaAudit_Controles_${new Date().toISOString().slice(0, 10)}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      toast.success('PDF de controles generado');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'No se pudo exportar el PDF');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   // Group fichas of the current page by day (already sorted desc by fecha)
   const grupos = useMemo(() => {
     const map = new Map<string, Ficha[]>();
@@ -189,6 +215,7 @@ export default function AuditFichesGallery() {
     }
     return Array.from(map.entries());
   }, [fichas]);
+
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -231,7 +258,7 @@ export default function AuditFichesGallery() {
             value={fechaHasta}
             onChange={(e) => updateFilter(setFechaHasta)(e.target.value)}
           />
-          <div className="flex items-end">
+          <div className="flex items-end gap-2">
             <Button
               variant="secondary"
               onClick={clearFilters}
@@ -242,6 +269,12 @@ export default function AuditFichesGallery() {
               Limpiar
             </Button>
           </div>
+        </div>
+        <div className="mt-4 flex justify-end border-t border-gray-100 pt-4">
+          <Button onClick={() => void handleExportPdf()} disabled={exporting}>
+            <FileText className="mr-2 inline h-4 w-4" />
+            {exporting ? 'Generando PDF...' : 'Exportar PDF de controles'}
+          </Button>
         </div>
       </div>
 

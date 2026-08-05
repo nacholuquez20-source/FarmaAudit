@@ -2,22 +2,37 @@ import { useEffect, useMemo, useState } from 'react';
 import { Check, Clock, MapPin, Paperclip, Search, Send, User, X } from 'lucide-react';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
-import { getGestion, getDesvioEventos, updateGestion, enviarMensajeInterno } from '../lib/api';
-import { formatDate, formatDateTime, gestionStateLabel, getWhatsappUrl } from '../lib/utils';
+import { EvidenciaGaleria } from '../components/EvidenciaGaleria';
+import { DesvioCorrectionReviewPanel } from '../components/desvio-detail';
+import {
+  getGestion,
+  getDesvioEventos,
+  updateGestion,
+  enviarMensajeInterno,
+  createDesvioEvento,
+  revisarGestion,
+  getNotificaciones,
+} from '../lib/api';
+import { formatDate, formatDateTime, gestionStateLabel, getWhatsappUrl, timeSince } from '../lib/utils';
 import { useAuth } from '../hooks/useAuth';
-import type { DesvioEvento, Gestion, GestionState, Severidad } from '../types';
+import type { DesvioEvento, Gestion, GestionState, Notificacion, Severidad } from '../types';
 import { toast } from 'sonner';
+import { validateResolutionForm } from '../lib/validation';
 
 interface DesvioCard extends Gestion {
   eventos: DesvioEvento[];
 }
 
 type GroupBy = 'estado' | 'sucursal' | 'none';
-type DetailTab = 'actividad' | 'plan' | 'evidencias' | 'detalle';
-type SlaStatus = 'overdue' | 'today' | 'soon' | 'ok' | 'closed';
+type DetailTab = 'revision' | 'actividad' | 'plan' | 'evidencias' | 'detalle';
+type SlaStatus = 'overdue' | 'today' | 'soon' | 'ok' | 'closed' | 'paused';
 
-const ESTADOS: GestionState[] = ['Vencida', 'Abierta', 'En_proceso', 'Resuelta', 'Cerrada'];
+const ESTADOS: GestionState[] = ['Vencida', 'Abierta', 'En_proceso', 'En_revision', 'En_gestion_terceros', 'Resuelta', 'Cerrada'];
 const SEVERIDADES: Severidad[] = ['Alta', 'Media', 'Baja'];
+
+function filterChipLabel(estado: GestionState): string {
+  return estado === 'En_revision' ? 'Pendiente de revision' : gestionStateLabel(estado);
+}
 
 const tokens = {
   navy: '#1E3A6D',
@@ -30,6 +45,8 @@ const tokens = {
     Vencida: { bg: '#FEE2E2', fg: '#991B1B', dot: '#DC2626' },
     Abierta: { bg: '#E0EAFF', fg: '#1E3A6D', dot: '#1E3A6D' },
     En_proceso: { bg: '#FFF1E6', fg: '#9A3A12', dot: '#F15A29' },
+    En_revision: { bg: '#DCFCE7', fg: '#166534', dot: '#16A34A' },
+    En_gestion_terceros: { bg: '#F1F4F9', fg: '#475467', dot: '#94A3B8' },
     Resuelta: { bg: '#E7F6EC', fg: '#1E6F3D', dot: '#2A9D5F' },
     Cerrada: { bg: '#F1F4F9', fg: '#475467', dot: '#667085' },
   } satisfies Record<GestionState, { bg: string; fg: string; dot: string }>,
@@ -44,6 +61,7 @@ const tokens = {
     soon: { bg: '#FEF3C7', fg: '#92400E', dot: '#D97706' },
     ok: { bg: '#F1F4F9', fg: '#344054', dot: '#94A3B8' },
     closed: { bg: '#E7F6EC', fg: '#1E6F3D', dot: '#2A9D5F' },
+    paused: { bg: '#F1F4F9', fg: '#475467', dot: '#94A3B8' },
   } satisfies Record<SlaStatus, { bg: string; fg: string; dot: string }>,
 };
 
@@ -58,6 +76,12 @@ function WhatsappIcon() {
 function computeSla(desvio: Gestion): { status: SlaStatus; label: string; days: number } {
   if (desvio.estado === 'Resuelta' || desvio.estado === 'Cerrada') {
     return { status: 'closed', label: 'Completado', days: 0 };
+  }
+  if (desvio.estado === 'En_gestion_terceros') {
+    return { status: 'paused', label: 'Pausado · depende de terceros', days: 0 };
+  }
+  if (desvio.estado === 'En_revision') {
+    return { status: 'paused', label: 'Corregido, en revision', days: 0 };
   }
 
   const due = new Date(desvio.plazo_fecha);
@@ -89,6 +113,26 @@ function EstadoBadge({ estado, size = 'md' }: { estado: GestionState; size?: 'sm
       <span className="h-1.5 w-1.5 rounded-full" style={{ background: color.dot }} />
       {gestionStateLabel(estado)}
     </span>
+  );
+}
+
+function CorrectionBadge({ count, onClick, size = 'md' }: { count: number; onClick: () => void; size?: 'sm' | 'md' }) {
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+      className={`inline-flex items-center gap-1.5 rounded-md font-bold uppercase tracking-wide transition hover:brightness-95 ${size === 'sm' ? 'px-2 py-1 text-[11px]' : 'px-3 py-1.5 text-xs'}`}
+      style={{ background: tokens.state.En_revision.bg, color: tokens.state.En_revision.fg }}
+    >
+      <span className="h-1.5 w-1.5 rounded-full" style={{ background: tokens.state.En_revision.dot }} />
+      Corregido
+      {count > 0 && (
+        <span className="rounded-full bg-white/70 px-1.5 py-0.5 text-[10px] font-black">{count}</span>
+      )}
+    </button>
   );
 }
 
@@ -173,12 +217,17 @@ function SelectBox({ checked, onClick }: { checked: boolean; onClick: () => void
   );
 }
 
-function GroupHeader({ label, count, accent }: { label: string; count: number; accent: string }) {
+function GroupHeader({ label, count, accent, pendingReview }: { label: string; count: number; accent: string; pendingReview?: number }) {
   return (
     <div className="sticky top-[145px] z-10 flex items-center gap-3 border-y border-slate-200 bg-slate-50 px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-600 lg:top-[137px]">
       <span className="ml-9 h-2 w-2 rounded-full" style={{ background: accent }} />
       <span>{label}</span>
       <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-xs tracking-normal">{count}</span>
+      {!!pendingReview && (
+        <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold tracking-normal" style={{ background: tokens.state.En_revision.bg, color: tokens.state.En_revision.fg }}>
+          {pendingReview} pendiente{pendingReview > 1 ? 's' : ''} de revision
+        </span>
+      )}
     </div>
   );
 }
@@ -196,6 +245,7 @@ function Timeline({ eventos }: { eventos: DesvioEvento[] }) {
     nota: '#64748B',
     evidencia: tokens.green,
     mensaje: '#475467',
+    rechazo: '#DC2626',
   };
 
   return (
@@ -239,6 +289,101 @@ function Fact({ icon, label, value, sub, tone }: { icon: React.ReactNode; label:
   );
 }
 
+function ResolveModal({
+  desvio,
+  comment,
+  evidenceText,
+  evidenceUrl,
+  submitting,
+  error,
+  onCommentChange,
+  onEvidenceTextChange,
+  onEvidenceUrlChange,
+  onCancel,
+  onSubmit,
+}: {
+  desvio: DesvioCard;
+  comment: string;
+  evidenceText: string;
+  evidenceUrl: string;
+  submitting: boolean;
+  error: string;
+  onCommentChange: (value: string) => void;
+  onEvidenceTextChange: (value: string) => void;
+  onEvidenceUrlChange: (value: string) => void;
+  onCancel: () => void;
+  onSubmit: (event: React.FormEvent) => void;
+}) {
+  return (
+    <>
+      <button type="button" aria-label="Cerrar" onClick={onCancel} className="fixed inset-0 z-50 cursor-default bg-slate-950/40" />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onCancel}>
+        <form
+          onSubmit={onSubmit}
+          onClick={(event) => event.stopPropagation()}
+          className="w-full max-w-lg rounded-lg bg-white p-6 shadow-2xl"
+        >
+          <h3 className="text-lg font-bold text-slate-950">Marcar como resuelta</h3>
+          <p className="mt-1 text-sm text-slate-500">
+            {desvio.id_gestion} · {desvio.sucursal} — describi que hizo el responsable para resolver el desvio.
+          </p>
+
+          <label className="mt-4 block text-sm font-medium text-slate-700">
+            Comentario de resolucion *
+            <textarea
+              autoFocus
+              value={comment}
+              onChange={(event) => onCommentChange(event.target.value)}
+              rows={3}
+              required
+              placeholder="Describi que hizo el responsable para resolver el desvio"
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+            />
+          </label>
+
+          <label className="mt-3 block text-sm font-medium text-slate-700">
+            Evidencia (texto)
+            <input
+              type="text"
+              value={evidenceText}
+              onChange={(event) => onEvidenceTextChange(event.target.value)}
+              placeholder="Numero de remito, descripcion de foto, etc. (opcional)"
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+            />
+          </label>
+
+          <label className="mt-3 block text-sm font-medium text-slate-700">
+            URL de evidencia
+            <input
+              type="url"
+              value={evidenceUrl}
+              onChange={(event) => onEvidenceUrlChange(event.target.value)}
+              placeholder="https:// (opcional)"
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+            />
+          </label>
+
+          {error && <p className="mt-3 text-sm font-medium text-red-600">{error}</p>}
+
+          <div className="mt-5 flex justify-end gap-2">
+            <button type="button" onClick={onCancel} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50">
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={submitting || !comment.trim()}
+              className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+              style={{ background: submitting || !comment.trim() ? undefined : tokens.navy }}
+            >
+              {submitting ? 'Guardando...' : 'Marcar como resuelta'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </>
+  );
+}
+
 function DetailDrawer({
   desvio,
   tab,
@@ -247,10 +392,15 @@ function DetailDrawer({
   setComentario,
   sending,
   updatingId,
+  reviewUpdating,
   onClose,
   onStateChange,
+  onResolve,
   onComment,
   onWhatsapp,
+  onAprobar,
+  onRechazar,
+  onEnGestionTerceros,
 }: {
   desvio: DesvioCard;
   tab: DetailTab;
@@ -259,19 +409,24 @@ function DetailDrawer({
   setComentario: (value: string) => void;
   sending: boolean;
   updatingId: string | null;
+  reviewUpdating: boolean;
   onClose: () => void;
   onStateChange: (id: string, state: GestionState) => void;
+  onResolve: (desvio: DesvioCard) => void;
   onComment: (id: string) => void;
   onWhatsapp: (desvio: Gestion) => void;
+  onAprobar: (desvio: DesvioCard) => void;
+  onRechazar: (desvio: DesvioCard, motivo: string) => void;
+  onEnGestionTerceros: (desvio: DesvioCard, motivo: string) => void;
 }) {
   const sla = computeSla(desvio);
   const visibleTabs: { key: DetailTab; label: string }[] = [
+    ...(desvio.estado === 'En_revision' ? [{ key: 'revision' as const, label: 'Revision' }] : []),
     { key: 'actividad', label: `Actividad · ${desvio.eventos.length}` },
     { key: 'plan', label: 'Plan de accion' },
     { key: 'evidencias', label: 'Evidencias' },
     { key: 'detalle', label: 'Detalle' },
   ];
-  const evidenciaEventos = desvio.eventos.filter((evento) => evento.tipo === 'evidencia');
 
   return (
     <>
@@ -305,7 +460,7 @@ function DetailDrawer({
             Contactar por WhatsApp
           </button>
           {desvio.estado !== 'Resuelta' && desvio.estado !== 'Cerrada' && (
-            <button type="button" disabled={updatingId === desvio.id_gestion} onClick={() => onStateChange(desvio.id_gestion, 'Resuelta')} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-emerald-200 bg-white px-4 text-sm font-bold text-emerald-700 disabled:opacity-60">
+            <button type="button" disabled={updatingId === desvio.id_gestion} onClick={() => onResolve(desvio)} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-emerald-200 bg-white px-4 text-sm font-bold text-emerald-700 disabled:opacity-60">
               <Check className="h-4 w-4" />
               Marcar resuelta
             </button>
@@ -335,6 +490,16 @@ function DetailDrawer({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 px-6 py-5">
+          {tab === 'revision' && (
+            <DesvioCorrectionReviewPanel
+              gestion={desvio}
+              eventos={desvio.eventos}
+              updating={reviewUpdating}
+              onAprobar={() => onAprobar(desvio)}
+              onRechazar={(motivo) => onRechazar(desvio, motivo)}
+              onEnGestionTerceros={(motivo) => onEnGestionTerceros(desvio, motivo)}
+            />
+          )}
           {tab === 'actividad' && <Timeline eventos={desvio.eventos} />}
           {tab === 'plan' && (
             <div className="rounded-lg border border-slate-200 bg-white p-5">
@@ -346,23 +511,7 @@ function DetailDrawer({
               </div>
             </div>
           )}
-          {tab === 'evidencias' && (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {evidenciaEventos.length === 0 ? (
-                <div className="col-span-full rounded-lg border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">Sin evidencias vinculadas en la actividad.</div>
-              ) : (
-                evidenciaEventos.map((evento) => (
-                  <div key={evento.id} className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-                    <div className="flex h-32 items-center justify-center text-3xl text-white" style={{ background: `linear-gradient(135deg, ${tokens.navy}, ${tokens.orange})` }}>▧</div>
-                    <div className="p-3">
-                      <div className="truncate text-sm font-bold text-slate-950">{evento.comentario}</div>
-                      <div className="mt-1 text-xs text-slate-400">{formatDateTime(evento.created_at)}</div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          )}
+          {tab === 'evidencias' && <EvidenciaGaleria idGestion={desvio.id_gestion} eventos={desvio.eventos} />}
           {tab === 'detalle' && (
             <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
               {[
@@ -426,12 +575,21 @@ export function DesviosGestionPanel({ embedded = false }: { embedded?: boolean }
   const [comentario, setComentario] = useState('');
   const [sending, setSending] = useState(false);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [resolvingDesvio, setResolvingDesvio] = useState<DesvioCard | null>(null);
+  const [resolveComment, setResolveComment] = useState('');
+  const [resolveEvidenceText, setResolveEvidenceText] = useState('');
+  const [resolveEvidenceUrl, setResolveEvidenceUrl] = useState('');
+  const [resolveError, setResolveError] = useState('');
+  const [resolving, setResolving] = useState(false);
+  const [notifByGestion, setNotifByGestion] = useState<Map<string, Notificacion[]>>(new Map());
+  const [reviewUpdating, setReviewUpdating] = useState(false);
+  const [autoFilterApplied, setAutoFilterApplied] = useState(false);
 
   const load = async () => {
     try {
       setLoading(true);
       setError(null);
-      const data = await getGestion();
+      const [data, notificaciones] = await Promise.all([getGestion(), getNotificaciones().catch(() => [])]);
       const enriched = await Promise.all(
         data.map(async (gestion) => ({
           ...gestion,
@@ -439,6 +597,14 @@ export function DesviosGestionPanel({ embedded = false }: { embedded?: boolean }
         })),
       );
       setDesvios(enriched);
+
+      const byGestion = new Map<string, Notificacion[]>();
+      notificaciones
+        .filter((notificacion) => notificacion.tipo === 'encargado_respondio')
+        .forEach((notificacion) => {
+          byGestion.set(notificacion.id_gestion, [...(byGestion.get(notificacion.id_gestion) || []), notificacion]);
+        });
+      setNotifByGestion(byGestion);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al cargar desvios');
     } finally {
@@ -451,8 +617,18 @@ export function DesviosGestionPanel({ embedded = false }: { embedded?: boolean }
   }, []);
 
   useEffect(() => {
+    if (autoFilterApplied || loading) return;
+    if (desvios.some((desvio) => desvio.estado === 'En_revision')) {
+      setEstadoFilter('En_revision');
+    }
+    setAutoFilterApplied(true);
+  }, [desvios, loading, autoFilterApplied]);
+
+  useEffect(() => {
     setComentario('');
-    setDrawerTab('actividad');
+    const opened = desvios.find((desvio) => desvio.id_gestion === openId);
+    setDrawerTab(opened?.estado === 'En_revision' ? 'revision' : 'actividad');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openId]);
 
   const counts = useMemo(() => {
@@ -480,8 +656,25 @@ export function DesviosGestionPanel({ embedded = false }: { embedded?: boolean }
     });
   }, [desvios, estadoFilter, severidadFilter, searchText]);
 
+  const sortByPendingReview = (items: DesvioCard[]) =>
+    [...items].sort((a, b) => {
+      const aPending = a.estado === 'En_revision';
+      const bPending = b.estado === 'En_revision';
+      if (aPending && bPending) {
+        return new Date(a.en_revision_desde || 0).getTime() - new Date(b.en_revision_desde || 0).getTime();
+      }
+      if (aPending) return -1;
+      if (bPending) return 1;
+      return 0;
+    });
+
+  const countPendingReview = (items: DesvioCard[]) => items.filter((desvio) => desvio.estado === 'En_revision').length;
+
   const groups = useMemo(() => {
-    if (groupBy === 'none') return [{ key: 'all', label: '', accent: tokens.navy, items: filtered }];
+    if (groupBy === 'none') {
+      const items = sortByPendingReview(filtered);
+      return [{ key: 'all', label: '', accent: tokens.navy, items, pendingReview: countPendingReview(items) }];
+    }
 
     if (groupBy === 'sucursal') {
       const byBranch = new Map<string, DesvioCard[]>();
@@ -490,7 +683,13 @@ export function DesviosGestionPanel({ embedded = false }: { embedded?: boolean }
       });
       return Array.from(byBranch.entries())
         .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
-        .map(([key, items]) => ({ key, label: key, accent: tokens.navy, items }));
+        .map(([key, items]) => ({
+          key,
+          label: key,
+          accent: tokens.navy,
+          items: sortByPendingReview(items),
+          pendingReview: countPendingReview(items),
+        }));
     }
 
     const byState = new Map<GestionState, DesvioCard[]>();
@@ -499,7 +698,13 @@ export function DesviosGestionPanel({ embedded = false }: { embedded?: boolean }
     });
     return ESTADOS
       .filter((estado) => byState.has(estado))
-      .map((estado) => ({ key: estado, label: gestionStateLabel(estado), accent: tokens.state[estado].dot, items: byState.get(estado) || [] }));
+      .map((estado) => ({
+        key: estado,
+        label: gestionStateLabel(estado),
+        accent: tokens.state[estado].dot,
+        items: sortByPendingReview(byState.get(estado) || []),
+        pendingReview: 0,
+      }));
   }, [filtered, groupBy]);
 
   const selectedDesvio = openId ? desvios.find((desvio) => desvio.id_gestion === openId) || null : null;
@@ -537,6 +742,134 @@ export function DesviosGestionPanel({ embedded = false }: { embedded?: boolean }
       toast.error('Error al actualizar estado');
     } finally {
       setUpdatingId(null);
+    }
+  };
+
+  const applyRevisionResult = async (desvio: DesvioCard, updatedGestion: Gestion) => {
+    const eventos = await getDesvioEventos(desvio.id_gestion).catch(() => desvio.eventos);
+    setDesvios((prev) =>
+      prev.map((item) => (item.id_gestion === desvio.id_gestion ? { ...item, ...updatedGestion, eventos } : item)),
+    );
+    setNotifByGestion((prev) => {
+      const next = new Map(prev);
+      next.delete(desvio.id_gestion);
+      return next;
+    });
+  };
+
+  const handleAprobar = async (desvio: DesvioCard) => {
+    setReviewUpdating(true);
+    try {
+      const updated = await revisarGestion({ idGestion: desvio.id_gestion, accion: 'aprobar' });
+      await applyRevisionResult(desvio, updated);
+      toast.success('Correccion aprobada');
+      setDrawerTab('actividad');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'No se pudo aprobar la correccion');
+    } finally {
+      setReviewUpdating(false);
+    }
+  };
+
+  const handleRechazar = async (desvio: DesvioCard, motivo: string) => {
+    setReviewUpdating(true);
+    try {
+      const updated = await revisarGestion({ idGestion: desvio.id_gestion, accion: 'rechazar', motivo });
+      await applyRevisionResult(desvio, updated);
+      toast.success('Correccion rechazada, se notifico al responsable');
+      setDrawerTab('actividad');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'No se pudo rechazar la correccion');
+    } finally {
+      setReviewUpdating(false);
+    }
+  };
+
+  const handleEnGestionTerceros = async (desvio: DesvioCard, motivo: string) => {
+    setReviewUpdating(true);
+    try {
+      const updated = await revisarGestion({ idGestion: desvio.id_gestion, accion: 'en_gestion_terceros', motivo });
+      await applyRevisionResult(desvio, updated);
+      toast.success('Desvio marcado como dependiente de terceros');
+      setDrawerTab('actividad');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'No se pudo actualizar el desvio');
+    } finally {
+      setReviewUpdating(false);
+    }
+  };
+
+  const openResolveModal = (desvio: DesvioCard) => {
+    setResolvingDesvio(desvio);
+    setResolveComment('');
+    setResolveEvidenceText('');
+    setResolveEvidenceUrl('');
+    setResolveError('');
+  };
+
+  const closeResolveModal = () => {
+    if (resolving) return;
+    setResolvingDesvio(null);
+  };
+
+  const handleResolveSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!resolvingDesvio) return;
+
+    const validated = validateResolutionForm({
+      resolutionComment: resolveComment,
+      evidenceText: resolveEvidenceText,
+      evidenceUrl: resolveEvidenceUrl,
+    });
+    if ('error' in validated) {
+      setResolveError(validated.error);
+      return;
+    }
+
+    const desvioId = resolvingDesvio.id_gestion;
+    const actorName = profile?.nombre || user?.email || undefined;
+    const evidence = validated.evidenceText?.trim() || null;
+    const url = validated.evidenceUrl?.trim() || null;
+
+    setResolving(true);
+    setResolveError('');
+    try {
+      await updateGestion(desvioId, 'Resuelta', actorName);
+      const respuestaEvento = await createDesvioEvento({
+        id_gestion: desvioId,
+        tipo: 'respuesta',
+        comentario: validated.resolutionComment,
+        actor_id: user?.id || null,
+        actor_nombre: actorName || null,
+        metadata: { estado: 'Resuelta', evidencia_texto: evidence, evidencia_url: url },
+      });
+      const newEventos = [respuestaEvento];
+
+      if (evidence || url) {
+        const evidenciaEvento = await createDesvioEvento({
+          id_gestion: desvioId,
+          tipo: 'evidencia',
+          comentario: evidence || 'Evidencia adjunta por URL.',
+          actor_id: user?.id || null,
+          actor_nombre: actorName || null,
+          metadata: { evidencia_url: url },
+        });
+        newEventos.push(evidenciaEvento);
+      }
+
+      setDesvios((prev) =>
+        prev.map((desvio) =>
+          desvio.id_gestion === desvioId
+            ? { ...desvio, estado: 'Resuelta', eventos: [...desvio.eventos, ...newEventos] }
+            : desvio,
+        ),
+      );
+      toast.success('Desvio marcado como resuelto');
+      setResolvingDesvio(null);
+    } catch (err) {
+      setResolveError(err instanceof Error ? err.message : 'No se pudo marcar como resuelto.');
+    } finally {
+      setResolving(false);
     }
   };
 
@@ -625,7 +958,7 @@ export function DesviosGestionPanel({ embedded = false }: { embedded?: boolean }
               <FilterChip active={estadoFilter === ''} count={counts.total} onClick={() => setEstadoFilter('')}>Todos</FilterChip>
               {ESTADOS.map((estado) => (
                 <FilterChip key={estado} active={estadoFilter === estado} count={counts[estado]} danger={estado === 'Vencida'} onClick={() => setEstadoFilter(estado)}>
-                  {gestionStateLabel(estado)}
+                  {filterChipLabel(estado)}
                 </FilterChip>
               ))}
               <span className="mx-2 hidden h-6 w-px bg-slate-200 lg:block" />
@@ -678,7 +1011,7 @@ export function DesviosGestionPanel({ embedded = false }: { embedded?: boolean }
 
             {groups.map((group) => (
               <div key={group.key}>
-                {group.label && <GroupHeader label={group.label} count={group.items.length} accent={group.accent} />}
+                {group.label && <GroupHeader label={group.label} count={group.items.length} accent={group.accent} pendingReview={group.pendingReview} />}
                 {group.items.map((desvio) => {
                   const selectedRow = selected.has(desvio.id_gestion);
                   return (
@@ -691,7 +1024,11 @@ export function DesviosGestionPanel({ embedded = false }: { embedded?: boolean }
                       <div className="lg:hidden">
                         <div className="mb-3 flex flex-wrap items-center gap-2">
                           <SeveridadBadge severidad={desvio.severidad} />
-                          <EstadoBadge estado={desvio.estado} size="sm" />
+                          {desvio.estado === 'En_revision' ? (
+                            <CorrectionBadge count={(notifByGestion.get(desvio.id_gestion) || []).length} size="sm" onClick={() => setOpenId(desvio.id_gestion)} />
+                          ) : (
+                            <EstadoBadge estado={desvio.estado} size="sm" />
+                          )}
                           <SlaPill desvio={desvio} />
                         </div>
                         <div className="font-semibold text-slate-950">{desvio.desvio}</div>
@@ -716,13 +1053,22 @@ export function DesviosGestionPanel({ embedded = false }: { embedded?: boolean }
                         <SlaPill desvio={desvio} />
                         <div className="mt-1 text-xs text-slate-400">Plazo {formatDate(desvio.plazo_fecha)}</div>
                       </div>
-                      <div className="hidden py-3 lg:block"><EstadoBadge estado={desvio.estado} size="sm" /></div>
+                      <div className="hidden py-3 lg:block">
+                        {desvio.estado === 'En_revision' ? (
+                          <div>
+                            <CorrectionBadge count={(notifByGestion.get(desvio.id_gestion) || []).length} size="sm" onClick={() => setOpenId(desvio.id_gestion)} />
+                            {desvio.en_revision_desde && <div className="mt-1 text-xs text-slate-400">{timeSince(desvio.en_revision_desde)}</div>}
+                          </div>
+                        ) : (
+                          <EstadoBadge estado={desvio.estado} size="sm" />
+                        )}
+                      </div>
                       <div className="hidden justify-end gap-1 py-3 lg:flex" onClick={(event) => event.stopPropagation()}>
                         <button type="button" onClick={() => handleWhatsapp(desvio)} className="rounded-md p-2 text-emerald-600 hover:bg-emerald-50" aria-label="Contactar por WhatsApp">
                           <WhatsappIcon />
                         </button>
                         {desvio.estado !== 'Resuelta' && desvio.estado !== 'Cerrada' && (
-                          <button type="button" disabled={updatingId === desvio.id_gestion} onClick={() => void handleStateChange(desvio.id_gestion, 'Resuelta')} className="rounded-md p-2 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50" aria-label="Marcar resuelta">
+                          <button type="button" disabled={updatingId === desvio.id_gestion} onClick={() => openResolveModal(desvio)} className="rounded-md p-2 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50" aria-label="Marcar resuelta">
                             <Check className="h-4 w-4" />
                           </button>
                         )}
@@ -744,10 +1090,31 @@ export function DesviosGestionPanel({ embedded = false }: { embedded?: boolean }
             setComentario={setComentario}
             sending={sending}
             updatingId={updatingId}
+            reviewUpdating={reviewUpdating}
             onClose={() => setOpenId(null)}
             onStateChange={(id, state) => void handleStateChange(id, state)}
+            onResolve={openResolveModal}
             onComment={(id) => void handleComment(id)}
             onWhatsapp={handleWhatsapp}
+            onAprobar={(desvio) => void handleAprobar(desvio)}
+            onRechazar={(desvio, motivo) => void handleRechazar(desvio, motivo)}
+            onEnGestionTerceros={(desvio, motivo) => void handleEnGestionTerceros(desvio, motivo)}
+          />
+        )}
+
+        {resolvingDesvio && (
+          <ResolveModal
+            desvio={resolvingDesvio}
+            comment={resolveComment}
+            evidenceText={resolveEvidenceText}
+            evidenceUrl={resolveEvidenceUrl}
+            submitting={resolving}
+            error={resolveError}
+            onCommentChange={setResolveComment}
+            onEvidenceTextChange={setResolveEvidenceText}
+            onEvidenceUrlChange={setResolveEvidenceUrl}
+            onCancel={closeResolveModal}
+            onSubmit={(event) => void handleResolveSubmit(event)}
           />
         )}
       </div>

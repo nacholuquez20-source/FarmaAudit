@@ -16,13 +16,24 @@ const SucursalDetail = lazy(() => import('./pages/SucursalDetail'));
 const AuditPerfumeriaV2 = lazy(() => import('./pages/AuditPerfumeriaV2'));
 const AuditFichesGallery = lazy(() => import('./pages/AuditFichesGallery'));
 const Admin = lazy(() => import('./pages/Admin'));
+const Campanias = lazy(() => import('./pages/Campanias'));
+const CampaniaWizard = lazy(() => import('./pages/CampaniaWizard'));
+const CampaniaDetail = lazy(() => import('./pages/CampaniaDetail'));
+const MisCampanias = lazy(() => import('./pages/MisCampanias'));
+const MisCampaniaDetail = lazy(() => import('./pages/MisCampaniaDetail'));
 
 function LoadingGate({ title }: { title: string }) {
   const [showRetry, setShowRetry] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setShowRetry(true), 3000);
+    // Supabase's default navigator-lock timeout is 5s: a tab that gets
+    // closed doesn't always release its Web Lock instantly, so every
+    // reopen can briefly wait out that window before auth-js steals the
+    // orphaned lock and session init proceeds normally. Keep this above
+    // that so the "still loading, refresh?" prompt doesn't flash on every
+    // routine reopen.
+    const timer = window.setTimeout(() => setShowRetry(true), 6000);
     return () => window.clearTimeout(timer);
   }, []);
 
@@ -227,6 +238,51 @@ export default function App() {
             element={
               <ProtectedRoute allowRoles={['auditor', 'admin']}>
                 <AuditPerfumeriaV2 />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/campanias"
+            element={
+              <ProtectedRoute allowRoles={['admin', 'auditor']} module="campanias">
+                <Campanias />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/campanias/nueva"
+            element={
+              <ProtectedRoute allowRoles={['admin', 'auditor']} module="campanias">
+                <CampaniaWizard />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/campanias/:id"
+            element={
+              <ProtectedRoute allowRoles={['admin', 'auditor']} module="campanias">
+                <CampaniaDetail />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/mis-campanias"
+            element={
+              <ProtectedRoute allowRoles={['sucursal']} module="mis_campanias">
+                <MisCampanias />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/mis-campanias/:id"
+            element={
+              <ProtectedRoute allowRoles={['sucursal']} module="mis_campanias">
+                <MisCampaniaDetail />
               </ProtectedRoute>
             }
           />
