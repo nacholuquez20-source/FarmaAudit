@@ -4,8 +4,6 @@ export { Button } from './Button';
 export { Checkbox } from './Checkbox';
 export { ChatMensajes } from './ChatMensajes';
 export { DesvioCreationDialog } from './DesvioCreationDialog';
-export { EvidenceCapture } from './EvidenceCapture';
-export { EvidenceCaptureDialog } from './EvidenceCaptureDialog';
 export { EvidenciaGaleria } from './EvidenciaGaleria';
 export { EvidenciaUploader } from './EvidenciaUploader';
 export { FeedbackState } from './FeedbackState';
