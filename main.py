@@ -96,28 +96,6 @@ class DesvioBorradorDiscardRequest(BaseModel):
     reason: str | None = None
 
 
-class BloqueScore(BaseModel):
-    id: str
-    nombre: str
-    puntuacion: int  # 1-5
-
-
-class DesvioItem(BaseModel):
-    id: str
-    bloque: str
-    descripcion: str
-    foto_url: str | None = None
-
-
-class AuditoriaCompletadaPerfumeriaRequest(BaseModel):
-    id_sesion: str
-    sucursal_id: str
-    sucursal_nombre: str
-    auditor_nombre: str
-    auditor_telefono: str
-    bloques_scores: list[BloqueScore]
-    desvios: list[DesvioItem] = []
-
 # Lazy initialization - these will be created on demand
 router = None
 sheets = None
@@ -420,6 +398,13 @@ async def startup_event():
         "interval",
         minutes=settings.timeout_check_interval,
         id="audit_timeout_check",
+        max_instances=1,  # Prevent concurrent executions
+    )
+    scheduler.add_job(
+        check_expired_audit_sessions_v2,
+        "interval",
+        minutes=15,
+        id="audit_v2_session_check",
         max_instances=1,  # Prevent concurrent executions
     )
     scheduler.add_job(
@@ -938,144 +923,6 @@ async def discard_desvio_borrador(
         raise HTTPException(status_code=500, detail="No se pudo descartar el borrador")
 
 
-@app.post("/api/auditorias-completadas/perfumeria")
-async def create_perfumeria_deviations(payload: AuditoriaCompletadaPerfumeriaRequest, request: Request):
-    """Receive completed perfumery audit from frontend and create Gestion records."""
-    profile = await _require_admin_or_auditor(request)
-    client = _get_supabase_client()
-    if client is None:
-        raise HTTPException(status_code=503, detail="Supabase is not configured")
-
-    try:
-        now = datetime.now(timezone.utc).isoformat()
-        created_gestiones = []
-
-        # Get sucursal info to find responsable contact
-        sucursal_response = (
-            client.table("sucursales")
-            .select("responsable, tel_responsable, zona")
-            .eq("id", payload.sucursal_id)
-            .maybe_single()
-            .execute()
-        )
-        sucursal_info = sucursal_response.data or {}
-        responsable = sucursal_info.get("responsable", "")
-        tel_responsable = sucursal_info.get("tel_responsable", "")
-
-        for desvio in payload.desvios:
-            # Create Reporte record
-            reporte_record = {
-                "id": str(uuid.uuid4())[:12],
-                "fecha": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                "hora": datetime.now(timezone.utc).strftime("%H:%M:%S"),
-                "cuadrilla": "",  # Not applicable for perfumery audits
-                "auditor": payload.auditor_nombre,
-                "id_sucursal": payload.sucursal_id,
-                "sucursal": payload.sucursal_nombre,
-                "area": desvio.bloque,  # Map bloque to area
-                "subitem": "",  # Not applicable for free-form perfumery audits
-                "descripcion": desvio.descripcion,
-                "severidad": "Media",  # Default severity, could be parameterized later
-                "foto_url": desvio.foto_url,
-                "creado_por_audio": False,
-                "timestamp": now,
-            }
-
-            reporte_response = (
-                client.table("reportes")
-                .insert(reporte_record)
-                .execute()
-            )
-
-            if not reporte_response.data:
-                logger.error(f"Failed to create reporte for desvio {desvio.id}")
-                continue
-
-            reporte_id = reporte_response.data[0]["id"]
-
-            # Create Gestion record
-            gestion_record = {
-                "id_gestion": str(uuid.uuid4())[:12],
-                "id_reporte": reporte_id,
-                "id_sucursal": payload.sucursal_id,
-                "sucursal": payload.sucursal_nombre,
-                "desvio": desvio.descripcion,
-                "severidad": "Media",
-                "responsable": responsable,
-                "tel_responsable": tel_responsable,
-                "plazo_fecha": (datetime.now(timezone.utc) + timedelta(days=7)).strftime("%Y-%m-%d"),
-                "plan_accion": "",  # Empty initially, responsable fills it
-                "estado": "Abierta",
-                "bloque": desvio.bloque,
-                "created_at": now,
-                "updated_at": now,
-            }
-
-            gestion_response = (
-                client.table("gestion")
-                .insert(gestion_record)
-                .execute()
-            )
-
-            if not gestion_response.data:
-                logger.error(f"Failed to create gestion for reporte {reporte_id}")
-                continue
-
-            gestion_id = gestion_response.data[0]["id_gestion"]
-            created_gestiones.append(gestion_response.data[0])
-
-            # Create initial DesvioEvento for creation
-            evento_record = {
-                "id_gestion": gestion_id,
-                "tipo": "creacion",
-                "comentario": f"Desvío detectado en auditoría perfumería - Bloque: {desvio.bloque}",
-                "actor_nombre": payload.auditor_nombre,
-                "actor_id": payload.auditor_telefono,
-                "metadata": {
-                    "bloque": desvio.bloque,
-                    "foto_url": desvio.foto_url,
-                    "id_sesion": payload.id_sesion,
-                },
-                "created_at": now,
-            }
-
-            evento_response = (
-                client.table("desvio_eventos")
-                .insert(evento_record)
-                .execute()
-            )
-
-            if not evento_response.data:
-                logger.warning(f"Failed to create evento for gestion {gestion_id}")
-
-        # Notify responsable about deviations if phone number exists
-        if tel_responsable and created_gestiones:
-            normalized_tel = "".join(ch for ch in tel_responsable if ch.isdigit())
-            if normalized_tel:
-                deviation_count = len(created_gestiones)
-
-                message = (
-                    f"FarmaAudit: Se detectaron {deviation_count} desvío(s) en {payload.sucursal_nombre}\n\n"
-                    f"Auditor: {payload.auditor_nombre}\n\n"
-                    "Responde este WhatsApp para gestionar los desvíos encontrados."
-                )
-
-                meta_client = MetaClient()
-                sent = await meta_client.send_text(normalized_tel, message)
-                if not sent:
-                    logger.warning(f"Failed to notify responsable {normalized_tel} about deviations")
-
-        logger.info(
-            f"Created {len(created_gestiones)} gestiones for audit {payload.id_sesion} "
-            f"in sucursal {payload.sucursal_id}"
-        )
-        return {"status": "ok", "deviations_created": len(created_gestiones)}
-
-    except Exception as exc:
-        logger.error(f"Failed to create perfumeria gestiones: {exc}", exc_info=True)
-        raise HTTPException(status_code=500, detail="No se pudieron crear los desvíos")
-
-
 # @app.get("/sync-now")
 # async def sync_now():
 #     """Manual sync endpoint for testing."""
@@ -1391,6 +1238,86 @@ async def check_incomplete_respuestas_timeout():
                 )
     except Exception as e:
         logger.error(f"Error in check_incomplete_respuestas_timeout: {e}", exc_info=True)
+
+
+# Horas sin actividad antes de recordarle al auditor que dejó una auditoría a
+# medias. El cierre definitivo lo marca session.expires_at (24 h).
+AUDIT_V2_INACTIVITY_HOURS = 2
+
+
+def _parse_utc(value: str) -> Optional[datetime]:
+    """ISO -> datetime aware en UTC. None si no se puede parsear."""
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+async def check_expired_audit_sessions_v2():
+    """Sesiones de auditoría v2 (WhatsApp): aviso por inactividad y cierre al vencer.
+
+    La regla es que nada se cierra en silencio: si el auditor deja una auditoría
+    a medias se le avisa, y si se vence se le avisa también. Antes de esto el
+    campo expires_at existía pero no lo miraba nadie, así que una sesión trabada
+    quedaba viva hasta el siguiente redeploy.
+    """
+    try:
+        from audit_session import get_all_sessions, delete_session, save_session
+
+        sessions = get_all_sessions()
+        if not sessions:
+            return
+
+        meta_client = MetaClient()
+        now = datetime.now(timezone.utc)
+
+        for session in sessions:
+            try:
+                bloques_hechos = len(session.bloques)
+                sucursal = session.sucursal_id or "sin sucursal"
+
+                if session.is_expired():
+                    await meta_client.send_text(
+                        session.telefono,
+                        f"⏰ Cerré la auditoría de *{sucursal}* que quedó sin terminar "
+                        f"(llevaba {bloques_hechos} de 4 bloques).\n\n"
+                        "Cuando quieras arrancar de nuevo, escribí *auditoria*.",
+                    )
+                    delete_session(session.telefono)
+                    logger.info(f"Audit v2 session expired and closed: {session.id_sesion}")
+                    continue
+
+                if session.inactivity_notice_at:
+                    continue
+
+                last = _parse_utc(session.last_message_at)
+                if last is None:
+                    continue
+
+                if (now - last).total_seconds() < AUDIT_V2_INACTIVITY_HOURS * 3600:
+                    continue
+
+                await meta_client.send_text(
+                    session.telefono,
+                    f"👋 Tenés la auditoría de *{sucursal}* sin terminar "
+                    f"({bloques_hechos} de 4 bloques).\n\n"
+                    "Respondé para seguir donde quedaste, o escribí *cancelar* para descartarla.",
+                )
+                session.inactivity_notice_at = now.isoformat()
+                save_session(session)
+                logger.info(f"Audit v2 inactivity notice sent: {session.id_sesion}")
+
+            except Exception as exc:
+                logger.error(
+                    f"Error handling audit v2 session {session.id_sesion}: {exc}",
+                    exc_info=True,
+                )
+
+    except Exception as e:
+        logger.error(f"Error in check_expired_audit_sessions_v2: {e}", exc_info=True)
 
 
 async def check_expired_audit_sessions():

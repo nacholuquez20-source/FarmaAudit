@@ -67,6 +67,46 @@ NO_PROBLEMS_OPTION = {"id": "sin_problemas", "title": "✅ Sin problemas"}
 # list messages. Selecting it must prompt for free text, not save the id itself.
 CUSTOM_NOTE_OPTION_ID = "otro"
 
+# Sí/No se comparan por TOKEN EXACTO, nunca por subcadena. El matcheo por
+# subcadena hacía que "no sirve" confirmara la auditoría entera, porque "si"
+# está contenido en "sirve".
+_AFIRMATIVAS = {"si", "sí", "s", "yes", "confirmo", "confirmar", "enviar", "1"}
+_NEGATIVAS = {"no", "n", "nop", "editar", "corregir", "cambiar", "modificar", "2"}
+
+# Asentimientos que NO son contenido. Si el auditor escribe esto mientras se
+# recolecta evidencia no está reportando un problema, está acusando recibo.
+_ASENTIMIENTOS = {
+    "ok", "oka", "okey", "okay", "dale", "listo", "gracias", "bien",
+    "perfecto", "joya", "barbaro", "bárbaro", "dale gracias", "dale ok",
+}
+
+
+def _tokens(texto: str) -> set:
+    """Palabras normalizadas del mensaje, sin puntuación."""
+    limpio = "".join(c if (c.isalnum() or c.isspace()) else " " for c in texto.lower())
+    return set(limpio.split())
+
+
+def _es_negativo(texto: str) -> bool:
+    if "❌" in texto:
+        return True
+    return bool(_tokens(texto) & _NEGATIVAS)
+
+
+def _es_afirmativo(texto: str) -> bool:
+    # La negativa gana: "no, editar" no puede leerse como un sí.
+    if _es_negativo(texto):
+        return False
+    if "✅" in texto:
+        return True
+    return bool(_tokens(texto) & _AFIRMATIVAS)
+
+
+def _es_asentimiento(texto: str) -> bool:
+    """True si el mensaje es puro acuse de recibo y nada más."""
+    t = _tokens(texto)
+    return bool(t) and t <= _ASENTIMIENTOS
+
 
 SCORE_OPTIONS = [
     {"id": "1", "title": "Muy malo", "description": "Crítico, acción inmediata"},
@@ -344,8 +384,19 @@ class AuditConversationHandler:
                     delete_session(payload.telefono)
                     return "ficha_download_declined"
 
-                # Keyword fallback: ask for ficha explicitly
-                if any(word in texto for word in ["ficha", "pdf", "documento", "descargar"]):
+                # Salida explícita: sin esto una sesión en DONE quedaba viva
+                # para siempre y el auditor no podía arrancar otra auditoría.
+                if texto in {"cancelar", "salir", "cancel", "listo", "terminar"}:
+                    delete_session(payload.telefono)
+                    await meta_client.send_text(
+                        payload.telefono,
+                        "Listo, cerré la auditoría. Escribí *auditoria* cuando quieras arrancar otra."
+                    )
+                    return "audit_closed_by_user"
+
+                # Keyword de ficha, por token exacto: "no quiero la ficha"
+                # disparaba la descarga cuando se comparaba por subcadena.
+                if _tokens(texto) & {"ficha", "pdf", "documento", "descargar"} and not _es_negativo(texto):
                     return await AuditConversationHandler.generate_and_send_ficha(
                         payload, meta_client, session
                     )
@@ -353,7 +404,20 @@ class AuditConversationHandler:
                 # Check if user entered responsable name (when there are desvios)
                 if session.desvios_responsable is None:
                     if len(session.desvios) > 0:
-                        session.desvios_responsable = payload.contenido.strip()
+                        nombre = payload.contenido.strip()
+
+                        # Antes se guardaba cualquier cosa: así terminó un "Ch"
+                        # como responsable en audit_fiches. Se valida que
+                        # parezca un nombre y no un acuse de recibo.
+                        if len(nombre) < 3 or _es_asentimiento(texto) or nombre.isdigit():
+                            await meta_client.send_text(
+                                payload.telefono,
+                                "Necesito el *nombre* de la persona responsable de los desvíos "
+                                "(al menos 3 letras).\n\nEscribí 'cancelar' si preferís dejarlo para después."
+                            )
+                            return "invalid_responsable"
+
+                        session.desvios_responsable = nombre
 
                         # Now that we have the responsable, generate the ficha
                         reporte_id = session.pending_ficha_reporte_id
@@ -396,8 +460,20 @@ class AuditConversationHandler:
 
                         return "responsable_saved"
 
+            # Antes se caía acá en silencio y la sesión quedaba viva: el bot no
+            # contestaba nada y el auditor no tenía forma de salir del estado.
+            await meta_client.send_text(
+                payload.telefono,
+                "Esta auditoría ya está cerrada.\n\n"
+                "Escribí *ficha* si querés el PDF, *auditoria* para arrancar una nueva, "
+                "o *cancelar* para salir."
+            )
             return "audit_already_completed"
 
+        await meta_client.send_text(
+            payload.telefono,
+            "No entendí en qué punto quedamos. Escribí *cancelar* para empezar de cero."
+        )
         return "unknown_state"
 
     @staticmethod
@@ -834,14 +910,17 @@ class AuditConversationHandler:
         telefono: str,
         sucursales: list,
     ) -> None:
-        """Send sucursal picker for starting a new audit."""
-        PAGE = 10
-        chunk = sucursales[:PAGE]
+        """Send sucursal picker for starting a new audit.
 
-        if len(chunk) <= PAGE:
+        Las listas interactivas de WhatsApp topean en MAX_LIST_ROWS_TOTAL filas
+        EN TOTAL (no por sección), así que con ~25 sucursales no entran y
+        send_list_message directamente se niega a mandarlas. Cuando no entran va
+        texto numerado, que es el mismo criterio que ya usa el flujo v1.
+        """
+        if len(sucursales) <= MetaClient.MAX_LIST_ROWS_TOTAL:
             options = [
                 {"id": f"audit_suc_{i}", "title": s["nombre"][:24]}
-                for i, s in enumerate(chunk, 1)
+                for i, s in enumerate(sucursales, 1)
             ]
             sent = await meta_client.send_list_message(
                 telefono,
@@ -854,11 +933,11 @@ class AuditConversationHandler:
             if sent:
                 return
 
-        # Fallback: numbered text
         menu = "🏪 ¿En qué sucursal vas a auditar?\n\n"
         for i, s in enumerate(sucursales, 1):
             menu += f"{i}. {s['nombre']}\n"
-        menu += "\nResponde con el número, o 'cancelar' para salir."
+        menu += "\nRespondé con el número, o escribí parte del nombre."
+        menu += "\nEscribí 'cancelar' para salir."
         await meta_client.send_text(telefono, menu)
 
     @staticmethod
@@ -916,27 +995,70 @@ class AuditConversationHandler:
 
         sucursales = session.verification_menu
 
+        # Sin texto utilizable (sticker, ubicación, foto suelta) no se puede
+        # elegir nada. Antes esto arrancaba una auditoría sobre la primera
+        # sucursal de la lista, porque "" está contenido en cualquier nombre.
+        if not texto:
+            await meta_client.send_text(
+                telefono,
+                "Necesito que elijas una sucursal para arrancar.\n\n"
+                "Respondé con el número de la lista, o escribí parte del nombre."
+            )
+            await AuditConversationHandler._send_audit_sucursal_menu(
+                meta_client, telefono, sucursales
+            )
+            return "invalid_sucursal_selection"
+
         # Accept "audit_suc_N" (list button) or plain digit
         if texto.startswith("audit_suc_"):
             texto = texto.removeprefix("audit_suc_")
 
-        if texto.isdigit() and 1 <= int(texto) <= len(sucursales):
-            elegida = sucursales[int(texto) - 1]
-        else:
-            # Try partial name match
-            match = next(
-                (s for s in sucursales if texto in s["nombre"].lower()),
-                None,
-            )
-            if not match:
+        if texto.isdigit():
+            indice = int(texto)
+            if not 1 <= indice <= len(sucursales):
                 await meta_client.send_text(
-                    telefono, "⚠️ Elegí una sucursal de la lista, o escribí 'cancelar' para salir."
+                    telefono,
+                    f"⚠️ El número tiene que estar entre 1 y {len(sucursales)}."
                 )
                 await AuditConversationHandler._send_audit_sucursal_menu(
                     meta_client, telefono, sucursales
                 )
                 return "invalid_sucursal_selection"
-            elegida = match
+            elegida = sucursales[indice - 1]
+        else:
+            # Match por nombre. Se piden 3 letras mínimo para que una letra
+            # suelta no matchee media lista, y si hay varias coincidencias se
+            # muestran en vez de quedarse con la primera.
+            if len(texto) < 3:
+                await meta_client.send_text(
+                    telefono,
+                    "Escribí al menos 3 letras del nombre, o el número de la lista."
+                )
+                return "invalid_sucursal_selection"
+
+            coincidencias = [s for s in sucursales if texto in s["nombre"].lower()]
+
+            if not coincidencias:
+                await meta_client.send_text(
+                    telefono, "⚠️ No encontré esa sucursal. Elegí una de la lista, o escribí 'cancelar'."
+                )
+                await AuditConversationHandler._send_audit_sucursal_menu(
+                    meta_client, telefono, sucursales
+                )
+                return "invalid_sucursal_selection"
+
+            if len(coincidencias) > 1:
+                detalle = "\n".join(
+                    f"{sucursales.index(s) + 1}. {s['nombre']}" for s in coincidencias
+                )
+                await meta_client.send_text(
+                    telefono,
+                    f"Hay {len(coincidencias)} sucursales que coinciden:\n\n{detalle}\n\n"
+                    "Respondé con el número."
+                )
+                return "ambiguous_sucursal_selection"
+
+            elegida = coincidencias[0]
 
         # Commit the selected sucursal and start audit
         session.sucursal_id = elegida["id"]
@@ -1105,6 +1227,8 @@ class AuditConversationHandler:
             # description. Prompt for it and wait for the next message;
             # do NOT save the button id itself as the note.
             if raw_id == CUSTOM_NOTE_OPTION_ID:
+                session.awaiting_note_text = True
+                save_session(session)
                 await meta_client.send_text(
                     payload.telefono,
                     "Escribí tu descripción del problema:"
@@ -1117,7 +1241,20 @@ class AuditConversationHandler:
             template_match = next((t for t in templates if t.get("id") == raw_id), None)
             descripcion = template_match["title"] if template_match else raw_id
 
+            # Un "ok" o un "gracias" no es un desvío. Sólo se acepta como
+            # descripción si veníamos esperándola (botón "Escribir otro...") o
+            # si no es un simple acuse de recibo; si no, terminaba en la tabla
+            # `gestion` como un desvío real que nadie reportó.
+            if not session.awaiting_note_text and not template_match and _es_asentimiento(raw_id):
+                await meta_client.send_text(
+                    payload.telefono,
+                    f"👍 Anotado. ¿Algo más para {bloque_label}? "
+                    "(foto, audio, texto, o 'SIGUIENTE')"
+                )
+                return "acknowledgement_ignored"
+
             session.add_desvio(bloque=current_bloque, descripcion=descripcion)
+            session.awaiting_note_text = False
             save_session(session)
 
             await meta_client.send_text(
@@ -1128,25 +1265,12 @@ class AuditConversationHandler:
 
             return "note_saved"
 
-        # Check if user is selecting from predefined notes
-        if payload.tipo == "text":
-            texto_lower = payload.contenido.lower().strip()
-
-            # Check if message is asking for note templates
-            if any(word in texto_lower for word in ["problema", "nota", "problema", "template", "plantilla"]):
-                templates = NOTES_TEMPLATES.get(current_bloque, [])
-                if templates:
-                    await meta_client.send_list_message(
-                        payload.telefono,
-                        header=f"Problemas comunes en {bloque_label}",
-                        body=f"Selecciona un problema o escribe uno personalizado:\n\n{bloque_label}",
-                        footer="O envía 'SIGUIENTE' para continuar",
-                        button_text="Selecciona un problema",
-                        options=templates
-                    )
-                    return "showing_templates"
-
-        elif payload.tipo == "image":
+        # NOTA: acá había un bloque `if payload.tipo == "text"` que ofrecía las
+        # plantillas al escribir "problema". Era inalcanzable —el bloque de
+        # texto de más arriba retorna por todos sus caminos— así que la función
+        # nunca existió en la práctica y se eliminó. Las plantillas se siguen
+        # ofreciendo después de cada foto y cada audio, que es donde se usan.
+        if payload.tipo == "image":
             # Handle photo
             if not payload.media_id:
                 await meta_client.send_text(
@@ -1239,6 +1363,14 @@ class AuditConversationHandler:
 
                 return "audio_received"
 
+        # Documento, video, sticker, ubicación, contacto... Antes el bot se
+        # quedaba mudo y el auditor no sabía si había pasado algo.
+        await meta_client.send_text(
+            payload.telefono,
+            f"No puedo usar ese tipo de mensaje como evidencia de {bloque_label}.\n\n"
+            "Mandame una *foto*, un *audio*, o escribí el problema en texto. "
+            "Cuando termines con este punto, escribí 'SIGUIENTE'."
+        )
         return "unsupported_media"
 
     @staticmethod
@@ -1436,6 +1568,11 @@ class AuditConversationHandler:
                 )
                 return "photo_download_error"
 
+        await meta_client.send_text(
+            payload.telefono,
+            "No puedo usar ese tipo de mensaje como evidencia.\n\n"
+            "Mandame una *foto* o escribí el problema en texto."
+        )
         return "unsupported_media"
 
     @staticmethod
@@ -1560,8 +1697,9 @@ class AuditConversationHandler:
 
         texto = payload.contenido.lower().strip()
 
-        # Accept "si", "✅ sí, enviar", "1" or other affirmative words
-        if any(word in texto for word in ["sí", "si", "yes", "confirmo", "ok", "✅"]):
+        # Acepta "si", "✅ sí, enviar", "1". Por token exacto y chequeando la
+        # negativa primero: antes "no sirve" confirmaba la auditoría.
+        if _es_afirmativo(texto):
             # Save to DB
             try:
                 result = await save_audit_to_database(session, meta_client)
@@ -1643,7 +1781,7 @@ class AuditConversationHandler:
 
                 return "audit_saved"
 
-        elif any(word in texto for word in ["no", "editar", "cambiar", "modificar", "❌"]):
+        elif _es_negativo(texto):
             # Ask what to change
             await meta_client.send_text(
                 payload.telefono,

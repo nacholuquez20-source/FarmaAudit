@@ -1,11 +1,15 @@
 """Audit session state machine for WhatsApp perfumery audits."""
 
 from enum import Enum
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, fields
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 import json
+import logging
+import os
 import uuid
+
+logger = logging.getLogger(__name__)
 
 
 class AuditState(Enum):
@@ -139,6 +143,11 @@ class AuditSession:
     verification_only: bool = False
     verification_menu: List[Dict[str, Any]] = field(default_factory=list)
 
+    # True mientras se espera que el auditor escriba la descripción de una nota
+    # (lo activa el botón "Escribir otro..."). Sin esto no hay forma de
+    # distinguir una descripción real de un "ok" suelto.
+    awaiting_note_text: bool = False
+
     # Post-audit fields (persisted so they survive session reload between messages)
     pending_ficha_reporte_id: Optional[str] = None   # reporte_id deferred until responsable is known
     desvios_responsable: Optional[str] = None         # name of person responsible for desvíos
@@ -151,6 +160,9 @@ class AuditSession:
     expires_at: str = field(
         default_factory=lambda: (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
     )
+    # Cuándo se le avisó al auditor que tenía la auditoría parada. Sirve para no
+    # repetir el aviso en cada corrida del job.
+    inactivity_notice_at: Optional[str] = None
 
     def __post_init__(self):
         """Ensure brands dict has OFERTAS key."""
@@ -178,6 +190,7 @@ class AuditSession:
             'verified_persisten': self.verified_persisten,
             'verification_only': self.verification_only,
             'verification_menu': self.verification_menu,
+            'awaiting_note_text': self.awaiting_note_text,
             'pending_ficha_reporte_id': self.pending_ficha_reporte_id,
             'desvios_responsable': self.desvios_responsable,
             'ficha_url': self.ficha_url,
@@ -185,6 +198,7 @@ class AuditSession:
             'started_at': self.started_at,
             'last_message_at': self.last_message_at,
             'expires_at': self.expires_at,
+            'inactivity_notice_at': self.inactivity_notice_at,
         }
 
     @classmethod
@@ -200,6 +214,16 @@ class AuditSession:
         # Reconstruct desvios
         desvios_data = data.pop('desvios', [])
         desvios = [Desvio(**d) for d in desvios_data]
+
+        # Ahora que las sesiones se persisten, una fila escrita por una versión
+        # anterior del bot tiene que seguir siendo legible después de un deploy.
+        # Se descartan las claves que ya no existen en la dataclass en vez de
+        # reventar con TypeError y perder la auditoría en curso.
+        known = {f.name for f in fields(cls)}
+        extra = set(data) - known
+        if extra:
+            logger.warning(f"Sesion con campos desconocidos, se ignoran: {sorted(extra)}")
+            data = {k: v for k, v in data.items() if k in known}
 
         session = cls(**data)
         session.fotos = fotos
@@ -304,8 +328,94 @@ class AuditSession:
         return datetime.now(timezone.utc) > expires
 
 
-# Session storage: in-memory cache with Redis fallback
+# ---------------------------------------------------------------------------
+# Almacenamiento de sesiones
+#
+# Postgres (tabla `sesiones_whatsapp`, etapa-19) es la fuente de verdad; el dict
+# en memoria es sólo un cache para no ir a la base en cada mensaje.
+#
+# Si la base no está disponible el bot sigue funcionando SOLO en memoria: se
+# pierde la resistencia al redeploy, pero la conversación en curso no se corta.
+# Esa degradación es deliberada y es también lo que permite que la suite de
+# tests corra sin Supabase configurado.
+# ---------------------------------------------------------------------------
+
+_TABLE = "sesiones_whatsapp"
+
 _sessions_cache: Dict[str, AuditSession] = {}
+
+
+def _client():
+    """Cliente Supabase, o None si no está configurado o si corren los tests."""
+    # Bajo pytest no se toca la base. Las sesiones son estado efímero y la
+    # máquina de desarrollo tiene credenciales de producción en .env: una
+    # corrida de tests no tiene por qué escribir ahí.
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return None
+    try:
+        from supabase_manager import SupabaseManager
+        return SupabaseManager().client
+    except Exception as exc:
+        logger.error(f"Sesiones: sin cliente Supabase, se degrada a memoria ({exc})")
+        return None
+
+
+def _persist(session: AuditSession) -> None:
+    """Upsert de la sesión. Nunca propaga excepciones."""
+    client = _client()
+    if client is None:
+        return
+    try:
+        client.table(_TABLE).upsert(
+            {
+                "telefono": session.telefono,
+                "id_sesion": session.id_sesion,
+                "estado": session.estado.value,
+                "sucursal_id": session.sucursal_id or None,
+                "expires_at": session.expires_at,
+                "last_message_at": session.last_message_at,
+                "data": session.to_dict(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            on_conflict="telefono",
+        ).execute()
+    except Exception as exc:
+        logger.error(f"Sesiones: no se pudo guardar la de {session.telefono}: {exc}")
+
+
+def _load(telefono: str) -> Optional[AuditSession]:
+    """Rehidrata la sesión desde la base. None si no hay o si está corrupta."""
+    client = _client()
+    if client is None:
+        return None
+    try:
+        res = client.table(_TABLE).select("data").eq("telefono", telefono).limit(1).execute()
+    except Exception as exc:
+        logger.error(f"Sesiones: no se pudo leer la de {telefono}: {exc}")
+        return None
+
+    rows = res.data or []
+    if not rows:
+        return None
+
+    try:
+        return AuditSession.from_dict(rows[0]["data"])
+    except Exception as exc:
+        # Una fila ilegible bloquearía al auditor en cada mensaje: se descarta.
+        logger.error(f"Sesiones: fila corrupta para {telefono}, se descarta: {exc}")
+        _forget(telefono)
+        return None
+
+
+def _forget(telefono: str) -> None:
+    """Borra la fila. Nunca propaga excepciones."""
+    client = _client()
+    if client is None:
+        return
+    try:
+        client.table(_TABLE).delete().eq("telefono", telefono).execute()
+    except Exception as exc:
+        logger.error(f"Sesiones: no se pudo borrar la de {telefono}: {exc}")
 
 
 def create_session(telefono: str, sucursal_id: str, auditor_nombre: Optional[str] = None) -> AuditSession:
@@ -319,25 +429,57 @@ def create_session(telefono: str, sucursal_id: str, auditor_nombre: Optional[str
         started_at=datetime.now(timezone.utc).isoformat(),
     )
     _sessions_cache[telefono] = session
+    _persist(session)
     return session
 
 
 def get_session(telefono: str) -> Optional[AuditSession]:
-    """Get active session for phone number."""
-    return _sessions_cache.get(telefono)
+    """Get active session for phone number (memoria, si no la base)."""
+    session = _sessions_cache.get(telefono)
+
+    if session is None:
+        session = _load(telefono)
+        if session is not None:
+            _sessions_cache[telefono] = session
+            logger.info(f"Sesion de {telefono} recuperada desde la base ({session.estado.value})")
+
+    if session is not None and session.is_expired():
+        delete_session(telefono)
+        return None
+
+    return session
 
 
 def save_session(session: AuditSession) -> None:
-    """Save session to cache."""
+    """Save session to cache and database."""
     session.last_message_at = datetime.now(timezone.utc).isoformat()
     _sessions_cache[session.telefono] = session
+    _persist(session)
 
 
 def delete_session(telefono: str) -> None:
     """Delete session (after completion or timeout)."""
     _sessions_cache.pop(telefono, None)
+    _forget(telefono)
 
 
 def get_all_sessions() -> List[AuditSession]:
-    """Get all active sessions."""
-    return list(_sessions_cache.values())
+    """Todas las sesiones vivas. Lee de la base porque es lo que necesita el job
+    de expiración: el cache en memoria sólo tiene las de este proceso."""
+    client = _client()
+    if client is None:
+        return list(_sessions_cache.values())
+
+    try:
+        res = client.table(_TABLE).select("data").execute()
+    except Exception as exc:
+        logger.error(f"Sesiones: no se pudieron listar: {exc}")
+        return list(_sessions_cache.values())
+
+    sessions: List[AuditSession] = []
+    for row in res.data or []:
+        try:
+            sessions.append(AuditSession.from_dict(row["data"]))
+        except Exception as exc:
+            logger.error(f"Sesiones: fila ilegible al listar, se omite: {exc}")
+    return sessions
