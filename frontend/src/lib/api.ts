@@ -723,85 +723,6 @@ function resolveSemaforo(row: {
   return 'verde';
 }
 
-function getDemoData(): DashboardStats {
-  return {
-    total_reportes: 48,
-    total_desvios: 12,
-    gestiones_abiertas: 5,
-    gestiones_vencidas: 2,
-    gestiones_resueltas: 3,
-    gestiones_cerradas: 2,
-    tasa_cierre: 33,
-    sucursales_sin_auditoria: 0,
-    criticos_activos: 2,
-    criticos_vencidos: 1,
-    severidad: { alta: 3, media: 5, baja: 4 },
-    sucursales_estado: [
-      {
-        id_sucursal: 'demo-1',
-        sucursal: 'Sucursal Centro',
-        zona: 'Centro',
-        abiertos: 2,
-        vencidos: 1,
-        altas: 2,
-        criticos_activos: 1,
-        resueltos: 1,
-        cerrados: 1,
-        total: 5,
-        puntaje: 76,
-        semaforo: 'rojo',
-      },
-      {
-        id_sucursal: 'demo-2',
-        sucursal: 'Sucursal Norte',
-        zona: 'Norte',
-        abiertos: 2,
-        vencidos: 1,
-        altas: 1,
-        criticos_activos: 1,
-        resueltos: 1,
-        cerrados: 0,
-        total: 4,
-        puntaje: 64,
-        semaforo: 'rojo',
-      },
-      {
-        id_sucursal: 'demo-3',
-        sucursal: 'Sucursal Sur',
-        zona: 'Sur',
-        abiertos: 1,
-        vencidos: 0,
-        altas: 0,
-        criticos_activos: 0,
-        resueltos: 1,
-        cerrados: 1,
-        total: 3,
-        puntaje: 88,
-        semaforo: 'amarillo',
-      },
-    ],
-    ranking_sucursales: [
-      { id_sucursal: 'demo-1', sucursal: 'Sucursal Centro', abiertos: 2, vencidos: 1, altas: 2, criticos_activos: 1 },
-      { id_sucursal: 'demo-2', sucursal: 'Sucursal Norte', abiertos: 2, vencidos: 1, altas: 1, criticos_activos: 1 },
-    ],
-    tendencia_ultimos_30_dias: Array.from({ length: 30 }, (_, i) => {
-      const fecha = new Date();
-      fecha.setDate(fecha.getDate() - (29 - i));
-      return {
-        fecha: fecha.toISOString().split('T')[0],
-        total: Math.floor(Math.random() * 10) + 2,
-        cerrados: Math.floor(Math.random() * 5) + 1,
-      };
-    }),
-    por_zona: [
-      { zona: 'Centro', sucursales: 1, total_desvios: 5, abiertos: 2, vencidos: 1, criticos_activos: 1, puntaje_promedio: 76 },
-      { zona: 'Norte', sucursales: 1, total_desvios: 4, abiertos: 2, vencidos: 1, criticos_activos: 1, puntaje_promedio: 64 },
-      { zona: 'Sur', sucursales: 1, total_desvios: 3, abiertos: 1, vencidos: 0, criticos_activos: 0, puntaje_promedio: 88 },
-    ],
-    isDemoData: true,
-  };
-}
-
 export async function getDashboardStats(sucursalId?: string | null): Promise<DashboardStats> {
   try {
     let reportesQuery = supabase.from('reportes').select('*');
@@ -828,11 +749,6 @@ export async function getDashboardStats(sucursalId?: string | null): Promise<Das
     const reportes = reportesRes.data || [];
     const gestiones = gestionRes.data || [];
     const sucursalesRows = sucursalesRes.data || [];
-
-    // Return demo data if empty
-    if (reportes.length === 0 && gestiones.length === 0 && sucursalesRows.length === 0) {
-      return getDemoData();
-    }
 
     const zonaPorSucursal = new Map(sucursalesRows.map((s) => [s.id as string, (s.zona as string)?.trim() || 'Sin zona']));
     const nombrePorSucursal = new Map(sucursalesRows.map((s) => [s.id as string, String(s.nombre || '')]));
@@ -1040,33 +956,6 @@ export async function getDashboardStats(sucursalId?: string | null): Promise<Das
   }
 }
 
-export async function submitPerfumeriaAudit(payload: {
-  id_sesion: string;
-  sucursal_id: string;
-  sucursal_nombre: string;
-  auditor_nombre: string;
-  auditor_telefono: string;
-  bloques_scores: Array<{ id: string; nombre: string; puntuacion: number }>;
-  desvios: Array<{ id: string; bloque: string; descripcion: string; foto_url?: string | null }>;
-}): Promise<{ status: string; deviations_created: number }> {
-  const apiUrl = getBotApiUrl();
-  if (!apiUrl) {
-    throw new Error('Falta configurar VITE_API_URL con la URL del bot.');
-  }
-
-  const response = await fetch(`${apiUrl}/api/auditorias-completadas/perfumeria`, {
-    method: 'POST',
-    headers: await getAuthHeaders(),
-    body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
-    throw new Error(errorData.detail || 'No se pudo guardar la auditoría');
-  }
-
-  return response.json();
-}
 
 // ============ Modulo Campanias (ver ARQUITECTURA_DESVIOS_CAMPANIAS.md, Modulo 2) ============
 

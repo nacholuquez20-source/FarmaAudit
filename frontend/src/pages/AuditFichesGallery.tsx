@@ -20,8 +20,8 @@ interface Ficha {
   fecha_auditoria: string | null;
   created_at: string;
   url_pdf: string | null;
-  total_desvios: number;
-  total_fotos: number;
+  desvios_count: number;
+  fotos_count: number;
   puntuacion_promedio: number | null;
   score_limpieza: number | null;
   score_stock: number | null;
@@ -362,16 +362,16 @@ export default function AuditFichesGallery() {
                       <div className="mt-auto flex flex-wrap items-center gap-2">
                         <span
                           className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${
-                            ficha.total_desvios > 0
+                            ficha.desvios_count > 0
                               ? 'border-red-200 bg-red-50 text-red-700'
                               : 'border-green-200 bg-green-50 text-green-700'
                           }`}
                         >
-                          {ficha.total_desvios} desvio{ficha.total_desvios === 1 ? '' : 's'}
+                          {ficha.desvios_count} desvio{ficha.desvios_count === 1 ? '' : 's'}
                         </span>
                         <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs font-medium text-gray-600">
                           <Camera className="h-3 w-3" />
-                          {ficha.total_fotos}
+                          {ficha.fotos_count}
                         </span>
                         {ficha.url_pdf && (
                           <span className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-blue-600">
@@ -479,11 +479,11 @@ export default function AuditFichesGallery() {
 
               <div className="flex justify-between">
                 <span className="text-gray-500">Desvios</span>
-                <span className="font-medium text-red-600">{selected.total_desvios}</span>
+                <span className="font-medium text-red-600">{selected.desvios_count}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-500">Fotos</span>
-                <span className="font-medium text-gray-900">{selected.total_fotos}</span>
+                <span className="font-medium text-gray-900">{selected.fotos_count}</span>
               </div>
             </div>
 

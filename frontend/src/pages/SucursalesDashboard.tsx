@@ -18,7 +18,7 @@ import type { LucideIcon } from 'lucide-react';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { getSucursalesDashboard } from '../lib/api';
-import { whatsappLink } from '../lib/utils';
+import { whatsappAuditLink, whatsappLink } from '../lib/utils';
 import { useAuth } from '../hooks/useAuth';
 import type { EstadoSalud, SucursalDashboard } from '../types';
 
@@ -314,17 +314,16 @@ export default function SucursalesDashboard() {
                       </a>
                     )}
                     {canAudit && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigate(`/sucursales/${s.id}/auditoria`);
-                        }}
+                      <a
+                        href={whatsappAuditLink()}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
                         className="rounded-md p-1.5 text-primary-navy transition hover:bg-primary-navy/10"
-                        title="Iniciar auditoría"
+                        title="Auditar por WhatsApp"
                       >
                         <ClipboardCheck className="h-4 w-4" />
-                      </button>
+                      </a>
                     )}
                   </div>
                 </div>

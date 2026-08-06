@@ -20,7 +20,7 @@ import { useGestion } from '../hooks/useGestion';
 import { useReportes } from '../hooks/useReportes';
 import { getSucursal } from '../lib/api';
 import { supabase } from '../lib/supabase';
-import { diasDesde, esMesActual, formatDate, gestionStateLabel, severidadColor, whatsappLink } from '../lib/utils';
+import { diasDesde, esMesActual, formatDate, gestionStateLabel, severidadColor, whatsappAuditLink, whatsappLink } from '../lib/utils';
 import type { EstadoSalud, Sucursal, SucursalDetailTab } from '../types';
 
 interface AuditFiche {
@@ -33,8 +33,8 @@ interface AuditFiche {
   score_stock: number | null;
   score_ofertas: number | null;
   score_burbujas: number | null;
-  total_desvios: number;
-  total_fotos: number;
+  desvios_count: number;
+  fotos_count: number;
   puntuacion_promedio: number | null;
   url_pdf: string | null;
 }
@@ -237,13 +237,15 @@ export default function SucursalDetail() {
                 WhatsApp
               </a>
             )}
-            <button
-              onClick={() => navigate(`/sucursales/${sucursal.id}/auditoria`)}
+            <a
+              href={whatsappAuditLink()}
+              target="_blank"
+              rel="noopener noreferrer"
               className="inline-flex items-center gap-2 rounded-lg bg-primary-navy px-4 py-2 text-sm font-medium text-white transition hover:bg-primary-navy/90"
             >
               <ClipboardCheck className="h-4 w-4" />
-              Iniciar auditoría
-            </button>
+              Auditar por WhatsApp
+            </a>
           </div>
         </div>
       </div>
@@ -339,13 +341,13 @@ export default function SucursalDetail() {
                           resumen.dias === null
                             ? 'Sin auditorías registradas — programar la primera'
                             : `Última auditoría hace ${resumen.dias} días — programar`,
-                        onClick: () => navigate(`/sucursales/${sucursal.id}/auditoria`),
+                        onClick: () => window.open(whatsappAuditLink(), '_blank', 'noopener'),
                       });
                     if (sucursal.tiene_perfumeria && resumen.dias !== null && !resumen.auditadaEsteMes)
                       acciones.push({
                         tone: 'text-primary-orange bg-primary-orange/5 border-primary-orange/20',
                         text: 'Perfumería sin auditar este mes',
-                        onClick: () => navigate(`/sucursales/${sucursal.id}/auditoria`),
+                        onClick: () => window.open(whatsappAuditLink(), '_blank', 'noopener'),
                       });
 
                     if (acciones.length === 0)
@@ -572,14 +574,14 @@ export default function SucursalDetail() {
                         <td className={`px-6 py-4 text-sm ${scoreColor(ficha.score_ofertas)}`}>{ficha.score_ofertas != null ? `${ficha.score_ofertas}/5` : '—'}</td>
                         <td className={`px-6 py-4 text-sm ${scoreColor(ficha.score_burbujas)}`}>{ficha.score_burbujas != null ? `${ficha.score_burbujas}/5` : '—'}</td>
                         <td className="px-6 py-4 text-sm text-center font-semibold">
-                          <span className={ficha.total_desvios > 0 ? 'text-red-600' : 'text-green-600'}>
-                            {ficha.total_desvios}
+                          <span className={ficha.desvios_count > 0 ? 'text-red-600' : 'text-green-600'}>
+                            {ficha.desvios_count}
                           </span>
                         </td>
                         <td className="px-6 py-4 text-sm text-center">
                           <span className="inline-flex items-center gap-1 text-gray-500">
                             <Camera className="h-3.5 w-3.5" />
-                            {ficha.total_fotos}
+                            {ficha.fotos_count}
                           </span>
                         </td>
                         <td className="px-6 py-4 text-center">

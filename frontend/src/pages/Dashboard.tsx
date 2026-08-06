@@ -20,7 +20,7 @@ interface AuditKPIs {
     auditor_nombre: string | null;
     fecha_auditoria: string | null;
     puntuacion_promedio: number | null;
-    total_desvios: number;
+    desvios_count: number;
   }>;
 }
 
@@ -39,7 +39,7 @@ function useAuditKPIs(scopedSucursal: string | null) {
         const [sucursalesRes, fichesRes] = await Promise.all([
           supabase.from('sucursales').select('id, nombre'),
           (() => {
-            let q = supabase.from('audit_fiches').select('id, sucursal_id, auditor_nombre, fecha_auditoria, puntuacion_promedio, total_desvios');
+            let q = supabase.from('audit_fiches').select('id, sucursal_id, auditor_nombre, fecha_auditoria, puntuacion_promedio, desvios_count');
             if (scopedSucursal) q = q.eq('sucursal_id', scopedSucursal);
             return q.order('fecha_auditoria', { ascending: false }).limit(200);
           })(),
@@ -550,8 +550,8 @@ export default function Dashboard() {
                             ) : '—'}
                           </td>
                           <td className="px-3 py-3 text-center">
-                            <span className={f.total_desvios > 0 ? 'font-semibold text-red-600' : 'text-green-600'}>
-                              {f.total_desvios}
+                            <span className={f.desvios_count > 0 ? 'font-semibold text-red-600' : 'text-green-600'}>
+                              {f.desvios_count}
                             </span>
                           </td>
                         </tr>

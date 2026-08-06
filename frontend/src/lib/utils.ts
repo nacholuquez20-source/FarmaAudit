@@ -109,6 +109,17 @@ export function whatsappLink(tel: string | null | undefined, mensaje?: string): 
   return mensaje ? `${base}?text=${encodeURIComponent(mensaje)}` : base;
 }
 
+// Las auditorías se hacen por WhatsApp: este link abre el chat con el bot.
+// El texto tiene que ser EXACTAMENTE el disparador que el bot espera —
+// router.py compara por igualdad contra V2_TRIGGERS, no por substring—, así que
+// no se le puede agregar la sucursal. El bot la pide en el paso siguiente.
+export const AUDIT_TRIGGER = 'auditoria';
+
+export function whatsappAuditLink(): string {
+  const bot = import.meta.env.VITE_WHATSAPP_PHONE || '5493816199195';
+  return `https://wa.me/${bot}?text=${encodeURIComponent(AUDIT_TRIGGER)}`;
+}
+
 // Diferencia en días CALENDARIO usando la hora local del navegador
 // (Argentina), no UTC — así "hace X días" coincide con la percepción real
 // y con la vista SQL cuando esta usa la misma zona horaria.

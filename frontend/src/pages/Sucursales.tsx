@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { whatsappAuditLink } from '../lib/utils';
 import { ClipboardCheck } from 'lucide-react';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
@@ -250,14 +251,15 @@ export default function Sucursales() {
                     <td className="px-4 py-3 text-right align-top">
                       <div className="flex items-center justify-end gap-2">
                         {canAudit && (
-                          <button
-                            type="button"
-                            onClick={() => navigate(`/sucursales/${sucursal.id}/auditoria`)}
+                          <a
+                            href={whatsappAuditLink()}
+                            target="_blank"
+                            rel="noopener noreferrer"
                             className="flex items-center gap-1.5 rounded-md bg-primary-navy px-3 py-2 text-sm font-medium text-white transition hover:bg-primary-navy/90"
                           >
                             <ClipboardCheck className="h-3.5 w-3.5" />
                             Auditar
-                          </button>
+                          </a>
                         )}
                         <button
                           type="button"
@@ -334,14 +336,15 @@ export default function Sucursales() {
 
               <div className="mt-4 flex justify-end gap-2">
                 {canAudit && (
-                  <button
-                    type="button"
-                    onClick={() => navigate(`/sucursales/${sucursal.id}/auditoria`)}
+                  <a
+                    href={whatsappAuditLink()}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="flex items-center gap-1.5 rounded-md bg-primary-navy px-3 py-2 text-sm font-medium text-white transition hover:bg-primary-navy/90"
                   >
                     <ClipboardCheck className="h-3.5 w-3.5" />
                     Auditar
-                  </button>
+                  </a>
                 )}
                 <button
                   type="button"

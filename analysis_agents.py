@@ -104,7 +104,8 @@ class AuditAnalysisOrchestrator:
         if ficha.get("sucursal_id"):
             h_resp = (
                 db.client.table("audit_fiches")
-                .select("fecha_auditoria,puntuacion_promedio,score_limpieza,score_stock,score_ofertas,score_burbujas,total_desvios")
+                # audit_fiches no guarda scores por bloque: solo el promedio.
+                .select("fecha_auditoria,puntuacion_promedio,desvios_count")
                 .eq("sucursal_id", ficha["sucursal_id"])
                 .neq("id", ficha_id)
                 .order("fecha_auditoria", desc=True)
@@ -135,12 +136,8 @@ Respondé EXCLUSIVAMENTE con JSON válido, sin markdown ni texto extra:
             f"Sucursal: {ficha.get('sucursal_id')} | Auditor: {ficha.get('auditor_nombre')} | "
             f"Fecha: {ficha.get('fecha_auditoria')}\n\n"
             f"SCORES\n"
-            f"Promedio: {ficha.get('puntuacion_promedio')}/5 | "
-            f"Limpieza: {ficha.get('score_limpieza')} | "
-            f"Stock: {ficha.get('score_stock')} | "
-            f"Ofertas: {ficha.get('score_ofertas')} | "
-            f"Burbujas: {ficha.get('score_burbujas')}\n\n"
-            f"EVIDENCIA\nDesvíos: {ficha.get('total_desvios')} | Fotos: {ficha.get('total_fotos')}\n\n"
+            f"Promedio: {ficha.get('puntuacion_promedio')}/5\n\n"
+            f"EVIDENCIA\nDesvíos: {ficha.get('desvios_count')} | Fotos: {ficha.get('fotos_count')}\n\n"
             f"DESVÍOS ENCONTRADOS\n{json.dumps(gestiones[:20], ensure_ascii=False)}"
         )
         return await self._call(self._SYS_CAMPO, user)
@@ -166,21 +163,13 @@ Respondé EXCLUSIVAMENTE con JSON válido, sin markdown ni texto extra:
             return {
                 "fecha": h.get("fecha_auditoria"),
                 "promedio": h.get("puntuacion_promedio"),
-                "limpieza": h.get("score_limpieza"),
-                "stock": h.get("score_stock"),
-                "ofertas": h.get("score_ofertas"),
-                "burbujas": h.get("score_burbujas"),
-                "desvios": h.get("total_desvios"),
+                "desvios": h.get("desvios_count"),
             }
 
         user = (
             f"AUDITORÍA ACTUAL\n"
             f"Score promedio: {ficha.get('puntuacion_promedio')} | "
-            f"Limpieza: {ficha.get('score_limpieza')} | "
-            f"Stock: {ficha.get('score_stock')} | "
-            f"Ofertas: {ficha.get('score_ofertas')} | "
-            f"Burbujas: {ficha.get('score_burbujas')} | "
-            f"Desvíos: {ficha.get('total_desvios')}\n\n"
+            f"Desvíos: {ficha.get('desvios_count')}\n\n"
             f"HISTORIAL (más reciente primero)\n"
             f"{json.dumps([fmt(h) for h in historico], ensure_ascii=False)}"
         )
@@ -267,7 +256,7 @@ Respondé EXCLUSIVAMENTE con JSON válido, sin markdown ni texto extra:
         user = (
             f"AUDITORÍA\n"
             f"Score promedio: {ficha.get('puntuacion_promedio')}/5 | "
-            f"Desvíos totales: {ficha.get('total_desvios')} "
+            f"Desvíos totales: {ficha.get('desvios_count')} "
             f"(Alta: {alta} | Media: {media} | Baja: {baja})\n\n"
             f"DESVÍOS:\n{json.dumps(gestiones[:20], ensure_ascii=False)}\n\n"
             f"Evaluá impacto en ventas y ROI de correcciones para una farmacia mediana argentina."

@@ -15,7 +15,6 @@ const MisDesvios = lazy(() => import('./pages/MisDesvios'));
 const Sucursales = lazy(() => import('./pages/Sucursales'));
 const SucursalesDashboard = lazy(() => import('./pages/SucursalesDashboard'));
 const SucursalDetail = lazy(() => import('./pages/SucursalDetail'));
-const AuditPerfumeriaV2 = lazy(() => import('./pages/AuditPerfumeriaV2'));
 const AuditFichesGallery = lazy(() => import('./pages/AuditFichesGallery'));
 const Admin = lazy(() => import('./pages/Admin'));
 const Campanias = lazy(() => import('./pages/Campanias'));
@@ -249,15 +248,6 @@ export default function App() {
             element={
               <ProtectedRoute allowRoles={['admin', 'auditor']}>
                 <AuditFichesGallery />
-              </ProtectedRoute>
-            }
-          />
-
-          <Route
-            path="/sucursales/:id/auditoria"
-            element={
-              <ProtectedRoute allowRoles={['auditor', 'admin']}>
-                <AuditPerfumeriaV2 />
               </ProtectedRoute>
             }
           />
