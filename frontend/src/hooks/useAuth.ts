@@ -167,10 +167,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      // A tab regaining focus triggers a silent TOKEN_REFRESHED for the
-      // same user; re-running applyUser would flash the profile-loading
-      // gate again for no reason. Only reload when the user actually changes.
-      if (event === 'TOKEN_REFRESHED' && (session?.user?.id ?? null) === currentUserIdRef.current) {
+      // A tab regaining focus makes Supabase re-emit an auth event (TOKEN_REFRESHED,
+      // sometimes a repeat SIGNED_IN) for the session that was already active.
+      // Re-running applyUser for those would flash the profile-loading gate again
+      // for no reason. Only reload profile/role when the user actually changes.
+      const nextUserId = session?.user?.id ?? null;
+      if (nextUserId !== null && nextUserId === currentUserIdRef.current) {
         setUser(session?.user ?? null);
         return;
       }
