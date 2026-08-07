@@ -1245,7 +1245,7 @@ async def check_incomplete_respuestas_timeout():
 AUDIT_V2_INACTIVITY_HOURS = 2
 
 
-def _parse_utc(value: str) -> Optional[datetime]:
+def _parse_utc(value: str) -> datetime | None:
     """ISO -> datetime aware en UTC. None si no se puede parsear."""
     try:
         parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
