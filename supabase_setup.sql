@@ -181,14 +181,28 @@ create policy "control_stock_auditor_read" on control_stock for select using (
   exists (select 1 from profiles where id = auth.uid() and role = 'auditor' and telefono = control_stock.auditor)
 );
 
--- Profiles: Users can read own profile, admins can read all
+-- Profiles: Users can read own profile, admins can read all.
+-- Admin checks go through is_admin() (SECURITY DEFINER, bypasses RLS
+-- internally) instead of a plain subquery on profiles, because a
+-- profiles-select-policy that itself selects from profiles causes
+-- Postgres to detect infinite recursion on the table. See etapa-20.
+create or replace function public.is_admin()
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from profiles where id = auth.uid() and role = 'admin'
+  );
+$$;
+
+grant execute on function public.is_admin() to authenticated;
+
 create policy "profiles_own_read" on profiles for select using (auth.uid() = id);
-create policy "profiles_admin_read" on profiles for select using (
-  exists (select 1 from profiles where id = auth.uid() and role = 'admin')
-);
-create policy "profiles_admin_update" on profiles for update using (
-  exists (select 1 from profiles where id = auth.uid() and role = 'admin')
-);
+create policy "profiles_admin_read" on profiles for select using (is_admin());
+create policy "profiles_admin_update" on profiles for update using (is_admin());
 
 -- Prevent role escalation: role field can only be changed by admins
 create policy "profiles_role_protected" on profiles for update

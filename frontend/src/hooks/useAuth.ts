@@ -107,12 +107,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const initializedRef = useRef(false);
+  const currentUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
     const applyUser = async (sessionUser: User | null) => {
       if (cancelled) return;
+      currentUserIdRef.current = sessionUser?.id ?? null;
 
       if (!sessionUser) {
         if (import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEV_BYPASS === 'true') {
@@ -162,6 +164,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (event === 'INITIAL_SESSION') {
         await finishInit(session?.user ?? null);
+        return;
+      }
+
+      // A tab regaining focus triggers a silent TOKEN_REFRESHED for the
+      // same user; re-running applyUser would flash the profile-loading
+      // gate again for no reason. Only reload when the user actually changes.
+      if (event === 'TOKEN_REFRESHED' && (session?.user?.id ?? null) === currentUserIdRef.current) {
+        setUser(session?.user ?? null);
         return;
       }
 
