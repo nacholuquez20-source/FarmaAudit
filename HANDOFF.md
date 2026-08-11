@@ -26,14 +26,36 @@ El otro norte de esta etapa fue **coherencia y confiabilidad, no features**. El 
    - De paso, verificá si **`campana_nueva_sucursal`** llegó a aprobarse alguna vez. El código la usa
      (`main.py:745`) y loguea *"probablemente el template no está aprobado aún"* cuando falla. Si esa nunca
      pasó, el trámite de plantillas es una incógnita más grande de lo que parece.
-2. **Verificación manual pendiente en el navegador.** La última sesión reestructuró la carga de datos de
-   varias páginas para dejar el lint en cero. Compila y buildea, pero **no se probó en el navegador**:
-   abrí `/campanias`, `/mis-campanias`, `/desvios` y el detalle de una sucursal antes de construir encima.
+2. ~~Verificación manual pendiente en el navegador.~~ **Hecha 2026-08-11.** `/campanias`, `/mis-campanias`,
+   `/desvios` y detalle de sucursal andan bien en navegación normal (SPA). Se encontró y arregló un bug real:
+   ver "Sesión no sobrevivía una recarga dura" más abajo.
 3. **`META_APP_SECRET` en Railway.** Sin esa variable el webhook acepta mensajes **sin verificar la firma de
    Meta**, o sea que cualquiera que conozca la URL puede inyectar mensajes falsos al bot. El backend lo avisa
    por log al arrancar. Con WhatsApp como único canal, es el agujero más serio que queda abierto.
 4. **`etapa-16-campania-sucursal-rls.sql`** sigue sin correr. Sin ella, `/mis-campanias` devuelve 0 filas para
    el rol `sucursal` por RLS. Solo importa si vas a tocar campañas.
+
+---
+
+## Qué se hizo en la etapa 2026-08-11 (verificación en navegador)
+
+**Sesión no sobrevivía una recarga dura** (`1be5607`) — con login real (no dev bypass), cualquier F5, URL
+directa o pestaña nueva colgaba 15-20s en "Verificando sesión..." → "Cargando perfil..." y terminaba en "No se
+pudo cargar tu perfil", en **todas** las rutas protegidas. 100% reproducible con tests espaciados.
+
+Causa: `main.tsx` usa `<StrictMode>`, que en dev invoca los effects de `useAuth` dos veces. Cada invocación
+llama `getSession()`, serializado por defecto vía Web Locks API (`navigatorLock` de supabase-js) con su propio
+ciclo de acquire/steal-timeout de 5s. La duplicación acumulaba más de los 15s de `PROFILE_LOAD_TIMEOUT_MS`.
+
+Fix en `frontend/src/lib/supabase.ts`: `lock: processLock` en vez de `navigatorLock` — lock en memoria del
+mismo proceso, sin la sobrecarga de Web Locks. Este panel no necesita coordinar sesión entre pestañas.
+Verificado con 3 corridas limpias antes/después: fallaba consistentemente a los 15s sin el fix, carga en <5s
+con él.
+
+**Pendiente relacionado, no tocado**: `loadProfileWithRetry` en `useAuth.ts` no reintenta cuando gana la
+carrera el timeout interno (`Promise.race` resuelve `null` sin lanzar, así que `MAX_PROFILE_RETRIES` no se
+ejecuta en ese path). Con el fix de arriba no debería activarse en la práctica, pero es un gap real si vuelve
+a aparecer latencia.
 
 ---
 
