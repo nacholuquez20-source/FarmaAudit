@@ -57,6 +57,25 @@ carrera el timeout interno (`Promise.race` resuelve `null` sin lanzar, así que 
 ejecuta en ese path). Con el fix de arriba no debería activarse en la práctica, pero es un gap real si vuelve
 a aparecer latencia.
 
+**Bloque 2 del panel de desvíos — ficha como contenedor** (`1987001`)
+
+- `gestion.ficha_id → audit_fiches(id)` (`etapa-22-gestion-ficha-id.sql`, **ya corrida**). Se puebla en
+  `audit_fiches_manager.generate_and_save_ficha` justo después de crear la ficha — no por heurística. Las
+  gestiones históricas quedan en `null` a propósito, sin backfill.
+- `save_audit_to_database` (`audit_database.py`) devolvía solo el primer `gestion_id` de la sesión y
+  descartaba el resto; ahora devuelve todos, y `audit_handlers.py` los guarda en
+  `session.pending_ficha_gestion_ids` para que la ficha los linkee al crearse.
+- `DesvioDetail` muestra de qué auditoría salió el desvío (o "Auditoría no vinculada"); el modal de una ficha
+  en `/auditorias` muestra sus desvíos con progreso "X de Y resueltos" y linkea a cada uno. Soporta deep-link
+  `/auditorias?ficha=<id>`.
+- De paso, `analysis_agents.py` dejó de adivinar las gestiones de una ficha por fecha+sucursal (la heurística
+  que este mismo bloque vino a evitar) y usa `ficha_id` directo, con la heurística vieja como fallback solo
+  para fichas históricas sin el campo poblado.
+- Verificado en navegador: el caso sin ficha vinculada renderiza bien. El caso **con** ficha vinculada no se
+  pudo probar visualmente esta sesión — no hay todavía ninguna gestión real con `ficha_id` poblado (recién se
+  puebla en la próxima auditoría completa por WhatsApp) y escribir un valor de prueba directo en producción
+  quedó bloqueado por el sandbox. Vale la pena confirmarlo en la próxima auditoría de punta a punta.
+
 ---
 
 ## Qué se hizo en la etapa 2026-08-10/11
@@ -134,13 +153,13 @@ plazo fijo de 7 días, e insertaba un teléfono en `desvio_eventos.actor_id`, qu
 **Documento vinculante: [`ARQUITECTURA_PANEL_DESVIOS.md`](ARQUITECTURA_PANEL_DESVIOS.md).** Tiene el diseño
 completo, los hallazgos verificados que lo motivaron, y las cuatro decisiones ya tomadas (no se re-discuten).
 
-Cuatro bloques. **El 1 está hecho**; los otros tres son lo que sigue:
+Cuatro bloques. **El 1 y el 2 están hechos**; quedan dos:
 
 | # | Bloque | Estado | Depende de |
 |---|---|---|---|
 | **0** | Plantilla `farmaaudit_novedades` en Meta | ⏳ **enviada a revisión 2026-08-11** | Meta |
 | **1** | Bandejas por turno en `/desvios` | ✅ hecho | — |
-| **2** | Ficha como contenedor (FK `gestion.ficha_id` + navegación en ambos sentidos) | ⬜ pendiente | — |
+| **2** | Ficha como contenedor (FK `gestion.ficha_id` + navegación en ambos sentidos) | ✅ **hecho 2026-08-11** (`1987001`) | — |
 | **3** | `usuarios_whatsapp.ultimo_mensaje_entrante_at` + teléfono resuelto en vivo + estado de entrega visible | ⬜ pendiente | — |
 | **4** | Chat del panel → WhatsApp; reemplazar el `send_text` roto del job de recordatorio | ⬜ pendiente | 0, 3 |
 
