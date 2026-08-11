@@ -271,7 +271,18 @@ export interface UsuarioWhatsapp {
   created_at: string;
   /** Presente solo para rol='auditor'; join contra usuario_tipos_auditoria. */
   tipos_auditoria?: string[];
+  /** Ultimo mensaje entrante de este telefono (etapa-23); determina si la ventana de 24h de Meta esta abierta. */
+  ultimo_mensaje_entrante_at?: string | null;
 }
+
+// Resolucion en vivo del responsable_sucursal activo de una gestion, contra
+// usuarios_whatsapp (etapa-23). Ver GET /api/gestion/{id}/responsable-activo.
+export interface ResponsableActivo {
+  responsable: { nombre: string; telefono: string } | null;
+  ventana_abierta: boolean;
+}
+
+export type DesvioEntregaEstado = 'enviado' | 'fallido' | 'sin_ventana';
 
 export interface CreateUsuarioWhatsappInput {
   telefono: string;

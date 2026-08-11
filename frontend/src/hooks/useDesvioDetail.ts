@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { createDesvioEvento, getDesvioEventos, getFichaById, getGestionById, getReporte, updateGestion } from '../lib/api';
-import type { AuditFicha, CreateDesvioEventoInput, DesvioEvento, Gestion, GestionState, Reporte } from '../types';
+import { createDesvioEvento, getDesvioEventos, getFichaById, getGestionById, getReporte, getResponsableActivo, updateGestion } from '../lib/api';
+import type { AuditFicha, CreateDesvioEventoInput, DesvioEvento, Gestion, GestionState, Reporte, ResponsableActivo } from '../types';
 
 function getInitialEvent(gestion: Gestion): DesvioEvento {
   return {
@@ -19,6 +19,7 @@ export function useDesvioDetail(id?: string) {
   const [gestion, setGestion] = useState<Gestion | null>(null);
   const [reporte, setReporte] = useState<Reporte | null>(null);
   const [ficha, setFicha] = useState<AuditFicha | null>(null);
+  const [responsableActivo, setResponsableActivo] = useState<ResponsableActivo | null>(null);
   const [eventos, setEventos] = useState<DesvioEvento[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -45,14 +46,18 @@ export function useDesvioDetail(id?: string) {
             setGestion(null);
             setReporte(null);
             setFicha(null);
+            setResponsableActivo(null);
             setEventos([]);
           }
           return;
         }
 
-        const [reporteData, fichaData, eventosData] = await Promise.all([
+        const [reporteData, fichaData, responsableData, eventosData] = await Promise.all([
           gestionData.id_reporte ? getReporte(gestionData.id_reporte) : Promise.resolve(null),
           gestionData.ficha_id ? getFichaById(gestionData.ficha_id) : Promise.resolve(null),
+          // Un fallo acá no debe tapar el resto del detalle: degrada a "sin
+          // responsable activo", que ya es un estado que la UI sabe mostrar.
+          getResponsableActivo(gestionData.id_gestion).catch(() => ({ responsable: null, ventana_abierta: false })),
           getDesvioEventos(gestionData.id_gestion),
         ]);
 
@@ -60,6 +65,7 @@ export function useDesvioDetail(id?: string) {
           setGestion(gestionData);
           setReporte(reporteData);
           setFicha(fichaData);
+          setResponsableActivo(responsableData);
           setEventos(eventosData);
           setEventsReady(true);
         }
@@ -113,6 +119,7 @@ export function useDesvioDetail(id?: string) {
     gestion,
     reporte,
     ficha,
+    responsableActivo,
     eventos: timeline,
     loading,
     error,

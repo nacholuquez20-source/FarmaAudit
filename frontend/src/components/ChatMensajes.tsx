@@ -3,7 +3,7 @@ import { Send, Loader2 } from 'lucide-react';
 import { FeedbackState } from './FeedbackState';
 import { useMensajesInternos } from '../hooks/useMensajesInternos';
 import { formatDateTime } from '../lib/utils';
-import type { DesvioEvento, DesvioOrigen } from '../types';
+import type { DesvioEntregaEstado, DesvioEvento, DesvioOrigen } from '../types';
 
 interface ChatMensajesProps {
   idGestion: string;
@@ -23,6 +23,21 @@ function getInitials(name: string | null | undefined): string {
 
 function getAvatarColor(origen: DesvioOrigen): string {
   return origen === 'sucursal' ? 'bg-blue-500' : 'bg-green-500';
+}
+
+const ENTREGA_LABELS: Record<DesvioEntregaEstado, { label: string; className: string }> = {
+  enviado: { label: 'Enviado', className: 'bg-green-100 text-green-700' },
+  fallido: { label: 'Fallido', className: 'bg-red-100 text-red-700' },
+  sin_ventana: { label: 'Sin ventana', className: 'bg-gray-200 text-gray-600' },
+};
+
+// Capacidad muerta hasta que el bloque de mensajeria empiece a escribir
+// metadata.entrega al enviar (ARQUITECTURA_PANEL_DESVIOS.md §4.3): hoy ningun
+// mensaje real tiene este campo, asi que esto nunca renderiza en produccion.
+function EntregaBadge({ entrega }: { entrega: DesvioEntregaEstado }) {
+  const info = ENTREGA_LABELS[entrega];
+  if (!info) return null;
+  return <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${info.className}`}>{info.label}</span>;
 }
 
 export function ChatMensajes({ idGestion, eventos, onSent }: ChatMensajesProps) {
@@ -71,6 +86,9 @@ export function ChatMensajes({ idGestion, eventos, onSent }: ChatMensajesProps) 
                       {mensaje.actor_nombre || (fromSucursal ? 'Sucursal' : 'Auditoria')}
                     </span>
                     <span className="text-gray-500">{formatDateTime(mensaje.created_at)}</span>
+                    {!fromSucursal && typeof mensaje.metadata?.entrega === 'string' && (
+                      <EntregaBadge entrega={mensaje.metadata.entrega as DesvioEntregaEstado} />
+                    )}
                   </div>
                   <div
                     className={`mt-1 max-w-[90%] rounded-lg px-4 py-3 text-sm shadow-sm ${

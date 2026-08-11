@@ -35,7 +35,7 @@ function getDueState(gestion: Gestion): { label: string; className: string } {
 export default function DesvioDetail() {
   const { id } = useParams<{ id: string }>();
   const { user, profile, role } = useAuth();
-  const { gestion, reporte, ficha, eventos, loading, error, eventsReady, reload, addEvento, updateEstado } = useDesvioDetail(id);
+  const { gestion, reporte, ficha, responsableActivo, eventos, loading, error, eventsReady, reload, addEvento, updateEstado } = useDesvioDetail(id);
   const [actionError, setActionError] = useState('');
   const [actionMessage, setActionMessage] = useState('');
   const [contacting, setContacting] = useState(false);
@@ -46,7 +46,12 @@ export default function DesvioDetail() {
   const [evidenceUrl, setEvidenceUrl] = useState('');
   const [resolvedReporteFotoUrl, setResolvedReporteFotoUrl] = useState('');
 
-  const whatsappUrl = useMemo(() => (gestion ? getWhatsappUrl(gestion) : null), [gestion]);
+  const telefonoActivo = responsableActivo?.responsable?.telefono ?? '';
+  const nombreActivo = responsableActivo?.responsable?.nombre ?? '';
+  const whatsappUrl = useMemo(
+    () => (gestion ? getWhatsappUrl(gestion, telefonoActivo, nombreActivo) : null),
+    [gestion, telefonoActivo, nombreActivo]
+  );
   const hasResolution = useMemo(
     () => eventos.some((evento) => evento.tipo === 'respuesta' || evento.tipo === 'evidencia'),
     [eventos]
@@ -105,10 +110,10 @@ export default function DesvioDetail() {
       await addTimelineEvent({
         id_gestion: gestion.id_gestion,
         tipo: 'contacto',
-        comentario: `Contacto enviado a ${gestion.responsable || 'responsable'} por WhatsApp.`,
+        comentario: `Contacto enviado a ${nombreActivo || 'responsable'} por WhatsApp.`,
         metadata: {
           canal: 'whatsapp',
-          telefono: gestion.tel_responsable,
+          telefono: telefonoActivo,
         },
       });
     } catch (err) {
@@ -129,7 +134,7 @@ export default function DesvioDetail() {
     try {
       await notificarEncargado({
         idGestion: gestion.id_gestion,
-        telefonoEncargado: gestion.tel_responsable,
+        telefonoEncargado: telefonoActivo,
         descripcionDesvio: gestion.desvio,
         sucursal: gestion.sucursal,
       });
@@ -140,7 +145,7 @@ export default function DesvioDetail() {
           comentario: `Encargado notificado por WhatsApp desde el bot.`,
           metadata: {
             canal: 'whatsapp_bot',
-            telefono: gestion.tel_responsable,
+            telefono: telefonoActivo,
           },
         });
       } catch (timelineError) {
@@ -301,6 +306,7 @@ export default function DesvioDetail() {
         role={role}
         gestion={gestion}
         whatsappUrl={whatsappUrl}
+        hasResponsableActivo={Boolean(responsableActivo?.responsable)}
         contacting={contacting}
         notifying={notifying}
         onContact={handleContact}
@@ -324,7 +330,7 @@ export default function DesvioDetail() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <DesvioInfoCard gestion={gestion} reporte={reporte} ficha={ficha} dueState={dueState} />
 
-        <DesvioResponsibleCard gestion={gestion} />
+        <DesvioResponsibleCard gestion={gestion} responsableActivo={responsableActivo} />
 
         {canManageEstado && (
           <DesvioResolutionPanel

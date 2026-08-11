@@ -1,11 +1,14 @@
 import type { Severidad, GestionState, Gestion } from '../types';
 
-export function getWhatsappUrl(gestion: Gestion): string | null {
-  const phone = gestion.tel_responsable.replace(/\D/g, '');
+// El telefono/nombre se resuelven en vivo contra usuarios_whatsapp (ver
+// getResponsableActivo en api.ts) — nunca desde gestion.tel_responsable, que
+// es una foto congelada al crear el desvio (ARQUITECTURA_PANEL_DESVIOS.md §4.4).
+export function getWhatsappUrl(gestion: Gestion, telefono: string, nombre: string): string | null {
+  const phone = telefono.replace(/\D/g, '');
   if (!phone) return null;
 
   const message = [
-    `Hola ${gestion.responsable || ''}`.trim(),
+    `Hola ${nombre || ''}`.trim(),
     `Te contactamos por un desvio registrado en ${gestion.sucursal}.`,
     `Detalle: ${gestion.desvio}`,
     `Severidad: ${gestion.severidad}`,

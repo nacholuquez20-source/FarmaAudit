@@ -5,6 +5,7 @@ interface DesvioHeaderActionsProps {
   role: Role | null;
   gestion: Gestion;
   whatsappUrl: string | null;
+  hasResponsableActivo: boolean;
   contacting: boolean;
   notifying: boolean;
   onContact: () => void;
@@ -15,6 +16,7 @@ export function DesvioHeaderActions({
   role,
   gestion,
   whatsappUrl,
+  hasResponsableActivo,
   contacting,
   notifying,
   onContact,
@@ -45,7 +47,7 @@ export function DesvioHeaderActions({
             <button
               type="button"
               onClick={onNotify}
-              disabled={!gestion.tel_responsable || notifying || gestion.estado === 'Cerrada'}
+              disabled={!hasResponsableActivo || notifying || gestion.estado === 'Cerrada'}
               className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300 disabled:text-gray-600"
             >
               {notifying ? 'Notificando...' : 'Notificar encargado'}

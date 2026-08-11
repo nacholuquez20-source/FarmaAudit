@@ -12,6 +12,7 @@ import {
   createDesvioEvento,
   revisarGestion,
   getNotificaciones,
+  getResponsableActivo,
 } from '../lib/api';
 import { formatDate, formatDateTime, gestionStateLabel, getWhatsappUrl, timeSince } from '../lib/utils';
 import { useAuth } from '../hooks/useAuth';
@@ -922,10 +923,19 @@ export function DesviosGestionPanel({
     }
   };
 
-  const handleWhatsapp = (desvio: Gestion) => {
-    const url = getWhatsappUrl(desvio);
+  const handleWhatsapp = async (desvio: Gestion) => {
+    let telefono = '';
+    let nombre = '';
+    try {
+      const responsableActivo = await getResponsableActivo(desvio.id_gestion);
+      telefono = responsableActivo.responsable?.telefono ?? '';
+      nombre = responsableActivo.responsable?.nombre ?? '';
+    } catch {
+      // getWhatsappUrl abajo maneja el telefono vacio mostrando el mismo error.
+    }
+    const url = getWhatsappUrl(desvio, telefono, nombre);
     if (!url) {
-      toast.error('Este desvio no tiene telefono de responsable');
+      toast.error('Este desvio no tiene responsable activo con telefono');
       return;
     }
     window.open(url, '_blank', 'noopener,noreferrer');

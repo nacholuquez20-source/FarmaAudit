@@ -893,17 +893,22 @@ class SupabaseManager:
         try:
             response = (
                 self.client.table("gestion")
-                .select("id_gestion, sucursal, tel_responsable, responsable, created_at")
+                .select("id_gestion, sucursal, id_sucursal, created_at")
                 .in_("estado", ["Abierta", "En_proceso", "Vencida"])
                 .execute()
             )
             rows = response.data or []
             now = datetime.now(timezone.utc)
 
+            # Se agrupa por id_sucursal, no por telefono: el responsable se
+            # resuelve en vivo contra usuarios_whatsapp recien al mandar el
+            # recordatorio (ver remind_responsable_desvios_pendientes en
+            # main.py), asi un cambio de responsable no deja pingueando al
+            # telefono viejo.
             groups: Dict[str, Dict[str, Any]] = {}
             for row in rows:
-                tel = row.get("tel_responsable")
-                if not tel:
+                id_sucursal = row.get("id_sucursal")
+                if not id_sucursal:
                     continue
                 created_at = row.get("created_at")
                 if not created_at:
@@ -913,9 +918,8 @@ class SupabaseManager:
                 except ValueError:
                     continue
 
-                group = groups.setdefault(tel, {
-                    "tel_responsable": tel,
-                    "responsable": row.get("responsable") or "",
+                group = groups.setdefault(id_sucursal, {
+                    "id_sucursal": id_sucursal,
                     "sucursales": set(),
                     "cantidad": 0,
                     "dias_abierto_max": 0,
@@ -943,6 +947,18 @@ class SupabaseManager:
             return True
         except Exception as e:
             logger.error(f"Failed to update gestion {id_gestion} with {fields}: {e}")
+            return False
+
+    def update_ultimo_mensaje_entrante(self, usuario_id: str) -> bool:
+        """Marca el momento del ultimo mensaje entrante de un usuario_whatsapp,
+        para saber si la ventana de 24h de Meta esta abierta."""
+        try:
+            self.client.table("usuarios_whatsapp").update(
+                {"ultimo_mensaje_entrante_at": datetime.now(timezone.utc).isoformat()}
+            ).eq("id", usuario_id).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to update ultimo_mensaje_entrante for {usuario_id}: {e}")
             return False
 
     def get_gestion_by_id(self, id_gestion: str) -> Optional[Dict[str, Any]]:

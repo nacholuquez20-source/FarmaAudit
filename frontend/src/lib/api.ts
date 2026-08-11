@@ -8,6 +8,7 @@ import type {
   Gestion,
   Auditor,
   AuditFicha,
+  ResponsableActivo,
   TipoAuditoria,
   UsuarioWhatsapp,
   CreateUsuarioWhatsappInput,
@@ -315,6 +316,21 @@ export async function notificarEncargado(input: {
   if (!response.ok) {
     throw new Error('No se pudo notificar al encargado por WhatsApp.');
   }
+}
+
+export async function getResponsableActivo(idGestion: string): Promise<ResponsableActivo> {
+  const apiUrl = getBotApiUrl();
+  if (!apiUrl) {
+    throw new Error('Falta configurar VITE_API_URL con la URL del bot.');
+  }
+
+  const response = await fetch(`${apiUrl}/api/gestion/${idGestion}/responsable-activo`, {
+    headers: await getAuthHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error('No se pudo resolver el responsable activo.');
+  }
+  return response.json();
 }
 
 export async function uploadEvidencia(

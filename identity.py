@@ -82,3 +82,39 @@ def resolve_whatsapp_user(telefono: str) -> Optional[WhatsAppUser]:
     except Exception as e:
         logger.error(f"Failed to resolve whatsapp user {telefono}: {e}")
         return None
+
+
+def resolve_responsable_by_sucursal(id_sucursal: str) -> Optional[WhatsAppUser]:
+    """Resuelve el responsable_sucursal activo de una sucursal contra usuarios_whatsapp."""
+    from supabase_manager import SupabaseManager
+
+    if not id_sucursal:
+        return None
+
+    try:
+        db = SupabaseManager()
+        response = (
+            db.client.table("usuarios_whatsapp")
+            .select("id, telefono, nombre, rol, activo, id_sucursal, ultimo_mensaje_entrante_at")
+            .eq("id_sucursal", id_sucursal)
+            .eq("rol", "responsable_sucursal")
+            .eq("activo", True)
+            .limit(1)
+            .execute()
+        )
+        rows = response.data or []
+        if not rows:
+            return None
+        row = rows[0]
+
+        return WhatsAppUser(
+            id=row["id"],
+            telefono=row.get("telefono", ""),
+            nombre=row.get("nombre", ""),
+            rol=row.get("rol", ""),
+            activo=bool(row.get("activo", False)),
+            id_sucursal=row.get("id_sucursal"),
+        )
+    except Exception as e:
+        logger.error(f"Failed to resolve responsable for sucursal {id_sucursal}: {e}")
+        return None

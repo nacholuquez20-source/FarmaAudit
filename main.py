@@ -26,7 +26,7 @@ from init_supabase import init_supabase_schema
 
 # NEW: Imports for perfumery audit v2
 from audit_session import AuditState, get_session
-from identity import resolve_whatsapp_user
+from identity import resolve_responsable_by_sucursal, resolve_whatsapp_user
 
 # Configure logging
 logging.basicConfig(
@@ -563,6 +563,48 @@ async def create_internal_message(id_gestion: str, payload: InternalMessageReque
     return data[0] if data else {"status": "ok"}
 
 
+@app.get("/api/gestion/{id_gestion}/responsable-activo")
+async def get_responsable_activo(id_gestion: str, request: Request):
+    """Resuelve en vivo el responsable_sucursal activo de la sucursal de esta
+    gestion, y si la ventana de 24h de Meta esta abierta. El frontend no puede
+    leer usuarios_whatsapp directo (RLS admin-only), y lo necesitan tambien
+    los auditores."""
+    await _require_admin_or_auditor(request)
+    client = _get_supabase_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="Supabase is not configured")
+
+    gestion_response = (
+        client.table("gestion").select("id_sucursal").eq("id_gestion", id_gestion).maybe_single().execute()
+    )
+    gestion = gestion_response.data
+    if not gestion:
+        raise HTTPException(status_code=404, detail="Gestion not found")
+
+    responsable = resolve_responsable_by_sucursal(gestion["id_sucursal"])
+    if not responsable:
+        return {"responsable": None, "ventana_abierta": False}
+
+    row_response = (
+        client.table("usuarios_whatsapp")
+        .select("ultimo_mensaje_entrante_at")
+        .eq("id", responsable.id)
+        .maybe_single()
+        .execute()
+    )
+    row = row_response.data or {}
+    ultimo = row.get("ultimo_mensaje_entrante_at")
+    ventana_abierta = False
+    if ultimo:
+        delta = datetime.now(timezone.utc) - datetime.fromisoformat(ultimo.replace("Z", "+00:00"))
+        ventana_abierta = delta.total_seconds() < 24 * 3600
+
+    return {
+        "responsable": {"nombre": responsable.nombre, "telefono": responsable.telefono},
+        "ventana_abierta": ventana_abierta,
+    }
+
+
 @app.post("/api/gestion/{id_gestion}/revision")
 async def revisar_gestion(id_gestion: str, payload: GestionRevisionRequest, request: Request):
     """Approve/reject a branch manager's correction, or flag/unblock a deviation that
@@ -1082,6 +1124,14 @@ async def webhook(request: Request):
             )
             result = "unknown_or_inactive_phone"
         else:
+            # No bloqueante: la ventana de 24h de Meta se calcula a partir de
+            # esto, pero un fallo acá no puede tirar abajo el procesamiento
+            # del mensaje en sí.
+            try:
+                SupabaseManager().update_ultimo_mensaje_entrante(whatsapp_user.id)
+            except Exception as exc:
+                logger.warning(f"[{correlation_id}] Failed to update ultimo_mensaje_entrante: {exc}")
+
             # Route to v2 handler while there is any active v2 session (including DONE state,
             # which still expects responsable name and ficha-download answer)
             session = get_session(payload.telefono)
@@ -1571,7 +1621,12 @@ async def remind_responsable_desvios_pendientes():
 
         meta_client = MetaClient()
         for group in due:
-            tel = group["tel_responsable"]
+            id_sucursal = group["id_sucursal"]
+            responsable = resolve_responsable_by_sucursal(id_sucursal)
+            if not responsable or not responsable.telefono:
+                logger.warning(f"Recordatorio sin responsable activo para sucursal {id_sucursal}")
+                continue
+            tel = responsable.telefono
             cantidad = group["cantidad"]
             dias = group["dias_abierto_max"]
             sucursales = ", ".join(group["sucursales"]) or "tu sucursal"
