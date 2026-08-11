@@ -38,12 +38,11 @@ El otro norte de esta etapa fue **coherencia y confiabilidad, no features**. El 
    grave de lo que parecía al principio — **Railway estaba caído**, no solo el `.env` local. Deploy
    `8eae4a0e` confirmado activo y sano: todas las queries a Supabase en 200 OK, sin `Invalid API key`. Detalle
    en "Supabase cortó las keys legacy — Railway estuvo caído" más abajo.
-6. **⚠️ Confirmar la URL del webhook en Meta Developers.** La URL real de Railway es
-   `farmaaudit-production.up.railway.app` (sin el sufijo `-3f78` que tenía documentado `META_SETUP.md` — ya
-   corregido). Si Meta Developers todavía tiene configurada la URL vieja (`-3f78`) como webhook, **los
-   mensajes de WhatsApp no están llegando al bot en absoluto** — esto no se pudo verificar desde acá, hay que
-   entrar a Meta for Developers → tu app → WhatsApp → Configuration y confirmar que el campo "Callback URL"
-   diga `https://farmaaudit-production.up.railway.app/webhook`.
+6. ~~Confirmar la URL del webhook en Meta Developers.~~ **Resuelto y verificado 2026-08-11.** Se actualizó el
+   Callback URL a `https://farmaaudit-production.up.railway.app/webhook` (la vieja tenía el sufijo `-3f78`,
+   corregido también en `META_SETUP.md`) y se probó con un mensaje real: el bot respondió. Con esto el
+   incidente de la key legacy de Supabase queda cerrado de punta a punta — webhook, Railway, Supabase, todo
+   verificado con tráfico real, no solo con curl.
 
 ---
 
@@ -131,10 +130,10 @@ Fix: `supabase` `2.0.3` → `2.31.0`, más `httpx<0.25.0` → `httpx>=0.26,<0.29
 rango más ancho no choca con ellos). Verificado localmente con la key nueva: arranque limpio, sin errores de
 Supabase, y el endpoint de responsable-activo del Bloque 3 devolviendo datos reales.
 
-**Confirmado en vivo**: deploy `8eae4a0e` (`farmaaudit-production.up.railway.app`) activo, logs limpios, todas
-las queries a Supabase en 200 OK. `/health` responde sano desde afuera también. Lo único que quedó sin poder
-verificar desde acá es si Meta Developers apunta a esta URL o a la vieja `-3f78` — ver ítem 6 de "Primer paso
-al retomar" más arriba, es el único cabo suelto real de este incidente.
+**Confirmado en vivo, de punta a punta**: deploy `8eae4a0e` (`farmaaudit-production.up.railway.app`) activo,
+logs limpios, todas las queries a Supabase en 200 OK, `/health` sano desde afuera. Meta Developers apuntaba a
+la URL vieja (`-3f78`) — se corrigió el Callback URL, y se probó con un mensaje real de WhatsApp: **el bot
+respondió**. Incidente cerrado del todo, sin cabos sueltos.
 
 ---
 
