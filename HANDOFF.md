@@ -1,6 +1,6 @@
 # Handoff — Estado del proyecto
 
-_Última sesión: 2026-08-06. Todo pusheado a `origin/master` (último commit `c3312d6`)._
+_Última sesión: 2026-08-11. Todo pusheado a `origin/master`._
 
 ---
 
@@ -21,19 +21,50 @@ El otro norte de esta etapa fue **coherencia y confiabilidad, no features**. El 
 
 ## ⚠️ Primer paso al retomar
 
-**Nada bloqueante.** Las migraciones pendientes de la sesión anterior ya se corrieron y se verificaron.
-
-Lo único que conviene chequear antes de tocar nada:
-
-1. **`META_APP_SECRET` en Railway.** Sin esa variable el webhook acepta mensajes **sin verificar la firma de
+1. **¿Se aprobó la plantilla `farmaaudit_novedades` en Meta?** Se envió a revisión el **2026-08-11**. Es lo que
+   destraba el bloque 4 del panel de desvíos (ver más abajo). Chequealo en Meta Business Manager.
+   - De paso, verificá si **`campana_nueva_sucursal`** llegó a aprobarse alguna vez. El código la usa
+     (`main.py:745`) y loguea *"probablemente el template no está aprobado aún"* cuando falla. Si esa nunca
+     pasó, el trámite de plantillas es una incógnita más grande de lo que parece.
+2. **Verificación manual pendiente en el navegador.** La última sesión reestructuró la carga de datos de
+   varias páginas para dejar el lint en cero. Compila y buildea, pero **no se probó en el navegador**:
+   abrí `/campanias`, `/mis-campanias`, `/desvios` y el detalle de una sucursal antes de construir encima.
+3. **`META_APP_SECRET` en Railway.** Sin esa variable el webhook acepta mensajes **sin verificar la firma de
    Meta**, o sea que cualquiera que conozca la URL puede inyectar mensajes falsos al bot. El backend lo avisa
    por log al arrancar. Con WhatsApp como único canal, es el agujero más serio que queda abierto.
-2. **`etapa-16-campania-sucursal-rls.sql`** sigue sin correr. Sin ella, `/mis-campanias` devuelve 0 filas para
+4. **`etapa-16-campania-sucursal-rls.sql`** sigue sin correr. Sin ella, `/mis-campanias` devuelve 0 filas para
    el rol `sucursal` por RLS. Solo importa si vas a tocar campañas.
 
 ---
 
-## Qué se hizo en esta etapa
+## Qué se hizo en la etapa 2026-08-10/11
+
+**Módulo de identidad y sucursales** (`etapa-21`, **ya corrida y verificada en Supabase**)
+
+- Tabla nueva `usuarios_whatsapp` como **fuente única** de "quién es este teléfono y qué puede hacer".
+  Reemplaza los tres lugares que guardaban el mismo dato sin hablarse: `auditores.telefono`,
+  `profiles.telefono` y `sucursales.tel_responsable`.
+- Catálogo `tipos_auditoria` + `usuario_tipos_auditoria`: sumar el próximo rol (auditor de venta de
+  medicamentos al público) es **un INSERT**, no una migración de esquema.
+- `sucursales.activo`: baja lógica. Archivar una sucursal la saca del menú del bot y de los selectores sin
+  romper las seis tablas que le apuntan con FK. El borrado real fallaba siempre.
+- `identity.py` con `resolve_whatsapp_user()`. `get_auditor` y `get_encargado_by_phone` quedaron como
+  envoltorios finos, así que los ~13 call sites de `router.py` no se tocaron.
+- **Se cerró un bypass de autorización**: `main.py` procesaba el mensaje sin verificar identidad si el teléfono
+  tenía una fila en `sesiones_whatsapp`. Bastaba con haber iniciado una auditoría alguna vez.
+- `/admin` reconstruido en cuatro pestañas por query param, con sub-componentes en `components/admin/`.
+
+**Panel de desvíos, bloque 1** — bandejas por turno (ver la sección del plan, arriba).
+
+**Lint del frontend: 31 errores → 0**, sin un solo `eslint-disable`. Todo reestructuración real. De arrastre
+aparecieron dos bugs: `Checkbox` aceptaba `className` y lo descartaba, y `ChatMensajes` pasaba un evento de
+teclado donde se esperaba uno de formulario (`as any`). Además, todas las cargas de datos ganaron **guarda de
+cancelación**, que no tenían: salir de una página a mitad de carga escribía estado sobre un componente
+desmontado.
+
+---
+
+## Qué se hizo en la etapa anterior (2026-08-06)
 
 ### El diagnóstico
 
@@ -76,7 +107,32 @@ plazo fijo de 7 días, e insertaba un teléfono en `desvio_eventos.actor_id`, qu
 
 ---
 
-## Qué sigue, en orden
+## 🎯 El plan en curso: panel de desvíos
+
+**Documento vinculante: [`ARQUITECTURA_PANEL_DESVIOS.md`](ARQUITECTURA_PANEL_DESVIOS.md).** Tiene el diseño
+completo, los hallazgos verificados que lo motivaron, y las cuatro decisiones ya tomadas (no se re-discuten).
+
+Cuatro bloques. **El 1 está hecho**; los otros tres son lo que sigue:
+
+| # | Bloque | Estado | Depende de |
+|---|---|---|---|
+| **0** | Plantilla `farmaaudit_novedades` en Meta | ⏳ **enviada a revisión 2026-08-11** | Meta |
+| **1** | Bandejas por turno en `/desvios` | ✅ hecho | — |
+| **2** | Ficha como contenedor (FK `gestion.ficha_id` + navegación en ambos sentidos) | ⬜ pendiente | — |
+| **3** | `usuarios_whatsapp.ultimo_mensaje_entrante_at` + teléfono resuelto en vivo + estado de entrega visible | ⬜ pendiente | — |
+| **4** | Chat del panel → WhatsApp; reemplazar el `send_text` roto del job de recordatorio | ⬜ pendiente | 0, 3 |
+
+**Los bloques 2 y 3 no dependen de Meta**: se pueden hacer y probar sin esperar la plantilla. El 3 incluso se
+prueba entero, porque dentro de la ventana de 24h ya se entrega con `send_text` — la plantilla solo agrega el
+caso "ventana cerrada".
+
+**Por qué importa el bloque 4**: hoy `POST /api/gestion/{id}/mensajes` (`main.py:515`) escribe en
+`desvio_eventos` y nada más. Cuando un auditor escribe en el chat de un desvío, **el responsable nunca se
+entera**. La dirección inversa sí funciona. La conversación es de una sola vía y la vía rota es la nuestra.
+
+---
+
+## Qué sigue además, en orden
 
 Detalle completo en [`docs/analisis/04-roadmap.md`](docs/analisis/04-roadmap.md).
 
@@ -96,6 +152,22 @@ propósito: construir features de valor sobre datos que podían ser inventados e
 ---
 
 ## Cosas que te van a morder si no las sabés
+
+**El lint está en cero — mantenelo así.** `cd frontend && npx eslint src` tiene que dar 0. Si aparece
+`react-hooks/set-state-in-effect`, la regla **no** se satisface con un flag ni con un `eslint-disable`
+razonable: hay que poner el `await` antes del primer `setState` (el estado ya arranca en `loading`). Si el
+spinner tiene que volver al cambiar de entidad, eso va como ajuste **durante el render**, no en el efecto.
+
+**Código muerto detectado, sin borrar todavía**: los default export `DesviosGestion` y `RevisionDesvios` (con
+su `AppLayout`) ya no los importa nadie — solo se usan los `*Panel`. Con ellos muere también toda la rama
+`embedded={false}`. Queda como decisión de limpieza aparte.
+
+**`gestion.tel_responsable` es una foto congelada** al crear el desvío, y el job de recordatorio agrupa por
+ahí (`supabase_manager.py:882`). Desde `etapa-21` la fuente de verdad es `usuarios_whatsapp`: si cambia el
+responsable de una sucursal, los desvíos viejos siguen pingueando al teléfono anterior. Lo arregla el bloque 3.
+
+**La tabla `auditores` quedó sin lecturas** pero no se borró, a propósito, como red de seguridad del backfill
+de `etapa-21`. Se elimina en una etapa posterior.
 
 **`pytest` está roto en este entorno** (incompatibilidad con Python 3.14: `ValueError: I/O operation on closed
 file`). Los archivos de test se corren directo y funcionan:
