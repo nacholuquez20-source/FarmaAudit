@@ -34,6 +34,10 @@ El otro norte de esta etapa fue **coherencia y confiabilidad, no features**. El 
    por log al arrancar. Con WhatsApp como único canal, es el agujero más serio que queda abierto.
 4. **`etapa-16-campania-sucursal-rls.sql`** sigue sin correr. Sin ella, `/mis-campanias` devuelve 0 filas para
    el rol `sucursal` por RLS. Solo importa si vas a tocar campañas.
+5. **`SUPABASE_SERVICE_KEY` en el `.env` raíz es una key legacy deshabilitada.** Supabase las apagó el
+   2026-08-07; correr el backend en local hoy devuelve 401 en cualquier endpoint autenticado. Actualizala
+   desde el dashboard de Supabase antes de tocar el backend en esta máquina. Railway probablemente ya tiene la
+   key nueva (no se pudo confirmar esta sesión) — esto es solo el `.env` local desincronizado.
 
 ---
 
@@ -75,6 +79,40 @@ a aparecer latencia.
   pudo probar visualmente esta sesión — no hay todavía ninguna gestión real con `ficha_id` poblado (recién se
   puebla en la próxima auditoría completa por WhatsApp) y escribir un valor de prueba directo en producción
   quedó bloqueado por el sandbox. Vale la pena confirmarlo en la próxima auditoría de punta a punta.
+
+**Bloque 3 del panel de desvíos — identidad viva del responsable + estado de entrega** (`0cf8e65`)
+
+- `usuarios_whatsapp.ultimo_mensaje_entrante_at` (`etapa-23-mensajeria-en-vivo.sql`, **ya corrida**), que el
+  webhook actualiza en cada mensaje entrante de un usuario conocido — un solo update no bloqueante, en el
+  punto donde `main.py` ya resuelve identidad. Es la base para saber si la ventana de 24h de Meta está abierta.
+- **Hallazgo que cambió el plan**: `usuarios_whatsapp` no tenía nada que impidiera dos responsables activos
+  para la misma sucursal — "el" responsable no estaba bien definido. La misma migración agrega un índice único
+  parcial (`id_sucursal` donde `rol='responsable_sucursal' and activo`); verificado antes contra producción
+  que no había duplicados.
+- `identity.resolve_responsable_by_sucursal()`: la resolución inversa a `resolve_whatsapp_user`, sucursal →
+  responsable activo. La usan el job de recordatorio (que ahora agrupa por `id_sucursal`, no por teléfono
+  congelado) y el endpoint nuevo `GET /api/gestion/{id}/responsable-activo`.
+- El frontend no puede leer `usuarios_whatsapp` directo — RLS admin-only, pero lo necesita también el rol
+  `auditor` — de ahí el endpoint nuevo, que hace de puente con el cliente service-role del backend.
+- `DesvioResponsibleCard`, el link de WhatsApp y los botones "Contactar responsable"/"Notificar encargado"
+  (en `DesvioDetail` y en la lista de `DesviosGestion`) dejan de leer `gestion.tel_responsable` y resuelven en
+  vivo. Sin responsable activo, dice explícitamente "Sin responsable activo" con link a Administración →
+  Usuarios WhatsApp, en vez de fallar en silencio.
+- Mitad "mostrar" de "estado de entrega visible": `ChatMensajes` ya sabe renderizar un badge de
+  `desvio_eventos.metadata.entrega` (enviado/fallido/sin ventana) — capacidad muerta hasta que el Bloque 4
+  empiece a escribir ese campo al enviar.
+- **Hallazgo aparte, sin arreglar todavía**: el `.env` raíz de esta máquina tiene una `SUPABASE_SERVICE_KEY`
+  del formato *legacy* que Supabase deshabilitó el 2026-08-07 — cualquier llamada autenticada del backend
+  corrido localmente devuelve 401 (`"Legacy API keys are disabled"`). Es preexistente, afecta a **todos** los
+  endpoints con auth, no solo a los nuevos, y probablemente Railway ya tiene la key rotada por separado (la
+  key vieja acá es simplemente una copia sin sincronizar). Si vas a correr el backend en local, actualizala
+  primero desde el dashboard de Supabase.
+- Verificado: el endpoint nuevo no se pudo probar con datos reales (ni local, por la key vieja; ni contra
+  Railway, porque este commit todavía no está deployado ahí). Sí se confirmó de punta a punta que el frontend
+  degrada bien cuando la llamada falla: muestra "Sin responsable activo", deshabilita ambos botones de
+  contacto, no rompe la página. Falta la prueba real: que el webhook realmente marque
+  `ultimo_mensaje_entrante_at` con tráfico real de WhatsApp, y que el job de recordatorio resuelva bien en
+  producción — ninguna se puede simular sin riesgo desde acá.
 
 ---
 
@@ -153,14 +191,14 @@ plazo fijo de 7 días, e insertaba un teléfono en `desvio_eventos.actor_id`, qu
 **Documento vinculante: [`ARQUITECTURA_PANEL_DESVIOS.md`](ARQUITECTURA_PANEL_DESVIOS.md).** Tiene el diseño
 completo, los hallazgos verificados que lo motivaron, y las cuatro decisiones ya tomadas (no se re-discuten).
 
-Cuatro bloques. **El 1 y el 2 están hechos**; quedan dos:
+Cuatro bloques. **El 1, el 2 y el 3 están hechos**; queda uno, y depende de Meta:
 
 | # | Bloque | Estado | Depende de |
 |---|---|---|---|
 | **0** | Plantilla `farmaaudit_novedades` en Meta | ⏳ **enviada a revisión 2026-08-11** | Meta |
 | **1** | Bandejas por turno en `/desvios` | ✅ hecho | — |
 | **2** | Ficha como contenedor (FK `gestion.ficha_id` + navegación en ambos sentidos) | ✅ **hecho 2026-08-11** (`1987001`) | — |
-| **3** | `usuarios_whatsapp.ultimo_mensaje_entrante_at` + teléfono resuelto en vivo + estado de entrega visible | ⬜ pendiente | — |
+| **3** | `usuarios_whatsapp.ultimo_mensaje_entrante_at` + teléfono resuelto en vivo + estado de entrega visible | ✅ **hecho 2026-08-11** (`0cf8e65`) | — |
 | **4** | Chat del panel → WhatsApp; reemplazar el `send_text` roto del job de recordatorio | ⬜ pendiente | 0, 3 |
 
 **Los bloques 2 y 3 no dependen de Meta**: se pueden hacer y probar sin esperar la plantilla. El 3 incluso se
