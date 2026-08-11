@@ -261,6 +261,9 @@ export interface AuditFicha {
   fecha_auditoria: string | null;
   created_at: string;
   url_pdf: string | null;
+  /** Path del PDF en el bucket desvio-evidencias. url_pdf es una signed URL
+   *  que vence a las 24h — para abrir el PDF hay que refirmar desde acá. */
+  google_drive_id: string | null;
   desvios_count: number;
   fotos_count: number;
   puntuacion_promedio: number | null;

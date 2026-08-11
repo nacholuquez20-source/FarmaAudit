@@ -220,52 +220,72 @@ def generate_audit_pdf(
     if session.desvios:
         story.append(Paragraph(f"Hallazgos encontrados ({len(session.desvios)})", section))
 
-        # Build foto lookup: foto_id -> FotoEvidence
-        foto_map = {f.id: f for f in session.fotos}
+        # No hay vínculo foto→desvío individual (Desvio.fotos nunca se puebla),
+        # solo foto→bloque (FotoEvidence.bloque se setea al capturar). Se
+        # agrupan los desvíos por bloque y se muestran las fotos de ese bloque
+        # una sola vez al final del grupo, no repetidas por cada desvío.
+        fotos_por_bloque: Dict[str, List] = {}
+        for foto in session.fotos:
+            if foto.bloque:
+                fotos_por_bloque.setdefault(foto.bloque, []).append(foto)
 
-        for idx, desvio in enumerate(session.desvios, 1):
-            bloque_label = BLOQUE_LABELS.get(desvio.bloque, desvio.bloque)
-            score = session.bloques.get(desvio.bloque, 0)
+        bloques_con_desvios: List[str] = []
+        desvios_por_bloque: Dict[str, List] = {}
+        for desvio in session.desvios:
+            if desvio.bloque not in desvios_por_bloque:
+                desvios_por_bloque[desvio.bloque] = []
+                bloques_con_desvios.append(desvio.bloque)
+            desvios_por_bloque[desvio.bloque].append(desvio)
+
+        idx = 0
+        for bloque in bloques_con_desvios:
+            bloque_label = BLOQUE_LABELS.get(bloque, bloque)
+            score = session.bloques.get(bloque, 0)
             sc = _score_color(score)
 
-            # Desvío header bar
-            hdr_data = [[
-                Paragraph(
-                    f'<font color="white"><b>#{idx} — {bloque_label}</b>  '
-                    f'Puntaje: {score}/5 — {_score_label(score)}</font>',
-                    ParagraphStyle("DH", parent=styles["Normal"], fontSize=9,
-                                   fontName="Helvetica-Bold", textColor=colors.white),
-                ),
-            ]]
-            hdr = Table(hdr_data, colWidths=[usable_w])
-            hdr.setStyle(TableStyle([
-                ("BACKGROUND",    (0,0), (-1,-1), sc),
-                ("TOPPADDING",    (0,0), (-1,-1), 5),
-                ("BOTTOMPADDING", (0,0), (-1,-1), 5),
-                ("LEFTPADDING",   (0,0), (-1,-1), 8),
-            ]))
-            story.append(hdr)
+            for desvio in desvios_por_bloque[bloque]:
+                idx += 1
 
-            # Descripción
-            desc = desvio.descripcion[:500] + "…" if len(desvio.descripcion) > 500 else desvio.descripcion
-            desc_data = [[Paragraph(desc, body)]]
-            desc_table = Table(desc_data, colWidths=[usable_w])
-            desc_table.setStyle(TableStyle([
-                ("BACKGROUND",    (0,0), (-1,-1), _score_bg(score)),
-                ("TOPPADDING",    (0,0), (-1,-1), 6),
-                ("BOTTOMPADDING", (0,0), (-1,-1), 6),
-                ("LEFTPADDING",   (0,0), (-1,-1), 8),
-                ("RIGHTPADDING",  (0,0), (-1,-1), 8),
-            ]))
-            story.append(desc_table)
+                # Desvío header bar
+                hdr_data = [[
+                    Paragraph(
+                        f'<font color="white"><b>#{idx} — {bloque_label}</b>  '
+                        f'Puntaje: {score}/5 — {_score_label(score)}</font>',
+                        ParagraphStyle("DH", parent=styles["Normal"], fontSize=9,
+                                       fontName="Helvetica-Bold", textColor=colors.white),
+                    ),
+                ]]
+                hdr = Table(hdr_data, colWidths=[usable_w])
+                hdr.setStyle(TableStyle([
+                    ("BACKGROUND",    (0,0), (-1,-1), sc),
+                    ("TOPPADDING",    (0,0), (-1,-1), 5),
+                    ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+                    ("LEFTPADDING",   (0,0), (-1,-1), 8),
+                ]))
+                story.append(hdr)
 
-            # Fotos
-            if photo_bytes and desvio.fotos:
+                # Descripción
+                desc = desvio.descripcion[:500] + "…" if len(desvio.descripcion) > 500 else desvio.descripcion
+                desc_data = [[Paragraph(desc, body)]]
+                desc_table = Table(desc_data, colWidths=[usable_w])
+                desc_table.setStyle(TableStyle([
+                    ("BACKGROUND",    (0,0), (-1,-1), _score_bg(score)),
+                    ("TOPPADDING",    (0,0), (-1,-1), 6),
+                    ("BOTTOMPADDING", (0,0), (-1,-1), 6),
+                    ("LEFTPADDING",   (0,0), (-1,-1), 8),
+                    ("RIGHTPADDING",  (0,0), (-1,-1), 8),
+                ]))
+                story.append(desc_table)
+                story.append(Spacer(1, 6))
+
+            # Fotos del bloque, una vez por grupo
+            fotos_bloque = fotos_por_bloque.get(bloque, [])
+            if photo_bytes and fotos_bloque:
                 max_img_w = (usable_w - 0.3 * cm) / 2  # 2 columns
                 max_img_h = 5 * cm
                 images = []
-                for foto_id in desvio.fotos:
-                    raw = photo_bytes.get(foto_id)
+                for foto in fotos_bloque:
+                    raw = photo_bytes.get(foto.id)
                     if raw:
                         img = _rl_image(raw, max_img_w, max_img_h)
                         if img:
@@ -286,7 +306,7 @@ def generate_audit_pdf(
                     ]))
                     story.append(photo_table)
                     story.append(Paragraph(
-                        f"{len([x for x in images if x])} foto(s) de evidencia", small
+                        f"{len([x for x in images if x])} foto(s) de evidencia — {bloque_label}", small
                     ))
 
             story.append(Spacer(1, 8))

@@ -6,7 +6,7 @@ import { Button } from '../components/Button';
 import { FeedbackState } from '../components/FeedbackState';
 import { Input } from '../components/Input';
 import { Select } from '../components/Select';
-import { analisisAuditoria, exportControlesPdf, getFichaById, getSucursales } from '../lib/api';
+import { analisisAuditoria, exportControlesPdf, getFichaById, getFichaPdfUrl, getSucursales } from '../lib/api';
 import type { AnalisisAuditoria } from '../lib/api';
 import { supabase } from '../lib/supabase';
 import type { AuditFicha, Sucursal } from '../types';
@@ -621,7 +621,7 @@ export default function AuditFichesGallery() {
                 {analisis ? 'Re-analizar' : 'Analizar con IA'}
               </Button>
               {selected.url_pdf && (
-                <Button onClick={() => window.open(selected.url_pdf as string, '_blank', 'noopener')}>
+                <Button onClick={() => void getFichaPdfUrl(selected).then((url) => url && window.open(url, '_blank', 'noopener'))}>
                   <Download className="mr-2 inline h-4 w-4" />
                   Descargar PDF
                 </Button>

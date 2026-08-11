@@ -836,17 +836,23 @@ class SupabaseManager:
             return []
 
     def get_overdue_gestiones(self) -> List[Dict[str, Any]]:
-        """Get open/in-progress/in-review gestiones whose plazo_fecha has already passed.
+        """Get open/in-progress gestiones whose plazo_fecha has already passed.
 
         Excludes En_gestion_terceros: those depend on causes outside the branch manager's
         control and must not be auto-marked as overdue (see ARQUITECTURA_DESVIOS_CAMPANIAS.md).
+
+        Excludes En_revision: the responsable already replied and the turn is the auditor's,
+        not theirs — overwriting it to Vencida here hid every real correction from the review
+        panel (DesviosGestion filters strictly on estado === 'En_revision') and nothing ever
+        moved it back. get_gestiones_en_revision_stale() + remind_sla_auditor_revision() is the
+        SLA mechanism for reviews stuck too long; this job must not race it.
         """
         try:
             now_iso = datetime.now(timezone.utc).isoformat()
             response = (
                 self.client.table("gestion")
                 .select("*")
-                .in_("estado", ["Abierta", "En_proceso", "En_revision"])
+                .in_("estado", ["Abierta", "En_proceso"])
                 .lt("plazo_fecha", now_iso)
                 .execute()
             )

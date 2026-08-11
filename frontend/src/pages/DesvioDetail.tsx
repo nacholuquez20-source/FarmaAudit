@@ -7,6 +7,7 @@ import { EvidenciaUploader } from '../components/EvidenciaUploader';
 import { FeedbackState } from '../components/FeedbackState';
 import { ReminderButton } from '../components/ReminderButton';
 import {
+  DesvioCorrectionReviewPanel,
   DesvioHeaderActions,
   DesvioInfoCard,
   DesvioResponsibleCard,
@@ -16,7 +17,7 @@ import {
 import { useAuth } from '../hooks/useAuth';
 import { useDesvioDetail } from '../hooks/useDesvioDetail';
 import type { DesvioEvento, EstadoContactoSucursal, Gestion } from '../types';
-import { resolveEvidenceUrl } from '../lib/api';
+import { resolveEvidenceUrl, revisarGestion } from '../lib/api';
 import { ResolutionFormSchema } from '../lib/validation';
 
 function getDueState(gestion: Gestion): { label: string; className: string } {
@@ -43,6 +44,7 @@ export default function DesvioDetail() {
   const [evidenceText, setEvidenceText] = useState('');
   const [evidenceUrl, setEvidenceUrl] = useState('');
   const [resolvedReporteFotoUrl, setResolvedReporteFotoUrl] = useState('');
+  const [reviewUpdating, setReviewUpdating] = useState(false);
 
   // El recordatorio es por sucursal, no por desvío (ver ReminderButton) — se
   // arma acá el mismo shape que usa /sucursales para no duplicar el componente.
@@ -220,6 +222,54 @@ export default function DesvioDetail() {
     }
   };
 
+  const handleAprobarCorreccion = async () => {
+    if (!gestion) return;
+    setReviewUpdating(true);
+    setActionError('');
+    setActionMessage('');
+    try {
+      await revisarGestion({ idGestion: gestion.id_gestion, accion: 'aprobar' });
+      await reload();
+      setActionMessage('Correccion aprobada.');
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'No se pudo aprobar la correccion.');
+    } finally {
+      setReviewUpdating(false);
+    }
+  };
+
+  const handleRechazarCorreccion = async (motivo: string) => {
+    if (!gestion) return;
+    setReviewUpdating(true);
+    setActionError('');
+    setActionMessage('');
+    try {
+      await revisarGestion({ idGestion: gestion.id_gestion, accion: 'rechazar', motivo });
+      await reload();
+      setActionMessage('Correccion rechazada, se notifico al responsable.');
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'No se pudo rechazar la correccion.');
+    } finally {
+      setReviewUpdating(false);
+    }
+  };
+
+  const handleEnGestionTercerosCorreccion = async (motivo: string) => {
+    if (!gestion) return;
+    setReviewUpdating(true);
+    setActionError('');
+    setActionMessage('');
+    try {
+      await revisarGestion({ idGestion: gestion.id_gestion, accion: 'en_gestion_terceros', motivo });
+      await reload();
+      setActionMessage('Desvio marcado como dependiente de terceros.');
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'No se pudo actualizar el desvio.');
+    } finally {
+      setReviewUpdating(false);
+    }
+  };
+
   if (loading) {
     return (
       <AppLayout title="Detalle de Desvío">
@@ -279,6 +329,19 @@ export default function DesvioDetail() {
         <DesvioInfoCard gestion={gestion} reporte={reporte} ficha={ficha} dueState={dueState} />
 
         <DesvioResponsibleCard gestion={gestion} responsableActivo={responsableActivo} />
+
+        {canManageEstado && gestion.estado === 'En_revision' && (
+          <div className="lg:col-span-3">
+            <DesvioCorrectionReviewPanel
+              gestion={gestion}
+              eventos={eventos}
+              updating={reviewUpdating}
+              onAprobar={() => void handleAprobarCorreccion()}
+              onRechazar={(motivo) => void handleRechazarCorreccion(motivo)}
+              onEnGestionTerceros={(motivo) => void handleEnGestionTercerosCorreccion(motivo)}
+            />
+          </div>
+        )}
 
         {canManageEstado && (
           <DesvioResolutionPanel

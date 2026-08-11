@@ -382,6 +382,22 @@ export async function getSignedUrl(path: string, bucket: string = getEvidenceBuc
   return data?.signedUrl ?? '';
 }
 
+/**
+ * ficha.url_pdf es una signed URL que el backend generó al crear la ficha y
+ * vence a las 24h (audit_fiches_manager.py). Para cualquier auditoría de más
+ * de un día hay que refirmar desde google_drive_id (el path real en Storage).
+ */
+export async function getFichaPdfUrl(ficha: { google_drive_id: string | null; url_pdf: string | null }): Promise<string> {
+  if (ficha.google_drive_id) {
+    try {
+      return await getSignedUrl(ficha.google_drive_id);
+    } catch {
+      // Cae al fallback de abajo si la refirma falla.
+    }
+  }
+  return ficha.url_pdf ?? '';
+}
+
 export function parseStorageUrl(value?: string | null): { bucket: ValidBucket; path: string } | null {
   if (!value) return null;
   if (value.startsWith('storage://')) {

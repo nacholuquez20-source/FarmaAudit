@@ -21,7 +21,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useControlStock } from '../hooks/useControlStock';
 import { useGestion } from '../hooks/useGestion';
 import { useReportes } from '../hooks/useReportes';
-import { getEstadoContactoSucursales, getSucursal } from '../lib/api';
+import { getEstadoContactoSucursales, getFichaPdfUrl, getSucursal } from '../lib/api';
 import { supabase } from '../lib/supabase';
 import {
   diasDesde,
@@ -381,7 +381,7 @@ export default function SucursalDetail() {
         {resumen.ultima?.url_pdf && (
           <button
             type="button"
-            onClick={() => window.open(resumen.ultima!.url_pdf as string, '_blank', 'noopener')}
+            onClick={() => void getFichaPdfUrl(resumen.ultima!).then((url) => url && window.open(url, '_blank', 'noopener'))}
             className="inline-flex items-center gap-1.5 font-medium text-gray-500 hover:text-gray-700"
           >
             <FileText className="h-3.5 w-3.5" />
@@ -507,9 +507,11 @@ export default function SucursalDetail() {
                 <tr>
                   <th className="px-6 py-3 text-left text-sm font-semibold">Fecha</th>
                   <th className="px-6 py-3 text-left text-sm font-semibold">Auditor</th>
+                  <th className="px-6 py-3 text-center text-sm font-semibold">Puntaje</th>
                   <th className="px-6 py-3 text-center text-sm font-semibold">Detectados</th>
                   <th className="px-6 py-3 text-center text-sm font-semibold">Resueltos</th>
                   <th className="px-6 py-3 text-center text-sm font-semibold">Pendientes</th>
+                  <th className="px-6 py-3 text-center text-sm font-semibold">Revisión</th>
                   <th className="px-6 py-3 text-center text-sm font-semibold">Reclamar</th>
                 </tr>
               </thead>
@@ -517,7 +519,11 @@ export default function SucursalDetail() {
                 {fichas.map((ficha) => {
                   const ligadas = gestionesPorFicha.get(ficha.id) ?? [];
                   const resueltos = ligadas.filter((g) => g.estado === 'Resuelta' || g.estado === 'Cerrada').length;
-                  const pendientes = ligadas.length - resueltos;
+                  const enRevision = ligadas.filter((g) => g.estado === 'En_revision').length;
+                  // "Pendientes" es lo que todavía espera al encargado — las que
+                  // ya respondió y esperan que el auditor decida van en su propia
+                  // columna, si no "resueltos" y "pendientes" no suman el total.
+                  const pendientes = ligadas.length - resueltos - enRevision;
                   const sinVincular = ficha.desvios_count > ligadas.length;
                   return (
                     <tr
@@ -533,7 +539,7 @@ export default function SucursalDetail() {
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                window.open(ficha.url_pdf as string, '_blank', 'noopener');
+                                void getFichaPdfUrl(ficha).then((url) => url && window.open(url, '_blank', 'noopener'));
                               }}
                               title="Ver PDF"
                               className="text-gray-400 hover:text-blue-600"
@@ -544,6 +550,9 @@ export default function SucursalDetail() {
                         </div>
                       </td>
                       <td className="px-6 py-4 text-sm">{ficha.auditor_nombre || '—'}</td>
+                      <td className={`px-6 py-4 text-center text-sm ${scoreColor(ficha.puntuacion_promedio)}`}>
+                        {ficha.puntuacion_promedio != null ? `${ficha.puntuacion_promedio.toFixed(1)}/5` : '—'}
+                      </td>
                       <td className="px-6 py-4 text-center text-sm font-semibold">
                         <span className={ficha.desvios_count > 0 ? 'text-gray-800' : 'text-green-600'}>
                           {ficha.desvios_count}
@@ -567,12 +576,24 @@ export default function SucursalDetail() {
                           </span>
                         )}
                       </td>
+                      <td className="px-6 py-4 text-center text-sm">
+                        {enRevision > 0 ? (
+                          <span
+                            title="El encargado ya respondió — falta que lo revises"
+                            className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-bold text-blue-700"
+                          >
+                            {enRevision}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-gray-300">—</span>
+                        )}
+                      </td>
                       <td className="px-6 py-4 text-center">
                         {canAudit && pendientes > 0 ? (
                           <ReminderButton
                             idSucursal={sucursal.id}
                             sucursalNombre={sucursal.nombre}
-                            cantidadDesvios={resumen.abiertos}
+                            cantidadDesvios={pendientes}
                             estadoContacto={estadoContacto}
                             onSent={recargarEstadoContacto}
                             compact
@@ -589,14 +610,15 @@ export default function SucursalDetail() {
                   const resueltosSinFicha = gestionesSinFicha.filter(
                     (g) => g.estado === 'Resuelta' || g.estado === 'Cerrada',
                   ).length;
-                  const pendientesSinFicha = gestionesSinFicha.length - resueltosSinFicha;
+                  const enRevisionSinFicha = gestionesSinFicha.filter((g) => g.estado === 'En_revision').length;
+                  const pendientesSinFicha = gestionesSinFicha.length - resueltosSinFicha - enRevisionSinFicha;
                   return (
                     <React.Fragment key="sin-ficha">
                       <tr
                         onClick={() => setShowOrfanas((v) => !v)}
                         className="cursor-pointer border-b bg-gray-50/60 hover:bg-gray-100"
                       >
-                        <td colSpan={2} className="px-6 py-4 text-sm text-gray-500">
+                        <td colSpan={3} className="px-6 py-4 text-sm text-gray-500">
                           <span className="inline-flex items-center gap-1.5">
                             {showOrfanas ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                             Sin auditoría vinculada
@@ -615,12 +637,24 @@ export default function SucursalDetail() {
                             <span className="text-xs text-gray-300">—</span>
                           )}
                         </td>
+                        <td className="px-6 py-4 text-center text-sm">
+                          {enRevisionSinFicha > 0 ? (
+                            <span
+                              title="El encargado ya respondió — falta que lo revises"
+                              className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-bold text-blue-700"
+                            >
+                              {enRevisionSinFicha}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-gray-300">—</span>
+                          )}
+                        </td>
                         <td className="px-6 py-4 text-center">
                           {canAudit && pendientesSinFicha > 0 ? (
                             <ReminderButton
                               idSucursal={sucursal.id}
                               sucursalNombre={sucursal.nombre}
-                              cantidadDesvios={resumen.abiertos}
+                              cantidadDesvios={pendientesSinFicha}
                               estadoContacto={estadoContacto}
                               onSent={recargarEstadoContacto}
                               compact
@@ -632,7 +666,7 @@ export default function SucursalDetail() {
                       </tr>
                       {showOrfanas && (
                         <tr>
-                          <td colSpan={6} className="bg-gray-50/60 p-0">
+                          <td colSpan={8} className="bg-gray-50/60 p-0">
                             <table className="w-full">
                               <tbody>
                                 {gestionesSinFicha.map((gestion) => (

@@ -5,7 +5,7 @@ import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { ReminderButton } from '../components/ReminderButton';
 import { useAuth } from '../hooks/useAuth';
-import { getEstadoContactoSucursales, getFichaById, getGestionesByFicha, getSignedUrl, getSucursal } from '../lib/api';
+import { getEstadoContactoSucursales, getFichaById, getFichaPdfUrl, getGestionesByFicha, getSignedUrl, getSucursal } from '../lib/api';
 import { supabase } from '../lib/supabase';
 import { BLOQUES_FICHA, formatDate, formatDateTime, gestionStateLabel, scoreColor, severidadColor } from '../lib/utils';
 import type { AuditFicha, EstadoContactoSucursal, Gestion, Sucursal } from '../types';
@@ -228,7 +228,7 @@ export default function AuditFichaDetail() {
           {ficha.url_pdf && (
             <button
               type="button"
-              onClick={() => window.open(ficha.url_pdf as string, '_blank', 'noopener')}
+              onClick={() => void getFichaPdfUrl(ficha).then((url) => url && window.open(url, '_blank', 'noopener'))}
               className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-100"
             >
               <FileText className="h-4 w-4" />
