@@ -7,7 +7,7 @@ function getInitialEvent(gestion: Gestion): DesvioEvento {
     id: `initial-${gestion.id_gestion}`,
     id_gestion: gestion.id_gestion,
     tipo: 'creacion',
-    comentario: `Desvio creado para ${gestion.sucursal}.`,
+    comentario: `Desvío creado para ${gestion.sucursal}.`,
     actor_id: null,
     actor_nombre: gestion.responsable || null,
     metadata: {},
@@ -57,7 +57,12 @@ export function useDesvioDetail(id?: string) {
           gestionData.ficha_id ? getFichaById(gestionData.ficha_id) : Promise.resolve(null),
           // Un fallo acá no debe tapar el resto del detalle: degrada a "sin
           // responsable activo", que ya es un estado que la UI sabe mostrar.
-          getResponsableActivo(gestionData.id_gestion).catch(() => ({ responsable: null, ventana_abierta: false })),
+          getResponsableActivo(gestionData.id_gestion).catch(() => ({
+            responsable: null,
+            ventana_abierta: false,
+            cantidad_desvios_abiertos: 0,
+            proximo_disponible_at: null,
+          })),
           getDesvioEventos(gestionData.id_gestion),
         ]);
 
@@ -71,7 +76,7 @@ export function useDesvioDetail(id?: string) {
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'No se pudo cargar el desvio.');
+          setError(err instanceof Error ? err.message : 'No se pudo cargar el desvío.');
         }
       } finally {
         if (!cancelled) {

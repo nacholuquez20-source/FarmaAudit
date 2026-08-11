@@ -116,7 +116,7 @@ export function EvidenciaUploader({ idGestion, onUploaded }: EvidenciaUploaderPr
           value={descripcion}
           onChange={(event) => setDescripcion(event.target.value)}
           rows={2}
-          placeholder="Describe brevemente la evidencia"
+          placeholder="Describí brevemente la evidencia"
           className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 font-normal focus:border-transparent focus:ring-2 focus:ring-blue-500"
         />
       </label>

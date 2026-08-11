@@ -8,6 +8,7 @@ import json
 import asyncio
 import uuid
 from collections import OrderedDict
+from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,7 +27,7 @@ from init_supabase import init_supabase_schema
 
 # NEW: Imports for perfumery audit v2
 from audit_session import AuditState, get_session
-from identity import resolve_responsable_by_sucursal, resolve_whatsapp_user
+from identity import resolve_responsable_by_sucursal, resolve_whatsapp_user, ventana_abierta
 
 # Configure logging
 logging.basicConfig(
@@ -566,9 +567,11 @@ async def create_internal_message(id_gestion: str, payload: InternalMessageReque
 @app.get("/api/gestion/{id_gestion}/responsable-activo")
 async def get_responsable_activo(id_gestion: str, request: Request):
     """Resuelve en vivo el responsable_sucursal activo de la sucursal de esta
-    gestion, y si la ventana de 24h de Meta esta abierta. El frontend no puede
-    leer usuarios_whatsapp directo (RLS admin-only), y lo necesitan tambien
-    los auditores."""
+    gestion, si la ventana de 24h de Meta esta abierta, y cuantos desvios
+    abiertos tiene la sucursal (para el boton de recordatorio del detalle de
+    desvio, que manda un solo mensaje por sucursal, no uno por desvio). El
+    frontend no puede leer usuarios_whatsapp directo (RLS admin-only), y lo
+    necesitan tambien los auditores."""
     await _require_admin_or_auditor(request)
     client = _get_supabase_client()
     if client is None:
@@ -581,28 +584,132 @@ async def get_responsable_activo(id_gestion: str, request: Request):
     if not gestion:
         raise HTTPException(status_code=404, detail="Gestion not found")
 
-    responsable = resolve_responsable_by_sucursal(gestion["id_sucursal"])
-    if not responsable:
-        return {"responsable": None, "ventana_abierta": False}
+    id_sucursal = gestion["id_sucursal"]
+    db = SupabaseManager()
+    grupo = db.get_desvios_abiertos_por_sucursal(id_sucursal)
+    cantidad_desvios_abiertos = grupo["cantidad"] if grupo else 0
 
-    row_response = (
-        client.table("usuarios_whatsapp")
-        .select("ultimo_mensaje_entrante_at")
-        .eq("id", responsable.id)
-        .maybe_single()
-        .execute()
-    )
-    row = row_response.data or {}
-    ultimo = row.get("ultimo_mensaje_entrante_at")
-    ventana_abierta = False
-    if ultimo:
-        delta = datetime.now(timezone.utc) - datetime.fromisoformat(ultimo.replace("Z", "+00:00"))
-        ventana_abierta = delta.total_seconds() < 24 * 3600
+    ultimo_recordatorio = db.get_ultimo_recordatorio_enviado(id_sucursal)
+    proximo_disponible_at = None
+    if ultimo_recordatorio and ultimo_recordatorio.get("enviado_at"):
+        enviado_at = datetime.fromisoformat(ultimo_recordatorio["enviado_at"].replace("Z", "+00:00"))
+        proximo = enviado_at + timedelta(hours=RECORDATORIO_COOLDOWN_HORAS)
+        if datetime.now(timezone.utc) < proximo:
+            proximo_disponible_at = proximo.isoformat()
+
+    responsable = resolve_responsable_by_sucursal(id_sucursal)
+    if not responsable:
+        return {
+            "responsable": None,
+            "ventana_abierta": False,
+            "cantidad_desvios_abiertos": cantidad_desvios_abiertos,
+            "proximo_disponible_at": proximo_disponible_at,
+        }
 
     return {
         "responsable": {"nombre": responsable.nombre, "telefono": responsable.telefono},
-        "ventana_abierta": ventana_abierta,
+        "ventana_abierta": ventana_abierta(responsable),
+        "cantidad_desvios_abiertos": cantidad_desvios_abiertos,
+        "proximo_disponible_at": proximo_disponible_at,
     }
+
+
+@app.get("/api/sucursales/estado-contacto")
+async def get_estado_contacto_sucursales(request: Request):
+    """Para todas las sucursales activas a la vez: quién es el encargado (si
+    hay), si su ventana de 24h está abierta, y cuándo fue el último
+    recordatorio enviado. usuarios_whatsapp es RLS admin-only y el auditor la
+    necesita para saber si el botón de recordatorio tiene sentido — mismo
+    motivo que /api/gestion/{id}/responsable-activo, en lote."""
+    await _require_admin_or_auditor(request)
+    client = _get_supabase_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="Supabase is not configured")
+
+    sucursales_resp = client.table("sucursales").select("id").eq("activo", True).execute()
+    ids_sucursal = [row["id"] for row in (sucursales_resp.data or [])]
+
+    responsables_resp = (
+        client.table("usuarios_whatsapp")
+        .select("id_sucursal, nombre, telefono, ultimo_mensaje_entrante_at")
+        .eq("rol", "responsable_sucursal")
+        .eq("activo", True)
+        .execute()
+    )
+    responsables_por_sucursal = {
+        row["id_sucursal"]: row for row in (responsables_resp.data or []) if row.get("id_sucursal")
+    }
+
+    recordatorios_resp = (
+        client.table("recordatorios_sucursal")
+        .select("id_sucursal, enviado_at")
+        .eq("resultado", "enviado")
+        .order("enviado_at", desc=True)
+        .execute()
+    )
+    ultimo_recordatorio_por_sucursal: Dict[str, str] = {}
+    for row in recordatorios_resp.data or []:
+        # El primero que aparece por sucursal es el mas reciente, por el order() de arriba.
+        ultimo_recordatorio_por_sucursal.setdefault(row["id_sucursal"], row["enviado_at"])
+
+    resultado = []
+    for id_sucursal in ids_sucursal:
+        r = responsables_por_sucursal.get(id_sucursal)
+        ultimo_mensaje = r.get("ultimo_mensaje_entrante_at") if r else None
+        abierta = False
+        if ultimo_mensaje:
+            delta = datetime.now(timezone.utc) - datetime.fromisoformat(ultimo_mensaje.replace("Z", "+00:00"))
+            abierta = delta.total_seconds() < 24 * 3600
+
+        ultimo_recordatorio = ultimo_recordatorio_por_sucursal.get(id_sucursal)
+        proximo_disponible = None
+        if ultimo_recordatorio:
+            enviado_at = datetime.fromisoformat(ultimo_recordatorio.replace("Z", "+00:00"))
+            proximo = enviado_at + timedelta(hours=RECORDATORIO_COOLDOWN_HORAS)
+            if datetime.now(timezone.utc) < proximo:
+                proximo_disponible = proximo.isoformat()
+
+        resultado.append({
+            "id_sucursal": id_sucursal,
+            "encargado_nombre": r.get("nombre") if r else None,
+            "encargado_telefono": r.get("telefono") if r else None,
+            "tiene_telefono": bool(r and r.get("telefono")),
+            "ventana_abierta": abierta,
+            "ultimo_recordatorio_at": ultimo_recordatorio,
+            "proximo_disponible_at": proximo_disponible,
+        })
+
+    return {"sucursales": resultado}
+
+
+@app.post("/api/sucursales/{id_sucursal}/recordatorio")
+async def post_recordatorio_sucursal(id_sucursal: str, request: Request):
+    """El botón manual de "reclamar por WhatsApp". Nunca manda la plantilla
+    fuera de la ventana de 24h (farmaaudit_novedades sigue sin aprobar) — en
+    ese caso devuelve sin_ventana para que el frontend ofrezca el link manual
+    de wa.me en su lugar."""
+    profile = await _require_admin_or_auditor(request)
+    db = SupabaseManager()
+
+    group = db.get_desvios_abiertos_por_sucursal(id_sucursal)
+    if not group:
+        raise HTTPException(status_code=404, detail="La sucursal no tiene desvíos abiertos")
+
+    meta_client = MetaClient()
+    resultado = await _enviar_recordatorio_sucursal(
+        db, meta_client, id_sucursal, group, canal="manual", enviado_por=profile.get("id")
+    )
+
+    if resultado["resultado"] == "cooldown":
+        raise HTTPException(status_code=429, detail=resultado)
+    if resultado["resultado"] == "sin_encargado":
+        raise HTTPException(status_code=409, detail=resultado)
+    if resultado["resultado"] == "sin_ventana":
+        raise HTTPException(status_code=409, detail=resultado)
+    if resultado["resultado"] == "fallido":
+        raise HTTPException(status_code=502, detail=resultado)
+
+    return resultado
 
 
 @app.post("/api/gestion/{id_gestion}/revision")
@@ -1607,6 +1714,71 @@ async def remind_sla_auditor_revision():
         logger.error(f"Error in overdue gestion check job: {e}", exc_info=True)
 
 
+RECORDATORIO_COOLDOWN_HORAS = 24
+
+
+async def _enviar_recordatorio_sucursal(
+    db: SupabaseManager,
+    meta_client: MetaClient,
+    id_sucursal: str,
+    group: Dict[str, Any],
+    canal: str,
+    enviado_por: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Un solo camino para mandar el recordatorio de desvíos pendientes de una
+    sucursal — lo usan el botón manual y el job automático de cada 3 días, así
+    no divergen ni pisan el cooldown del otro. Registra siempre en
+    recordatorios_sucursal, incluso cuando no llega a enviar nada: es la única
+    forma de que "el job falla en silencio" deje de ser cierto.
+
+    No manda plantilla fuera de la ventana de 24h: farmaaudit_novedades sigue
+    sin aprobar en Meta, y un envío que falla la mayoría de las veces es peor
+    que no ofrecer el botón (ver ARQUITECTURA_PANEL_DESVIOS.md §4.5).
+    """
+    cantidad = group["cantidad"]
+    dias = group["dias_abierto_max"]
+    sucursales = ", ".join(group["sucursales"]) or "tu sucursal"
+
+    responsable = resolve_responsable_by_sucursal(id_sucursal)
+    if not responsable or not responsable.telefono:
+        db.registrar_recordatorio_sucursal(
+            id_sucursal, canal, "sin_encargado", enviado_por=enviado_por, cantidad_desvios=cantidad
+        )
+        return {"resultado": "sin_encargado"}
+
+    ultimo = db.get_ultimo_recordatorio_enviado(id_sucursal)
+    if ultimo and ultimo.get("enviado_at"):
+        enviado_at = datetime.fromisoformat(ultimo["enviado_at"].replace("Z", "+00:00"))
+        proximo = enviado_at + timedelta(hours=RECORDATORIO_COOLDOWN_HORAS)
+        if datetime.now(timezone.utc) < proximo:
+            return {"resultado": "cooldown", "proximo_disponible_at": proximo.isoformat()}
+
+    if not ventana_abierta(responsable):
+        db.registrar_recordatorio_sucursal(
+            id_sucursal, canal, "sin_ventana", enviado_por=enviado_por,
+            detalle=f"ultimo_mensaje_entrante_at={responsable.ultimo_mensaje_entrante_at}",
+            cantidad_desvios=cantidad,
+        )
+        return {"resultado": "sin_ventana", "ultimo_mensaje": responsable.ultimo_mensaje_entrante_at}
+
+    texto = (
+        f"🔔 Recordatorio: tenés {cantidad} desvío(s) pendientes de resolver "
+        f"en {sucursales}, el más antiguo desde hace {dias} días.\n\n"
+        f"Escribinos a este mismo número a medida que los vayas gestionando."
+    )
+    try:
+        ok = await meta_client.send_text(responsable.telefono, texto)
+    except Exception as exc:
+        logger.warning(f"Error sending recordatorio to {responsable.telefono}: {exc}")
+        ok = False
+
+    resultado = "enviado" if ok else "fallido"
+    db.registrar_recordatorio_sucursal(
+        id_sucursal, canal, resultado, enviado_por=enviado_por, cantidad_desvios=cantidad
+    )
+    return {"resultado": resultado}
+
+
 async def remind_responsable_desvios_pendientes():
     """Background job: recurring reminder to branch managers who still have open
     desvios, on top of the one-time notice sent right when the audit finds them
@@ -1621,28 +1793,13 @@ async def remind_responsable_desvios_pendientes():
 
         meta_client = MetaClient()
         for group in due:
-            id_sucursal = group["id_sucursal"]
-            responsable = resolve_responsable_by_sucursal(id_sucursal)
-            if not responsable or not responsable.telefono:
-                logger.warning(f"Recordatorio sin responsable activo para sucursal {id_sucursal}")
-                continue
-            tel = responsable.telefono
-            cantidad = group["cantidad"]
-            dias = group["dias_abierto_max"]
-            sucursales = ", ".join(group["sucursales"]) or "tu sucursal"
-            texto = (
-                f"🔔 Recordatorio: tenés {cantidad} desvío(s) pendientes de resolver "
-                f"en {sucursales}, el más antiguo desde hace {dias} días.\n\n"
-                f"Escribinos a este mismo número a medida que los vayas gestionando."
+            resultado = await _enviar_recordatorio_sucursal(
+                db, meta_client, group["id_sucursal"], group, canal="bot", enviado_por=None
             )
-            try:
-                ok = await meta_client.send_text(tel, texto)
-                if not ok:
-                    logger.warning(f"Failed to send pending-desvios reminder to {tel}")
-            except Exception as exc:
-                logger.warning(f"Error sending pending-desvios reminder to {tel}: {exc}")
+            if resultado["resultado"] not in ("enviado",):
+                logger.warning(f"Recordatorio automatico para {group['id_sucursal']}: {resultado['resultado']}")
 
-        logger.info(f"Pending-desvios reminder sent to {len(due)} manager(s)")
+        logger.info(f"Pending-desvios reminder processed for {len(due)} branch(es)")
     except Exception as e:
         logger.error(f"Error in responsable reminder job: {e}", exc_info=True)
 

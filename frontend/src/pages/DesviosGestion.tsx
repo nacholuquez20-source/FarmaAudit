@@ -339,7 +339,7 @@ function ResolveModal({
           </p>
 
           <label className="mt-4 block text-sm font-medium text-slate-700">
-            Comentario de resolucion *
+            Comentario de resolución *
             <textarea
               autoFocus
               value={comment}
@@ -1022,7 +1022,7 @@ export function DesviosGestionPanel({
           </div>
         )}
 
-        {loading && <div className="px-6 py-10"><FeedbackState title="Cargando desvios..." tone="loading" /></div>}
+        {loading && <div className="px-6 py-10"><FeedbackState title="Cargando desvíos..." tone="loading" /></div>}
         {error && <div className="px-6 py-10"><FeedbackState title={error} tone="error" /></div>}
         {!loading && !error && desvios.length === 0 && (
           <div className="px-6 py-10">

@@ -31,7 +31,7 @@ export function DesvioResolutionPanel({
     <section className="rounded-lg bg-white p-6 shadow lg:col-span-3">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-gray-900">Resolucion y cierre</h2>
+          <h2 className="text-lg font-semibold text-gray-900">Resolución y cierre</h2>
           <p className="text-sm text-gray-500">Registra respuesta, evidencia y cierre con trazabilidad.</p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -56,7 +56,7 @@ export function DesvioResolutionPanel({
 
       <form onSubmit={onResolve} className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <label className="text-sm font-medium text-gray-700 lg:col-span-3">
-          Comentario de resolucion
+          Comentario de resolución
           <textarea
             value={resolutionComment}
             onChange={(event) => onCommentChange(event.target.value)}

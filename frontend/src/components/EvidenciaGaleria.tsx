@@ -91,7 +91,7 @@ export function EvidenciaGaleria({ idGestion, eventos }: EvidenciaGaleriaProps) 
   if (evidencias.length === 0) {
     return (
       <section className="rounded-lg bg-white p-6 shadow">
-        <h2 className="mb-4 text-lg font-semibold text-gray-900">Galeria de evidencias</h2>
+        <h2 className="mb-4 text-lg font-semibold text-gray-900">Galería de evidencias</h2>
         <FeedbackState title="No hay evidencias subidas todavia." />
       </section>
     );
@@ -120,7 +120,7 @@ export function EvidenciaGaleria({ idGestion, eventos }: EvidenciaGaleriaProps) 
 
   return (
     <section className="rounded-lg bg-white p-6 shadow">
-      <h2 className="mb-4 text-lg font-semibold text-gray-900">Galeria de evidencias</h2>
+      <h2 className="mb-4 text-lg font-semibold text-gray-900">Galería de evidencias</h2>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {evidencias.map((item) => {
           const url = item.path ? signedUrls[item.path] : item.legacyUrl;

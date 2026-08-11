@@ -3,6 +3,17 @@ import { StatusBadge } from '../StatusBadge';
 import { SeverityBadge } from '../SeverityBadge';
 import type { AuditFicha, Gestion, Reporte } from '../../types';
 
+// El backend históricamente guardó el placeholder literal con corchetes
+// ("[Por definir por el responsable]") como plan_accion — se lee como texto
+// de plantilla sin completar, no como un mensaje real. Se normaliza acá para
+// cubrir tanto los datos viejos como cualquier variante futura.
+function planAccionLabel(planAccion: string | null | undefined): string {
+  if (!planAccion || planAccion.trim().startsWith('[')) {
+    return 'Sin plan de acción definido.';
+  }
+  return planAccion;
+}
+
 interface DesvioInfoCardProps {
   gestion: Gestion;
   reporte: Reporte | null;
@@ -16,7 +27,13 @@ export function DesvioInfoCard({ gestion, reporte, ficha, dueState }: DesvioInfo
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <SeverityBadge severity={gestion.severidad} size="sm" />
         <StatusBadge status={gestion.estado} size="sm" />
-        <span className={`text-sm font-semibold ${dueState.className}`}>{dueState.label}</span>
+        {/* Si el estado ya es 'Vencida', el badge de arriba ya lo dice — mostrar
+            "Vencido" de nuevo acá es el mismo hecho dos veces con dos
+            etiquetas distintas. Solo se agrega cuando aporta algo nuevo
+            (En plazo / Cerrado no son valores de gestion.estado). */}
+        {gestion.estado !== 'Vencida' && (
+          <span className={`text-sm font-semibold ${dueState.className}`}>{dueState.label}</span>
+        )}
       </div>
 
       <h2 className="mb-2 text-xl font-semibold text-gray-900">{gestion.sucursal}</h2>
@@ -24,7 +41,7 @@ export function DesvioInfoCard({ gestion, reporte, ficha, dueState }: DesvioInfo
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div>
-          <div className="text-sm text-gray-500">Area</div>
+          <div className="text-sm text-gray-500">Área</div>
           <div className="font-medium">{reporte?.area || '-'}</div>
         </div>
         <div>
@@ -32,15 +49,11 @@ export function DesvioInfoCard({ gestion, reporte, ficha, dueState }: DesvioInfo
           <div className="font-medium">{formatDate(gestion.plazo_fecha)}</div>
         </div>
         <div>
-          <div className="text-sm text-gray-500">Reporte origen</div>
-          <div className="font-medium">{gestion.id_reporte || '-'}</div>
-        </div>
-        <div>
           <div className="text-sm text-gray-500">Fecha reporte</div>
           <div className="font-medium">{reporte?.fecha ? formatDate(reporte.fecha) : '-'}</div>
         </div>
         <div>
-          <div className="text-sm text-gray-500">Auditoria</div>
+          <div className="text-sm text-gray-500">Auditoría</div>
           <div className="font-medium">
             {ficha ? (
               <a href={`/auditorias?ficha=${ficha.id}`} className="text-primary-navy hover:underline">
@@ -48,15 +61,15 @@ export function DesvioInfoCard({ gestion, reporte, ficha, dueState }: DesvioInfo
                 {ficha.puntuacion_promedio != null ? `${ficha.puntuacion_promedio.toFixed(1)}/5` : 'sin puntaje'}
               </a>
             ) : (
-              <span className="text-gray-400">Auditoria no vinculada</span>
+              <span className="text-gray-400">Auditoría no vinculada</span>
             )}
           </div>
         </div>
       </div>
 
       <div className="mt-6 border-t border-gray-200 pt-6">
-        <h3 className="mb-2 text-sm font-semibold text-gray-900">Plan de accion</h3>
-        <p className="text-gray-700">{gestion.plan_accion || 'Sin plan de accion registrado.'}</p>
+        <h3 className="mb-2 text-sm font-semibold text-gray-900">Plan de acción</h3>
+        <p className="text-gray-700">{planAccionLabel(gestion.plan_accion)}</p>
       </div>
     </section>
   );

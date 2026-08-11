@@ -5,6 +5,7 @@ import { ChatMensajes } from '../components/ChatMensajes';
 import { EvidenciaGaleria } from '../components/EvidenciaGaleria';
 import { EvidenciaUploader } from '../components/EvidenciaUploader';
 import { FeedbackState } from '../components/FeedbackState';
+import { ReminderButton } from '../components/ReminderButton';
 import {
   DesvioHeaderActions,
   DesvioInfoCard,
@@ -14,9 +15,8 @@ import {
 } from '../components/desvio-detail';
 import { useAuth } from '../hooks/useAuth';
 import { useDesvioDetail } from '../hooks/useDesvioDetail';
-import type { DesvioEvento, Gestion } from '../types';
-import { notificarEncargado, resolveEvidenceUrl } from '../lib/api';
-import { getWhatsappUrl } from '../lib/utils';
+import type { DesvioEvento, EstadoContactoSucursal, Gestion } from '../types';
+import { resolveEvidenceUrl } from '../lib/api';
 import { ResolutionFormSchema } from '../lib/validation';
 
 function getDueState(gestion: Gestion): { label: string; className: string } {
@@ -38,20 +38,26 @@ export default function DesvioDetail() {
   const { gestion, reporte, ficha, responsableActivo, eventos, loading, error, eventsReady, reload, addEvento, updateEstado } = useDesvioDetail(id);
   const [actionError, setActionError] = useState('');
   const [actionMessage, setActionMessage] = useState('');
-  const [contacting, setContacting] = useState(false);
-  const [notifying, setNotifying] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [resolutionComment, setResolutionComment] = useState('');
   const [evidenceText, setEvidenceText] = useState('');
   const [evidenceUrl, setEvidenceUrl] = useState('');
   const [resolvedReporteFotoUrl, setResolvedReporteFotoUrl] = useState('');
 
-  const telefonoActivo = responsableActivo?.responsable?.telefono ?? '';
-  const nombreActivo = responsableActivo?.responsable?.nombre ?? '';
-  const whatsappUrl = useMemo(
-    () => (gestion ? getWhatsappUrl(gestion, telefonoActivo, nombreActivo) : null),
-    [gestion, telefonoActivo, nombreActivo]
-  );
+  // El recordatorio es por sucursal, no por desvío (ver ReminderButton) — se
+  // arma acá el mismo shape que usa /sucursales para no duplicar el componente.
+  const estadoContactoSucursal: EstadoContactoSucursal | undefined = responsableActivo && gestion
+    ? {
+        id_sucursal: gestion.id_sucursal,
+        encargado_nombre: responsableActivo.responsable?.nombre ?? null,
+        encargado_telefono: responsableActivo.responsable?.telefono ?? null,
+        tiene_telefono: Boolean(responsableActivo.responsable?.telefono),
+        ventana_abierta: responsableActivo.ventana_abierta,
+        ultimo_recordatorio_at: null,
+        proximo_disponible_at: responsableActivo.proximo_disponible_at,
+      }
+    : undefined;
+
   const hasResolution = useMemo(
     () => eventos.some((evento) => evento.tipo === 'respuesta' || evento.tipo === 'evidencia'),
     [eventos]
@@ -97,66 +103,6 @@ export default function DesvioDetail() {
       actor_id: user?.id || null,
       actor_nombre: actorName,
     });
-  };
-
-  const handleContact = async () => {
-    if (!gestion || !whatsappUrl) return;
-
-    setContacting(true);
-    setActionError('');
-    setActionMessage('');
-
-    try {
-      await addTimelineEvent({
-        id_gestion: gestion.id_gestion,
-        tipo: 'contacto',
-        comentario: `Contacto enviado a ${nombreActivo || 'responsable'} por WhatsApp.`,
-        metadata: {
-          canal: 'whatsapp',
-          telefono: telefonoActivo,
-        },
-      });
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'No se pudo registrar el evento de contacto.');
-    } finally {
-      window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
-      setContacting(false);
-    }
-  };
-
-  const handleNotifyEncargado = async () => {
-    if (!gestion) return;
-
-    setNotifying(true);
-    setActionError('');
-    setActionMessage('');
-
-    try {
-      await notificarEncargado({
-        idGestion: gestion.id_gestion,
-        telefonoEncargado: telefonoActivo,
-        descripcionDesvio: gestion.desvio,
-        sucursal: gestion.sucursal,
-      });
-      try {
-        await addTimelineEvent({
-          id_gestion: gestion.id_gestion,
-          tipo: 'contacto',
-          comentario: `Encargado notificado por WhatsApp desde el bot.`,
-          metadata: {
-            canal: 'whatsapp_bot',
-            telefono: telefonoActivo,
-          },
-        });
-      } catch (timelineError) {
-        console.warn('WhatsApp notification sent, but timeline event failed:', timelineError);
-      }
-      setActionMessage('Encargado notificado por WhatsApp.');
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'No se pudo notificar al encargado.');
-    } finally {
-      setNotifying(false);
-    }
   };
 
   const handleMarkInProgress = async () => {
@@ -276,7 +222,7 @@ export default function DesvioDetail() {
 
   if (loading) {
     return (
-      <AppLayout title="Detalle de Desvio">
+      <AppLayout title="Detalle de Desvío">
         <FeedbackState title="Cargando desvio..." tone="loading" />
       </AppLayout>
     );
@@ -284,7 +230,7 @@ export default function DesvioDetail() {
 
   if (error) {
     return (
-      <AppLayout title="Detalle de Desvio">
+      <AppLayout title="Detalle de Desvío">
         <FeedbackState title={error} tone="error" />
       </AppLayout>
     );
@@ -292,7 +238,7 @@ export default function DesvioDetail() {
 
   if (!gestion) {
     return (
-      <AppLayout title="Detalle de Desvio">
+      <AppLayout title="Detalle de Desvío">
         <FeedbackState title="No se encontro el desvio." />
       </AppLayout>
     );
@@ -301,16 +247,18 @@ export default function DesvioDetail() {
   const dueState = getDueState(gestion);
 
   return (
-    <AppLayout title="Detalle de Desvio">
+    <AppLayout title="Detalle de Desvío">
       <DesvioHeaderActions
         role={role}
         gestion={gestion}
-        whatsappUrl={whatsappUrl}
-        hasResponsableActivo={Boolean(responsableActivo?.responsable)}
-        contacting={contacting}
-        notifying={notifying}
-        onContact={handleContact}
-        onNotify={handleNotifyEncargado}
+        reminderSlot={
+          <ReminderButton
+            idSucursal={gestion.id_sucursal}
+            sucursalNombre={gestion.sucursal}
+            cantidadDesvios={responsableActivo?.cantidad_desvios_abiertos ?? 1}
+            estadoContacto={estadoContactoSucursal}
+          />
+        }
       />
 
       {actionError && (
@@ -374,7 +322,7 @@ export default function DesvioDetail() {
               {resolvedReporteFotoUrl ? 'Abrir foto del reporte' : 'Cargando foto del reporte...'}
             </a>
           ) : (
-            <FeedbackState title="No hay evidencias asociadas todavia." />
+            <FeedbackState title="No hay evidencias asociadas todavía." />
           )}
           {reporte?.descripcion && (
             <div className="mt-4 rounded-lg bg-gray-50 p-4 text-sm text-gray-700">{reporte.descripcion}</div>

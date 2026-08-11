@@ -1,27 +1,16 @@
+import type { ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { Gestion, Role } from '../../types';
 
 interface DesvioHeaderActionsProps {
   role: Role | null;
   gestion: Gestion;
-  whatsappUrl: string | null;
-  hasResponsableActivo: boolean;
-  contacting: boolean;
-  notifying: boolean;
-  onContact: () => void;
-  onNotify: () => void;
+  /** El botón de recordatorio (ReminderButton) se arma en DesvioDetail, que
+   * ya tiene el estado de contacto resuelto — este componente solo lo aloja. */
+  reminderSlot?: ReactNode;
 }
 
-export function DesvioHeaderActions({
-  role,
-  gestion,
-  whatsappUrl,
-  hasResponsableActivo,
-  contacting,
-  notifying,
-  onContact,
-  onNotify,
-}: DesvioHeaderActionsProps) {
+export function DesvioHeaderActions({ role, gestion, reminderSlot }: DesvioHeaderActionsProps) {
   const navigate = useNavigate();
   const backPath = role === 'sucursal' ? '/mis-desvios' : '/gestion-desvios';
   const canManageEstado = role === 'admin' || role === 'auditor';
@@ -35,34 +24,17 @@ export function DesvioHeaderActions({
       >
         {role === 'sucursal' ? 'Volver a mis desvios' : 'Volver a gestion'}
       </button>
-      <div className="flex gap-2">
-        {canManageEstado && (
-          <>
-            <Link
-              to={`/sucursales/${gestion.id_sucursal}`}
-              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
-            >
-              Ver sucursal
-            </Link>
-            <button
-              type="button"
-              onClick={onNotify}
-              disabled={!hasResponsableActivo || notifying || gestion.estado === 'Cerrada'}
-              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300 disabled:text-gray-600"
-            >
-              {notifying ? 'Notificando...' : 'Notificar encargado'}
-            </button>
-            <button
-              type="button"
-              onClick={onContact}
-              disabled={!whatsappUrl || contacting}
-              className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:bg-gray-300 disabled:text-gray-600"
-            >
-              {contacting ? 'Contactando...' : 'Contactar responsable'}
-            </button>
-          </>
-        )}
-      </div>
+      {canManageEstado && (
+        <div className="flex items-center gap-3">
+          <Link
+            to={`/sucursales/${gestion.id_sucursal}`}
+            className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
+          >
+            Ver sucursal
+          </Link>
+          {reminderSlot}
+        </div>
+      )}
     </div>
   );
 }

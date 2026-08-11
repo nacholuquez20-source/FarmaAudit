@@ -7,7 +7,6 @@ import {
   CircleDot,
   ClipboardCheck,
   Minus,
-  MessageCircle,
   Pencil,
   Search,
   SprayCan,
@@ -17,10 +16,11 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
-import { getSucursalesDashboard } from '../lib/api';
-import { whatsappAuditLink, whatsappLink } from '../lib/utils';
+import { ReminderButton } from '../components/ReminderButton';
+import { getEstadoContactoSucursales, getSucursalesDashboard } from '../lib/api';
+import { whatsappAuditLink } from '../lib/utils';
 import { useAuth } from '../hooks/useAuth';
-import type { EstadoSalud, SucursalDashboard } from '../types';
+import type { EstadoContactoSucursal, EstadoSalud, SucursalDashboard } from '../types';
 
 type Filtro = 'todas' | 'critica' | 'atencion' | 'ok' | 'sin_datos' | 'perfumeria';
 
@@ -50,6 +50,32 @@ function diasLabel(dias: number | null): string {
   return `Hace ${dias} días`;
 }
 
+// Tres redacciones distintas para tres problemas distintos: nunca respondió
+// (puede ser un teléfono mal cargado), sin novedades hace tiempo (hay que
+// reclamar), o respondió y el turno pasó a ser del auditor.
+function silencioLabel(s: SucursalDashboard): { texto: string; tono: string } | null {
+  if (s.desvios_para_revisar > 0) {
+    return { texto: `Respondió — falta que revises ${s.desvios_para_revisar} corrección${s.desvios_para_revisar === 1 ? '' : 'es'}`, tono: 'text-blue-700' };
+  }
+  if (s.desvios_abiertos === 0) return null;
+  if (s.dias_sin_accion === null) {
+    return { texto: 'Nunca respondió', tono: 'text-purple-700' };
+  }
+  if (s.dias_sin_accion === 0) return { texto: 'Respondió hoy', tono: 'text-gray-500' };
+  return { texto: `Sin novedades hace ${s.dias_sin_accion} día${s.dias_sin_accion === 1 ? '' : 's'}`, tono: 'text-gray-600' };
+}
+
+// Prioridad real de trabajo, no solo salud: primero lo que exige al auditor,
+// después lo que se le puede reclamar a alguien, después lo que está
+// bloqueado por falta de encargado (no tiene sentido que compita arriba de
+// la lista si no hay nada que hacer todavía).
+function prioridad(s: SucursalDashboard, tieneEncargado: boolean): number {
+  if (s.desvios_para_revisar > 0) return 0;
+  if (s.desvios_vencidos > 0 && tieneEncargado) return 1;
+  if (s.desvios_abiertos > 0 && !tieneEncargado) return 2;
+  return 3;
+}
+
 function SkeletonCard() {
   return (
     <div className="animate-pulse rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
@@ -73,12 +99,20 @@ export default function SucursalesDashboard() {
   const navigate = useNavigate();
 
   const [data, setData] = useState<SucursalDashboard[]>([]);
+  const [contacto, setContacto] = useState<Record<string, EstadoContactoSucursal>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filtro, setFiltro] = useState<Filtro>('todas');
 
   const canAudit = role === 'admin' || role === 'auditor';
+
+  const recargarContacto = () => {
+    if (!canAudit) return;
+    getEstadoContactoSucursales()
+      .then((rows) => setContacto(Object.fromEntries(rows.map((r) => [r.id_sucursal, r]))))
+      .catch(() => setContacto({}));
+  };
 
   useEffect(() => {
     let active = true;
@@ -92,10 +126,21 @@ export default function SucursalesDashboard() {
       .finally(() => {
         if (active) setLoading(false);
       });
+    // El estado de contacto es admin/auditor-only (usuarios_whatsapp es RLS
+    // admin-only en el backend) — un fallo acá no debe tapar la lista.
+    if (canAudit) {
+      getEstadoContactoSucursales()
+        .then((rows) => {
+          if (active) setContacto(Object.fromEntries(rows.map((r) => [r.id_sucursal, r])));
+        })
+        .catch(() => {
+          if (active) setContacto({});
+        });
+    }
     return () => {
       active = false;
     };
-  }, []);
+  }, [canAudit]);
 
   // La 'sucursal' rara vez cae acá (ve "Mi sucursal"), pero por las dudas la
   // acotamos a su propia sucursal.
@@ -119,6 +164,14 @@ export default function SucursalesDashboard() {
     );
   }, [scoped]);
 
+  // Cuántas sucursales tienen desvíos abiertos pero nadie a quien reclamarle
+  // — la palanca de mayor impacto: sin esto, cualquier botón de recordatorio
+  // es lindo y vacío.
+  const sinEncargadoBloqueadas = useMemo(
+    () => scoped.filter((s) => s.desvios_abiertos > 0 && !contacto[s.id]?.tiene_telefono),
+    [scoped, contacto],
+  );
+
   const visibles = useMemo(() => {
     const q = search.trim().toLowerCase();
     return scoped
@@ -132,13 +185,17 @@ export default function SucursalesDashboard() {
         return [s.nombre, s.zona, s.responsable, s.id].join(' ').toLowerCase().includes(q);
       })
       .sort((a, b) => {
+        const tieneA = Boolean(contacto[a.id]?.tiene_telefono);
+        const tieneB = Boolean(contacto[b.id]?.tiene_telefono);
+        const p = prioridad(a, tieneA) - prioridad(b, tieneB);
+        if (p !== 0) return p;
         const r = RANK[a.estado_salud] - RANK[b.estado_salud];
         if (r !== 0) return r;
         // Dentro del mismo estado, más vencidos primero, luego más viejas.
         if (b.desvios_vencidos !== a.desvios_vencidos) return b.desvios_vencidos - a.desvios_vencidos;
         return (b.dias_desde_auditoria ?? 9999) - (a.dias_desde_auditoria ?? 9999);
       });
-  }, [scoped, filtro, search]);
+  }, [scoped, filtro, search, contacto]);
 
   const filtros: { key: Filtro; label: string; count?: number; dot?: string }[] = [
     { key: 'todas', label: 'Todas', count: scoped.length },
@@ -208,6 +265,21 @@ export default function SucursalesDashboard() {
         </div>
       )}
 
+      {canAudit && sinEncargadoBloqueadas.length > 0 && (
+        <div className="mb-5 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            <strong>{sinEncargadoBloqueadas.length} sucursal{sinEncargadoBloqueadas.length === 1 ? '' : 'es'}</strong> con
+            desvíos abiertos no tiene{sinEncargadoBloqueadas.length === 1 ? '' : 'n'} encargado cargado — no se le
+            {sinEncargadoBloqueadas.length === 1 ? '' : 's'} puede reclamar nada (
+            {sinEncargadoBloqueadas.reduce((acc, s) => acc + s.desvios_abiertos, 0)} desvíos trabados).{' '}
+            <a href="/admin?tab=whatsapp" className="font-semibold underline hover:no-underline">
+              Cargar encargados
+            </a>
+          </span>
+        </div>
+      )}
+
       {/* Grid */}
       {loading ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -226,8 +298,9 @@ export default function SucursalesDashboard() {
           {visibles.map((s) => {
             const meta = SALUD_META[s.estado_salud];
             const Icon = meta.icon;
-            const wa = whatsappLink(s.tel_responsable);
             const sinDatos = s.estado_salud === 'sin_datos';
+            const silencio = silencioLabel(s);
+            const estadoSuc = contacto[s.id];
             return (
               <div
                 key={s.id}
@@ -295,26 +368,29 @@ export default function SucursalesDashboard() {
                         </span>
                       </div>
                     )}
+                    {silencio && <div className={`text-xs font-medium ${silencio.tono}`}>{silencio.texto}</div>}
                   </div>
                 )}
 
                 {/* Footer: encargado + acciones */}
                 <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-3">
-                  <span className={`truncate text-xs ${s.responsable ? 'text-gray-500' : 'text-gray-300'}`} title={s.responsable || ''}>
-                    👤 {s.responsable || 'Sin encargado'}
+                  <span
+                    className={`truncate text-xs ${estadoSuc?.encargado_nombre ? 'text-gray-500' : 'text-gray-300'}`}
+                    title={estadoSuc?.encargado_nombre || s.responsable || ''}
+                  >
+                    👤 {estadoSuc?.encargado_nombre || s.responsable || 'Sin encargado'}
                   </span>
                   <div className="flex items-center gap-1">
-                    {wa && (
-                      <a
-                        href={wa}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="rounded-md p-1.5 text-green-600 transition hover:bg-green-50"
-                        title="Contactar por WhatsApp"
-                      >
-                        <MessageCircle className="h-4 w-4" />
-                      </a>
+                    {canAudit && s.desvios_abiertos > 0 && (
+                      <ReminderButton
+                        idSucursal={s.id}
+                        sucursalNombre={s.nombre}
+                        cantidadDesvios={s.desvios_abiertos}
+                        diasSinAccion={s.dias_sin_accion}
+                        estadoContacto={contacto[s.id]}
+                        onSent={recargarContacto}
+                        compact
+                      />
                     )}
                     {canAudit && (
                       <a

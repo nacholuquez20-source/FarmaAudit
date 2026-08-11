@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -15,13 +15,15 @@ import {
 } from 'lucide-react';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
+import { ReminderButton } from '../components/ReminderButton';
+import { useAuth } from '../hooks/useAuth';
 import { useControlStock } from '../hooks/useControlStock';
 import { useGestion } from '../hooks/useGestion';
 import { useReportes } from '../hooks/useReportes';
-import { getSucursal } from '../lib/api';
+import { getEstadoContactoSucursales, getSucursal } from '../lib/api';
 import { supabase } from '../lib/supabase';
 import { diasDesde, esMesActual, formatDate, gestionStateLabel, severidadColor, whatsappAuditLink, whatsappLink } from '../lib/utils';
-import type { AuditFicha, EstadoSalud, Sucursal, SucursalDetailTab } from '../types';
+import type { AuditFicha, EstadoContactoSucursal, EstadoSalud, Sucursal, SucursalDetailTab } from '../types';
 
 type AuditFiche = AuditFicha;
 
@@ -68,17 +70,43 @@ function diasLabel(dias: number | null): string {
 
 export default function SucursalDetail() {
   const { id } = useParams<{ id: string }>();
+  const { role } = useAuth();
   const [sucursal, setSucursal] = useState<Sucursal | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<SucursalDetailTab>('resumen');
   const [fichas, setFichas] = useState<AuditFiche[]>([]);
   const [fichasLoading, setFichasLoading] = useState(true);
+  const [estadoContacto, setEstadoContacto] = useState<EstadoContactoSucursal | undefined>(undefined);
   const navigate = useNavigate();
+
+  const canAudit = role === 'admin' || role === 'auditor';
 
   const { reportes } = useReportes(id ? { sucursal_id: id } : undefined);
   const { gestiones } = useGestion(id ? { sucursal_id: id } : undefined);
   const { items: stockItems } = useControlStock(id);
+
+  const recargarEstadoContacto = () => {
+    if (!id || !canAudit) return;
+    getEstadoContactoSucursales()
+      .then((rows) => setEstadoContacto(rows.find((r) => r.id_sucursal === id)))
+      .catch(() => setEstadoContacto(undefined));
+  };
+
+  useEffect(() => {
+    if (!id || !canAudit) return;
+    let active = true;
+    getEstadoContactoSucursales()
+      .then((rows) => {
+        if (active) setEstadoContacto(rows.find((r) => r.id_sucursal === id));
+      })
+      .catch(() => {
+        if (active) setEstadoContacto(undefined);
+      });
+    return () => {
+      active = false;
+    };
+  }, [id, canAudit]);
 
   React.useEffect(() => {
     const loadSucursal = async () => {
@@ -131,6 +159,14 @@ export default function SucursalDetail() {
     };
   }, [id]);
 
+  // La pestaña Gestiones muestra solo lo abierto por defecto: antes mostraba
+  // todo (abiertos + cerrados), y su contador no coincidía con el KPI
+  // "Desvíos abiertos" del Resumen — misma sucursal, dos números distintos.
+  const gestionesAbiertas = useMemo(
+    () => gestiones.filter((g) => g.estado !== 'Resuelta' && g.estado !== 'Cerrada'),
+    [gestiones],
+  );
+
   // Métricas derivadas para el Resumen (mismo criterio que la vista SQL).
   const resumen = useMemo(() => {
     const isOpen = (estado: string) => estado !== 'Resuelta' && estado !== 'Cerrada';
@@ -177,7 +213,7 @@ export default function SucursalDetail() {
   const tabs: { key: SucursalDetailTab; label: string }[] = [
     { key: 'resumen', label: 'Resumen' },
     { key: 'reportes', label: `Hallazgos (${reportes.length})` },
-    { key: 'gestiones', label: `Gestiones (${gestiones.length})` },
+    { key: 'gestiones', label: `Gestiones (${gestionesAbiertas.length})` },
     { key: 'stock', label: `Stock (${stockItems.length})` },
     { key: 'auditorias', label: 'Auditorías' },
   ];
@@ -221,16 +257,26 @@ export default function SucursalDetail() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            {wa && (
-              <a
-                href={wa}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 rounded-lg border border-green-200 px-3 py-2 text-sm font-medium text-green-700 transition hover:bg-green-50"
-              >
-                <MessageCircle className="h-4 w-4" />
-                WhatsApp
-              </a>
+            {canAudit && resumen.abiertos > 0 ? (
+              <ReminderButton
+                idSucursal={sucursal.id}
+                sucursalNombre={sucursal.nombre}
+                cantidadDesvios={resumen.abiertos}
+                estadoContacto={estadoContacto}
+                onSent={recargarEstadoContacto}
+              />
+            ) : (
+              wa && (
+                <a
+                  href={wa}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-green-200 px-3 py-2 text-sm font-medium text-green-700 transition hover:bg-green-50"
+                >
+                  <MessageCircle className="h-4 w-4" />
+                  WhatsApp
+                </a>
+              )
             )}
             <a
               href={whatsappAuditLink()}
@@ -478,8 +524,12 @@ export default function SucursalDetail() {
                 </tr>
               </thead>
               <tbody>
-                {gestiones.map((gestion) => (
-                  <tr key={gestion.id_gestion} className="border-b hover:bg-gray-50">
+                {gestionesAbiertas.map((gestion) => (
+                  <tr
+                    key={gestion.id_gestion}
+                    onClick={() => navigate(role === 'sucursal' ? `/mis-desvios/${gestion.id_gestion}` : `/desvios/${gestion.id_gestion}`)}
+                    className="cursor-pointer border-b hover:bg-gray-50"
+                  >
                     <td className="px-6 py-4 text-sm">{gestion.desvio}</td>
                     <td className="px-6 py-4 text-sm">
                       <span className={`px-3 py-1 rounded text-xs font-semibold ${severidadColor(gestion.severidad)}`}>
@@ -603,7 +653,7 @@ export default function SucursalDetail() {
         </div>
 
         {((activeTab === 'reportes' && reportes.length === 0) ||
-          (activeTab === 'gestiones' && gestiones.length === 0) ||
+          (activeTab === 'gestiones' && gestionesAbiertas.length === 0) ||
           (activeTab === 'stock' && stockItems.length === 0)) && (
           <div className="p-4">
             <FeedbackState title="No se encontraron datos" />

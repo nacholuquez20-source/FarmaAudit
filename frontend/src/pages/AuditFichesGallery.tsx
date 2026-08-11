@@ -254,7 +254,7 @@ export default function AuditFichesGallery() {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
-    <AppLayout title="Auditorias">
+    <AppLayout title="Auditorías">
       {/* Filtros */}
       <div className="mb-6 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
@@ -457,7 +457,7 @@ export default function AuditFichesGallery() {
                 <span className="font-medium text-gray-900">{selected.responsable_desvios || '-'}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-500">Puntuacion</span>
+                <span className="text-gray-500">Puntuación</span>
                 <span
                   className={`rounded-full px-2.5 py-0.5 text-xs font-bold text-white ${scoreBadgeClasses(selected.puntuacion_promedio)}`}
                 >
@@ -501,9 +501,13 @@ export default function AuditFichesGallery() {
             {/* Desvios de esta ficha (ARQUITECTURA_PANEL_DESVIOS.md §6) */}
             <div className="border-t border-gray-200 px-5 py-4">
               {loadingFichaGestiones ? (
-                <p className="text-sm text-gray-500">Cargando desvios...</p>
+                <p className="text-sm text-gray-500">Cargando desvíos...</p>
               ) : fichaGestiones.length === 0 ? (
-                <p className="text-sm text-gray-500">Esta ficha no generó desvíos.</p>
+                <p className="text-sm text-gray-500">
+                  {selected.desvios_count > 0
+                    ? 'Los desvíos de esta auditoría son anteriores al vínculo — no se pueden listar acá.'
+                    : 'Esta ficha no generó desvíos.'}
+                </p>
               ) : (
                 <>
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">

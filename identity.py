@@ -13,7 +13,10 @@ envoltorios finos sobre resolve_whatsapp_user para no tener que tocar los
 import logging
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import List, Optional
+
+VENTANA_META_HORAS = 24
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +39,20 @@ class WhatsAppUser:
     activo: bool
     id_sucursal: Optional[str] = None
     tipos_auditoria: List[str] = field(default_factory=list)
+    ultimo_mensaje_entrante_at: Optional[str] = None
+
+
+def ventana_abierta(usuario: WhatsAppUser) -> bool:
+    """True si el usuario escribió al bot en las últimas 24h (ventana de
+    mensajería de Meta: fuera de esa ventana, send_text no entrega)."""
+    if not usuario.ultimo_mensaje_entrante_at:
+        return False
+    try:
+        ultimo = datetime.fromisoformat(usuario.ultimo_mensaje_entrante_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    delta = datetime.now(timezone.utc) - ultimo
+    return delta.total_seconds() < VENTANA_META_HORAS * 3600
 
 
 def resolve_whatsapp_user(telefono: str) -> Optional[WhatsAppUser]:
@@ -114,6 +131,7 @@ def resolve_responsable_by_sucursal(id_sucursal: str) -> Optional[WhatsAppUser]:
             rol=row.get("rol", ""),
             activo=bool(row.get("activo", False)),
             id_sucursal=row.get("id_sucursal"),
+            ultimo_mensaje_entrante_at=row.get("ultimo_mensaje_entrante_at"),
         )
     except Exception as e:
         logger.error(f"Failed to resolve responsable for sucursal {id_sucursal}: {e}")

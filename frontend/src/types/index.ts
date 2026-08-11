@@ -66,7 +66,33 @@ export interface SucursalDashboard {
   dias_desde_auditoria: number | null;
   desvios_abiertos: number;
   desvios_vencidos: number;
+  /** Gestiones con en_revision_desde no nulo: el encargado ya mandó su corrección, el turno es del auditor. */
+  desvios_para_revisar: number;
+  /** Último evento de tipo respuesta/evidencia, o mensaje con metadata.origen='sucursal' (etapa-24). */
+  ultima_accion_encargado: string | null;
+  /** null = el encargado nunca actuó (distinto de "hace mucho"). */
+  dias_sin_accion: number | null;
   estado_salud: EstadoSalud;
+}
+
+// ============ Seguimiento del encargado + recordatorios (etapa-24) ============
+
+export interface EstadoContactoSucursal {
+  id_sucursal: string;
+  encargado_nombre: string | null;
+  encargado_telefono: string | null;
+  tiene_telefono: boolean;
+  ventana_abierta: boolean;
+  ultimo_recordatorio_at: string | null;
+  proximo_disponible_at: string | null;
+}
+
+export type RecordatorioResultado = 'enviado' | 'fallido' | 'sin_ventana' | 'sin_encargado' | 'cooldown';
+
+export interface RecordatorioSucursalResponse {
+  resultado: RecordatorioResultado;
+  proximo_disponible_at?: string;
+  ultimo_mensaje?: string | null;
 }
 
 export interface SucursalUpdate {
@@ -280,6 +306,8 @@ export interface UsuarioWhatsapp {
 export interface ResponsableActivo {
   responsable: { nombre: string; telefono: string } | null;
   ventana_abierta: boolean;
+  cantidad_desvios_abiertos: number;
+  proximo_disponible_at: string | null;
 }
 
 export type DesvioEntregaEstado = 'enviado' | 'fallido' | 'sin_ventana';

@@ -9,6 +9,8 @@ import type {
   Auditor,
   AuditFicha,
   ResponsableActivo,
+  EstadoContactoSucursal,
+  RecordatorioSucursalResponse,
   TipoAuditoria,
   UsuarioWhatsapp,
   CreateUsuarioWhatsappInput,
@@ -291,31 +293,39 @@ export async function revisarGestion(input: {
   return response.json();
 }
 
-export async function notificarEncargado(input: {
-  idGestion: string;
-  telefonoEncargado: string;
-  descripcionDesvio: string;
-  sucursal?: string;
-}): Promise<void> {
+export async function getEstadoContactoSucursales(): Promise<EstadoContactoSucursal[]> {
   const apiUrl = getBotApiUrl();
   if (!apiUrl) {
     throw new Error('Falta configurar VITE_API_URL con la URL del bot.');
   }
-
-  const response = await fetch(`${apiUrl}/api/send-encargado-notification`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      id_gestion: input.idGestion,
-      telefono_encargado: input.telefonoEncargado,
-      descripcion_desvio: input.descripcionDesvio,
-      sucursal: input.sucursal,
-    }),
+  const response = await fetch(`${apiUrl}/api/sucursales/estado-contacto`, {
+    headers: await getAuthHeaders(),
   });
-
   if (!response.ok) {
-    throw new Error('No se pudo notificar al encargado por WhatsApp.');
+    throw new Error('No se pudo cargar el estado de contacto de las sucursales.');
   }
+  const data = await response.json();
+  return data.sucursales;
+}
+
+export async function postRecordatorioSucursal(idSucursal: string): Promise<RecordatorioSucursalResponse> {
+  const apiUrl = getBotApiUrl();
+  if (!apiUrl) {
+    throw new Error('Falta configurar VITE_API_URL con la URL del bot.');
+  }
+  const response = await fetch(`${apiUrl}/api/sucursales/${idSucursal}/recordatorio`, {
+    method: 'POST',
+    headers: await getAuthHeaders(),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    // El backend siempre manda {resultado, ...} en detail para los casos
+    // esperados (cooldown/sin_ventana/sin_encargado/fallido) — se devuelve
+    // igual que un 200 para que el llamador lo maneje con el mismo switch.
+    if (body?.detail?.resultado) return body.detail;
+    throw new Error('No se pudo enviar el recordatorio.');
+  }
+  return body;
 }
 
 export async function getResponsableActivo(idGestion: string): Promise<ResponsableActivo> {

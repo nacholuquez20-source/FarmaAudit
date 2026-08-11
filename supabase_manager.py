@@ -879,66 +879,132 @@ class SupabaseManager:
             logger.error(f"Failed to get stale en_revision gestiones: {e}")
             return []
 
-    def get_gestiones_pendientes_recordatorio(self, intervalo_dias: int = 3) -> List[Dict[str, Any]]:
-        """Group open gestiones by branch manager, for a recurring "you still have
-        pending desvios" reminder (separate from the one-time notice sent right
-        after the audit — see _notify_responsable_desvios_pendientes).
+    def _agrupar_gestiones_abiertas_por_sucursal(self) -> Dict[str, Dict[str, Any]]:
+        """Todas las gestiones abiertas, agrupadas por id_sucursal — la base que
+        comparten el job de recordatorio (que filtra por antiguedad multiplo de
+        N dias) y el boton manual de recordatorio (que consulta una sucursal
+        puntual sin ese filtro).
 
-        No extra "last reminded" column needed: this is meant to run once a day,
-        and only returns a manager's group when the age (in days, since the
+        Se agrupa por id_sucursal, no por telefono: el responsable se resuelve
+        en vivo contra usuarios_whatsapp recien al mandar el recordatorio (ver
+        remind_responsable_desvios_pendientes en main.py), asi un cambio de
+        responsable no deja pingueando al telefono viejo.
+        """
+        response = (
+            self.client.table("gestion")
+            .select("id_gestion, sucursal, id_sucursal, created_at")
+            .in_("estado", ["Abierta", "En_proceso", "Vencida"])
+            .execute()
+        )
+        rows = response.data or []
+        now = datetime.now(timezone.utc)
+
+        groups: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            id_sucursal = row.get("id_sucursal")
+            if not id_sucursal:
+                continue
+            created_at = row.get("created_at")
+            if not created_at:
+                continue
+            try:
+                created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+
+            group = groups.setdefault(id_sucursal, {
+                "id_sucursal": id_sucursal,
+                "sucursales": set(),
+                "cantidad": 0,
+                "dias_abierto_max": 0,
+            })
+            group["sucursales"].add(row.get("sucursal") or "")
+            group["cantidad"] += 1
+            dias_abierto = (now - created).days
+            group["dias_abierto_max"] = max(group["dias_abierto_max"], dias_abierto)
+
+        for group in groups.values():
+            group["sucursales"] = sorted(s for s in group["sucursales"] if s)
+        return groups
+
+    def get_gestiones_pendientes_recordatorio(self, intervalo_dias: int = 3) -> List[Dict[str, Any]]:
+        """Group open gestiones by branch, for the recurring "you still have
+        pending desvios" cron reminder (separate from the one-time notice sent
+        right after the audit — see _notify_responsable_desvios_pendientes).
+
+        No extra "last reminded" column needed for the cron: it's meant to run
+        once a day, and only returns a branch when the age (in days, since the
         oldest still-open gestion was created) is a multiple of intervalo_dias —
-        so a manager sees one reminder every N days for as long as something
-        stays open, and never twice on the same day.
+        so a manager sees one automatic reminder every N days for as long as
+        something stays open, and never twice on the same day.
         """
         try:
-            response = (
-                self.client.table("gestion")
-                .select("id_gestion, sucursal, id_sucursal, created_at")
-                .in_("estado", ["Abierta", "En_proceso", "Vencida"])
-                .execute()
-            )
-            rows = response.data or []
-            now = datetime.now(timezone.utc)
-
-            # Se agrupa por id_sucursal, no por telefono: el responsable se
-            # resuelve en vivo contra usuarios_whatsapp recien al mandar el
-            # recordatorio (ver remind_responsable_desvios_pendientes en
-            # main.py), asi un cambio de responsable no deja pingueando al
-            # telefono viejo.
-            groups: Dict[str, Dict[str, Any]] = {}
-            for row in rows:
-                id_sucursal = row.get("id_sucursal")
-                if not id_sucursal:
-                    continue
-                created_at = row.get("created_at")
-                if not created_at:
-                    continue
-                try:
-                    created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                except ValueError:
-                    continue
-
-                group = groups.setdefault(id_sucursal, {
-                    "id_sucursal": id_sucursal,
-                    "sucursales": set(),
-                    "cantidad": 0,
-                    "dias_abierto_max": 0,
-                })
-                group["sucursales"].add(row.get("sucursal") or "")
-                group["cantidad"] += 1
-                dias_abierto = (now - created).days
-                group["dias_abierto_max"] = max(group["dias_abierto_max"], dias_abierto)
-
-            due = []
-            for group in groups.values():
-                dias = group["dias_abierto_max"]
-                if dias > 0 and dias % intervalo_dias == 0:
-                    group["sucursales"] = sorted(s for s in group["sucursales"] if s)
-                    due.append(group)
+            groups = self._agrupar_gestiones_abiertas_por_sucursal()
+            due = [
+                group for group in groups.values()
+                if group["dias_abierto_max"] > 0 and group["dias_abierto_max"] % intervalo_dias == 0
+            ]
             return due
         except Exception as e:
             logger.error(f"Failed to get gestiones pendientes for reminder: {e}")
             return []
+
+    def get_desvios_abiertos_por_sucursal(self, id_sucursal: str) -> Optional[Dict[str, Any]]:
+        """Como get_gestiones_pendientes_recordatorio, pero para una sucursal
+        puntual y sin el filtro de "multiplo de N dias" — para el boton manual
+        de recordatorio, que necesita saber ahora mismo si hay algo pendiente,
+        no solo los dias en que el cron decide avisar."""
+        try:
+            groups = self._agrupar_gestiones_abiertas_por_sucursal()
+            return groups.get(id_sucursal)
+        except Exception as e:
+            logger.error(f"Failed to get desvios abiertos for sucursal {id_sucursal}: {e}")
+            return None
+
+    def registrar_recordatorio_sucursal(
+        self,
+        id_sucursal: str,
+        canal: str,
+        resultado: str,
+        enviado_por: Optional[str] = None,
+        detalle: Optional[str] = None,
+        cantidad_desvios: Optional[int] = None,
+    ) -> bool:
+        """Deja constancia de un intento de recordatorio (enviado o no). Sin esto
+        no hay forma de calcular el cooldown ni de ver que el job automatico
+        esta fallando en silencio para quien tiene la ventana cerrada."""
+        try:
+            self.client.table("recordatorios_sucursal").insert({
+                "id_sucursal": id_sucursal,
+                "canal": canal,
+                "resultado": resultado,
+                "enviado_por": enviado_por,
+                "detalle": detalle,
+                "cantidad_desvios": cantidad_desvios,
+            }).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to log recordatorio for sucursal {id_sucursal}: {e}")
+            return False
+
+    def get_ultimo_recordatorio_enviado(self, id_sucursal: str) -> Optional[Dict[str, Any]]:
+        """Ultimo recordatorio con resultado='enviado' para una sucursal, para
+        calcular el cooldown de 24h del boton manual."""
+        try:
+            response = (
+                self.client.table("recordatorios_sucursal")
+                .select("enviado_at")
+                .eq("id_sucursal", id_sucursal)
+                .eq("resultado", "enviado")
+                .order("enviado_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            rows = response.data or []
+            return rows[0] if rows else None
+        except Exception as e:
+            logger.error(f"Failed to get ultimo recordatorio for sucursal {id_sucursal}: {e}")
+            return None
 
     def update_gestion_fields(self, id_gestion: str, fields: Dict[str, Any]) -> bool:
         """Update arbitrary fields of a gestion record."""
