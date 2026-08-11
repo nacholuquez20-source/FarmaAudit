@@ -34,14 +34,16 @@ El otro norte de esta etapa fue **coherencia y confiabilidad, no features**. El 
    por log al arrancar. Con WhatsApp como único canal, es el agujero más serio que queda abierto.
 4. **`etapa-16-campania-sucursal-rls.sql`** sigue sin correr. Sin ella, `/mis-campanias` devuelve 0 filas para
    el rol `sucursal` por RLS. Solo importa si vas a tocar campañas.
-5. ~~`SUPABASE_SERVICE_KEY` legacy deshabilitada.~~ **Resuelto 2026-08-11** (`3414155`), y fue más grave de lo
-   que parecía al principio — **Railway estaba caído**, no solo el `.env` local. Detalle abajo en "Supabase
-   cortó las keys legacy — Railway estuvo caído".
-   - **Verificar ahora**: confirmar en el dashboard de Railway que el deploy de `3414155` salió bien y el
-     backend arrancó sin el error `Invalid API key`. La URL que tenía documentada `META_SETUP.md`
-     (`farmaaudit-production-3f78.up.railway.app`) devolvía *"Application not found"* de Railway en **todas**
-     las rutas al probarla esta sesión — puede ser que la URL real cambió y el doc quedó desactualizado; si
-     es así, corregir `META_SETUP.md` con la URL correcta.
+5. ~~`SUPABASE_SERVICE_KEY` legacy deshabilitada.~~ **Resuelto y verificado 2026-08-11** (`3414155`), y fue más
+   grave de lo que parecía al principio — **Railway estaba caído**, no solo el `.env` local. Deploy
+   `8eae4a0e` confirmado activo y sano: todas las queries a Supabase en 200 OK, sin `Invalid API key`. Detalle
+   en "Supabase cortó las keys legacy — Railway estuvo caído" más abajo.
+6. **⚠️ Confirmar la URL del webhook en Meta Developers.** La URL real de Railway es
+   `farmaaudit-production.up.railway.app` (sin el sufijo `-3f78` que tenía documentado `META_SETUP.md` — ya
+   corregido). Si Meta Developers todavía tiene configurada la URL vieja (`-3f78`) como webhook, **los
+   mensajes de WhatsApp no están llegando al bot en absoluto** — esto no se pudo verificar desde acá, hay que
+   entrar a Meta for Developers → tu app → WhatsApp → Configuration y confirmar que el campo "Callback URL"
+   diga `https://farmaaudit-production.up.railway.app/webhook`.
 
 ---
 
@@ -129,8 +131,10 @@ Fix: `supabase` `2.0.3` → `2.31.0`, más `httpx<0.25.0` → `httpx>=0.26,<0.29
 rango más ancho no choca con ellos). Verificado localmente con la key nueva: arranque limpio, sin errores de
 Supabase, y el endpoint de responsable-activo del Bloque 3 devolviendo datos reales.
 
-**Al retomar**: confirmar en Railway que `3414155` se deployó y el backend arrancó bien (ver ítem 5 de "Primer
-paso al retomar" más arriba).
+**Confirmado en vivo**: deploy `8eae4a0e` (`farmaaudit-production.up.railway.app`) activo, logs limpios, todas
+las queries a Supabase en 200 OK. `/health` responde sano desde afuera también. Lo único que quedó sin poder
+verificar desde acá es si Meta Developers apunta a esta URL o a la vieja `-3f78` — ver ítem 6 de "Primer paso
+al retomar" más arriba, es el único cabo suelto real de este incidente.
 
 ---
 

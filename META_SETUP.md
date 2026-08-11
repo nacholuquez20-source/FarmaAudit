@@ -3,7 +3,7 @@
 ## Estado Actual
 - **Proyecto**: FarmaAudit (WhatsApp QA audit system)
 - **Integración**: Meta WhatsApp Cloud API
-- **Deployment**: Railway en `farmaaudit-production-3f78.up.railway.app`
+- **Deployment**: Railway en `farmaaudit-production.up.railway.app`
 - **Código**: Webhook JSON de Meta integrado
 
 ## Archivos Modificados
@@ -55,7 +55,7 @@ META_VERIFY_TOKEN=your_verify_token_here
 ```
 
 ## Webhook
-- **URL en Meta Developers**: `https://farmaaudit-production-3f78.up.railway.app/webhook`
+- **URL en Meta Developers**: `https://farmaaudit-production.up.railway.app/webhook`
 - **Method**: POST
 - **Content-Type**: application/json
 - **Endpoint en código**: `/webhook` en `main.py`, maneja `WhatsAppPayload`, parsea JSON
