@@ -150,6 +150,7 @@ class AuditSession:
 
     # Post-audit fields (persisted so they survive session reload between messages)
     pending_ficha_reporte_id: Optional[str] = None   # reporte_id deferred until responsable is known
+    pending_ficha_gestion_ids: List[str] = field(default_factory=list)  # gestion ids to link once ficha_id exists
     desvios_responsable: Optional[str] = None         # name of person responsible for desvíos
     ficha_url: Optional[str] = None                   # Drive URL of the generated PDF
 
@@ -192,6 +193,7 @@ class AuditSession:
             'verification_menu': self.verification_menu,
             'awaiting_note_text': self.awaiting_note_text,
             'pending_ficha_reporte_id': self.pending_ficha_reporte_id,
+            'pending_ficha_gestion_ids': self.pending_ficha_gestion_ids,
             'desvios_responsable': self.desvios_responsable,
             'ficha_url': self.ficha_url,
             'created_at': self.created_at,

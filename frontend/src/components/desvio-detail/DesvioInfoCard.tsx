@@ -1,15 +1,16 @@
 import { formatDate } from '../../lib/utils';
 import { StatusBadge } from '../StatusBadge';
 import { SeverityBadge } from '../SeverityBadge';
-import type { Gestion, Reporte } from '../../types';
+import type { AuditFicha, Gestion, Reporte } from '../../types';
 
 interface DesvioInfoCardProps {
   gestion: Gestion;
   reporte: Reporte | null;
+  ficha: AuditFicha | null;
   dueState: { label: string; className: string };
 }
 
-export function DesvioInfoCard({ gestion, reporte, dueState }: DesvioInfoCardProps) {
+export function DesvioInfoCard({ gestion, reporte, ficha, dueState }: DesvioInfoCardProps) {
   return (
     <section className="rounded-lg bg-white p-6 shadow lg:col-span-2">
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -37,6 +38,19 @@ export function DesvioInfoCard({ gestion, reporte, dueState }: DesvioInfoCardPro
         <div>
           <div className="text-sm text-gray-500">Fecha reporte</div>
           <div className="font-medium">{reporte?.fecha ? formatDate(reporte.fecha) : '-'}</div>
+        </div>
+        <div>
+          <div className="text-sm text-gray-500">Auditoria</div>
+          <div className="font-medium">
+            {ficha ? (
+              <a href={`/auditorias?ficha=${ficha.id}`} className="text-primary-navy hover:underline">
+                Ver ficha ·{' '}
+                {ficha.puntuacion_promedio != null ? `${ficha.puntuacion_promedio.toFixed(1)}/5` : 'sin puntaje'}
+              </a>
+            ) : (
+              <span className="text-gray-400">Auditoria no vinculada</span>
+            )}
+          </div>
         </div>
       </div>
 

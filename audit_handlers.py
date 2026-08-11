@@ -1708,6 +1708,7 @@ class AuditConversationHandler:
                 # Store reporte_id in session so ficha can be generated after responsable is collected
                 reporte_id = result.get("id_reporte") if isinstance(result, dict) else None
                 session.pending_ficha_reporte_id = reporte_id
+                session.pending_ficha_gestion_ids = result.get("gestion_ids", []) if isinstance(result, dict) else []
 
                 # Manager notification (non-blocking)
                 try:

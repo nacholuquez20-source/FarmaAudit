@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { createDesvioEvento, getDesvioEventos, getGestionById, getReporte, updateGestion } from '../lib/api';
-import type { CreateDesvioEventoInput, DesvioEvento, Gestion, GestionState, Reporte } from '../types';
+import { createDesvioEvento, getDesvioEventos, getFichaById, getGestionById, getReporte, updateGestion } from '../lib/api';
+import type { AuditFicha, CreateDesvioEventoInput, DesvioEvento, Gestion, GestionState, Reporte } from '../types';
 
 function getInitialEvent(gestion: Gestion): DesvioEvento {
   return {
@@ -18,6 +18,7 @@ function getInitialEvent(gestion: Gestion): DesvioEvento {
 export function useDesvioDetail(id?: string) {
   const [gestion, setGestion] = useState<Gestion | null>(null);
   const [reporte, setReporte] = useState<Reporte | null>(null);
+  const [ficha, setFicha] = useState<AuditFicha | null>(null);
   const [eventos, setEventos] = useState<DesvioEvento[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -43,19 +44,22 @@ export function useDesvioDetail(id?: string) {
           if (!cancelled) {
             setGestion(null);
             setReporte(null);
+            setFicha(null);
             setEventos([]);
           }
           return;
         }
 
-        const [reporteData, eventosData] = await Promise.all([
+        const [reporteData, fichaData, eventosData] = await Promise.all([
           gestionData.id_reporte ? getReporte(gestionData.id_reporte) : Promise.resolve(null),
+          gestionData.ficha_id ? getFichaById(gestionData.ficha_id) : Promise.resolve(null),
           getDesvioEventos(gestionData.id_gestion),
         ]);
 
         if (!cancelled) {
           setGestion(gestionData);
           setReporte(reporteData);
+          setFicha(fichaData);
           setEventos(eventosData);
           setEventsReady(true);
         }
@@ -108,6 +112,7 @@ export function useDesvioDetail(id?: string) {
   return {
     gestion,
     reporte,
+    ficha,
     eventos: timeline,
     loading,
     error,

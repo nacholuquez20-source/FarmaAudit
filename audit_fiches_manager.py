@@ -118,7 +118,19 @@ class AuditFichesManager:
             response = db.client.table("audit_fiches").insert(ficha_data).execute()
 
             if response.data:
+                ficha_id = response.data[0].get("id")
                 logger.info(f"Saved ficha for session {session.id_sesion}, Storage: {storage_path}")
+
+                # Link the gestiones created for this session to the ficha
+                # that contains them (ARQUITECTURA_PANEL_DESVIOS.md §6).
+                gestion_ids = session.pending_ficha_gestion_ids
+                if ficha_id and gestion_ids:
+                    try:
+                        db.client.table("gestion").update({"ficha_id": ficha_id}).in_(
+                            "id_gestion", gestion_ids
+                        ).execute()
+                    except Exception as link_exc:
+                        logger.warning(f"Failed to link gestiones to ficha {ficha_id}: {link_exc}")
             else:
                 logger.error(f"Failed to save ficha metadata: {response.error}")
             # Return the storage path (not the signed URL) so callers always

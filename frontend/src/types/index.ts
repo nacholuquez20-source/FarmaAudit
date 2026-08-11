@@ -114,6 +114,8 @@ export interface Gestion {
   plazo_fecha_original?: string | null;
   veces_rechazado?: number;
   en_revision_desde?: string | null;
+  /** FK a audit_fiches.id (etapa-22). Null en desvios que no vinieron de una auditoria WhatsApp, o historicos previos a la etapa. */
+  ficha_id?: string | null;
 }
 
 export interface GestionUpdate {
@@ -220,6 +222,27 @@ export interface Auditor {
   nombre: string;
   cuadrilla: string;
   activo: boolean;
+}
+
+// Ficha PDF de una auditoria WhatsApp v2 (perfumeria). Los score_* no tienen
+// migracion .sql que los agregue (deuda de schema ya documentada); existen en
+// la base y se leen igual.
+export interface AuditFicha {
+  id: string;
+  id_reporte: string;
+  sucursal_id: string;
+  auditor_nombre: string | null;
+  responsable_desvios: string | null;
+  fecha_auditoria: string | null;
+  created_at: string;
+  url_pdf: string | null;
+  desvios_count: number;
+  fotos_count: number;
+  puntuacion_promedio: number | null;
+  score_limpieza: number | null;
+  score_stock: number | null;
+  score_ofertas: number | null;
+  score_burbujas: number | null;
 }
 
 // ============ Identidad de WhatsApp (etapa-21) ============

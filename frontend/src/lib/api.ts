@@ -7,6 +7,7 @@ import type {
   Reporte,
   Gestion,
   Auditor,
+  AuditFicha,
   TipoAuditoria,
   UsuarioWhatsapp,
   CreateUsuarioWhatsappInput,
@@ -173,6 +174,26 @@ export async function getGestionById(id: string): Promise<Gestion | null> {
     .maybeSingle();
   if (error) throw new Error(handleApiError(error));
   return data;
+}
+
+export async function getFichaById(id: string): Promise<AuditFicha | null> {
+  const { data, error } = await supabase
+    .from('audit_fiches')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) throw new Error(handleApiError(error));
+  return data;
+}
+
+export async function getGestionesByFicha(fichaId: string): Promise<Gestion[]> {
+  const { data, error } = await supabase
+    .from('gestion')
+    .select('*')
+    .eq('ficha_id', fichaId)
+    .order('created_at');
+  if (error) throw new Error(handleApiError(error));
+  return data || [];
 }
 
 function isMissingTableError(error: { code?: string; message?: string }, tableName?: string): boolean {

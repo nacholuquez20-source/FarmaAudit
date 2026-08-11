@@ -77,27 +77,42 @@ class AuditAnalysisOrchestrator:
             return {}, [], []
         ficha = ficha_resp.data[0]
 
-        # Gestiones created on the same calendar day as the ficha.
-        # Se usa un límite superior EXCLUSIVo del día siguiente (< dia+1) en vez
-        # de "23:59:59", para no perder desvíos con fracción de segundo en el
-        # último segundo del día.
-        dia = (ficha.get("fecha_auditoria") or ficha.get("created_at") or "")[:10]
-        gestiones: list[dict] = []
-        if dia and ficha.get("sucursal_id"):
-            try:
-                dia_sig = (datetime.fromisoformat(dia) + timedelta(days=1)).date().isoformat()
-            except ValueError:
-                dia_sig = None
-            query = (
-                db.client.table("gestion")
-                .select("id_gestion,desvio,severidad,responsable,plazo_fecha,plan_accion,estado,area")
-                .eq("id_sucursal", ficha["sucursal_id"])
-                .gte("created_at", f"{dia}T00:00:00")
-            )
-            if dia_sig:
-                query = query.lt("created_at", f"{dia_sig}T00:00:00")
-            g_resp = query.order("created_at").execute()
-            gestiones = g_resp.data or []
+        # Gestiones que esta ficha creó de verdad (ver ARQUITECTURA_PANEL_DESVIOS.md
+        # §6): fichas nuevas tienen gestion.ficha_id poblado por
+        # audit_fiches_manager.generate_and_save_ficha al momento de la creación.
+        select_cols = "id_gestion,desvio,severidad,responsable,plazo_fecha,plan_accion,estado,area"
+        gestiones_resp = (
+            db.client.table("gestion")
+            .select(select_cols)
+            .eq("ficha_id", ficha_id)
+            .order("created_at")
+            .execute()
+        )
+        gestiones: list[dict] = gestiones_resp.data or []
+
+        if not gestiones:
+            # Ficha histórica, previa a la etapa-22: ficha_id nunca se pobló.
+            # Se mantiene el match heurístico por fecha+sucursal como único
+            # fallback para no perder análisis de auditorías viejas.
+            # Se usa un límite superior EXCLUSIVo del día siguiente (< dia+1) en vez
+            # de "23:59:59", para no perder desvíos con fracción de segundo en el
+            # último segundo del día.
+            dia = (ficha.get("fecha_auditoria") or ficha.get("created_at") or "")[:10]
+            if dia and ficha.get("sucursal_id"):
+                try:
+                    dia_sig = (datetime.fromisoformat(dia) + timedelta(days=1)).date().isoformat()
+                except ValueError:
+                    dia_sig = None
+                query = (
+                    db.client.table("gestion")
+                    .select(select_cols)
+                    .eq("id_sucursal", ficha["sucursal_id"])
+                    .gte("created_at", f"{dia}T00:00:00")
+                )
+                if dia_sig:
+                    query = query.lt("created_at", f"{dia_sig}T00:00:00")
+                g_resp = query.order("created_at").execute()
+                gestiones = g_resp.data or []
 
         # Last 5 fichas for the same sucursal (historical context)
         historico: list[dict] = []

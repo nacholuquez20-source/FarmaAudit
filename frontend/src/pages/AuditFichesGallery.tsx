@@ -1,33 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, Brain, Calendar, Camera, CheckCircle2, Download, FileText, FilterX, Loader2, TrendingDown, TrendingUp, X } from 'lucide-react';
 import { AppLayout } from '../components/AppLayout';
 import { Button } from '../components/Button';
 import { FeedbackState } from '../components/FeedbackState';
 import { Input } from '../components/Input';
 import { Select } from '../components/Select';
-import { analisisAuditoria, exportControlesPdf, getSucursales } from '../lib/api';
+import { analisisAuditoria, exportControlesPdf, getFichaById, getGestionesByFicha, getSucursales } from '../lib/api';
 import type { AnalisisAuditoria } from '../lib/api';
 import { supabase } from '../lib/supabase';
-import type { Sucursal } from '../types';
+import { useAuth } from '../hooks/useAuth';
+import type { AuditFicha, Gestion, Sucursal } from '../types';
 import { toast } from 'sonner';
 
-interface Ficha {
-  id: string;
-  sucursal_id: string;
-  auditor_nombre: string | null;
-  responsable_desvios: string | null;
-  fecha_auditoria: string | null;
-  created_at: string;
-  url_pdf: string | null;
-  desvios_count: number;
-  fotos_count: number;
-  puntuacion_promedio: number | null;
-  score_limpieza: number | null;
-  score_stock: number | null;
-  score_ofertas: number | null;
-  score_burbujas: number | null;
-}
+type Ficha = AuditFicha;
 
 const PAGE_SIZE = 24;
 
@@ -94,6 +80,7 @@ function dayLabel(key: string): string {
 
 export default function AuditFichesGallery() {
   const [searchParams] = useSearchParams();
+  const { role } = useAuth();
 
   const [fichas, setFichas] = useState<Ficha[]>([]);
   const [total, setTotal] = useState(0);
@@ -111,6 +98,8 @@ export default function AuditFichesGallery() {
   const [exporting, setExporting] = useState(false);
   const [analisis, setAnalisis] = useState<AnalisisAuditoria | null>(null);
   const [loadingAnalisis, setLoadingAnalisis] = useState(false);
+  const [fichaGestiones, setFichaGestiones] = useState<Gestion[]>([]);
+  const [loadingFichaGestiones, setLoadingFichaGestiones] = useState(false);
 
   const sucursalNombre = useMemo(() => {
     const map = new Map(sucursales.map((s) => [s.id, s.nombre]));
@@ -190,7 +179,29 @@ export default function AuditFichesGallery() {
     setSelected(ficha);
     setAnalisis(null);
     setLoadingAnalisis(false);
+    setFichaGestiones([]);
+    setLoadingFichaGestiones(true);
+    getGestionesByFicha(ficha.id)
+      .then(setFichaGestiones)
+      .catch(() => setFichaGestiones([]))
+      .finally(() => setLoadingFichaGestiones(false));
   };
+
+  // Deep-link desde DesvioDetail ("Ver ficha"): abre el modal de una ficha
+  // puntual aunque no esté en la página actual de la grilla.
+  useEffect(() => {
+    const fichaId = searchParams.get('ficha');
+    if (!fichaId) return;
+    let cancelled = false;
+    getFichaById(fichaId)
+      .then((ficha) => {
+        if (!cancelled && ficha) handleSelectFicha(ficha);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams]);
 
   const updateFilter = <T,>(setter: (value: T) => void) => (value: T) => {
     setter(value);
@@ -485,6 +496,36 @@ export default function AuditFichesGallery() {
                 <span className="text-gray-500">Fotos</span>
                 <span className="font-medium text-gray-900">{selected.fotos_count}</span>
               </div>
+            </div>
+
+            {/* Desvios de esta ficha (ARQUITECTURA_PANEL_DESVIOS.md §6) */}
+            <div className="border-t border-gray-200 px-5 py-4">
+              {loadingFichaGestiones ? (
+                <p className="text-sm text-gray-500">Cargando desvios...</p>
+              ) : fichaGestiones.length === 0 ? (
+                <p className="text-sm text-gray-500">Esta ficha no generó desvíos.</p>
+              ) : (
+                <>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    Desvios ·{' '}
+                    {fichaGestiones.filter((g) => g.estado === 'Resuelta' || g.estado === 'Cerrada').length} de{' '}
+                    {fichaGestiones.length} resueltos
+                  </p>
+                  <ul className="space-y-1">
+                    {fichaGestiones.map((g) => (
+                      <li key={g.id_gestion}>
+                        <Link
+                          to={role === 'sucursal' ? `/mis-desvios/${g.id_gestion}` : `/desvios/${g.id_gestion}`}
+                          className="flex items-center justify-between gap-2 text-sm text-primary-navy hover:underline"
+                        >
+                          <span className="truncate">{g.desvio}</span>
+                          <span className="shrink-0 text-xs text-gray-400">{g.estado}</span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
             </div>
 
             {/* Panel de análisis multi-agente */}

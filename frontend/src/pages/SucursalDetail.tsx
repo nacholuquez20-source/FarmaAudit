@@ -21,23 +21,9 @@ import { useReportes } from '../hooks/useReportes';
 import { getSucursal } from '../lib/api';
 import { supabase } from '../lib/supabase';
 import { diasDesde, esMesActual, formatDate, gestionStateLabel, severidadColor, whatsappAuditLink, whatsappLink } from '../lib/utils';
-import type { EstadoSalud, Sucursal, SucursalDetailTab } from '../types';
+import type { AuditFicha, EstadoSalud, Sucursal, SucursalDetailTab } from '../types';
 
-interface AuditFiche {
-  id: string;
-  created_at: string;
-  fecha_auditoria: string | null;
-  sucursal_id: string;
-  auditor_nombre: string;
-  score_limpieza: number | null;
-  score_stock: number | null;
-  score_ofertas: number | null;
-  score_burbujas: number | null;
-  desvios_count: number;
-  fotos_count: number;
-  puntuacion_promedio: number | null;
-  url_pdf: string | null;
-}
+type AuditFiche = AuditFicha;
 
 const BLOQUES: { key: keyof AuditFiche; label: string }[] = [
   { key: 'score_limpieza', label: 'Limpieza' },

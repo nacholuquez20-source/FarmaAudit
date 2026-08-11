@@ -35,7 +35,7 @@ function getDueState(gestion: Gestion): { label: string; className: string } {
 export default function DesvioDetail() {
   const { id } = useParams<{ id: string }>();
   const { user, profile, role } = useAuth();
-  const { gestion, reporte, eventos, loading, error, eventsReady, reload, addEvento, updateEstado } = useDesvioDetail(id);
+  const { gestion, reporte, ficha, eventos, loading, error, eventsReady, reload, addEvento, updateEstado } = useDesvioDetail(id);
   const [actionError, setActionError] = useState('');
   const [actionMessage, setActionMessage] = useState('');
   const [contacting, setContacting] = useState(false);
@@ -322,7 +322,7 @@ export default function DesvioDetail() {
       )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <DesvioInfoCard gestion={gestion} reporte={reporte} dueState={dueState} />
+        <DesvioInfoCard gestion={gestion} reporte={reporte} ficha={ficha} dueState={dueState} />
 
         <DesvioResponsibleCard gestion={gestion} />
 

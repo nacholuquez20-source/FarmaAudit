@@ -187,7 +187,11 @@ async def save_audit_to_database(
             results.append({"id_reporte": reporte_id, "id_gestion": gestion_id})
 
         logger.info(f"Saved {len(results)} reporte/gestion records for session {session.id_sesion}")
-        return results[0] if results else {"id_reporte": "", "id_gestion": ""}
+        return (
+            {**results[0], "gestion_ids": [r["id_gestion"] for r in results]}
+            if results
+            else {"id_reporte": "", "id_gestion": "", "gestion_ids": []}
+        )
 
     except Exception as e:
         logger.error(f"Error saving audit to database: {e}")
