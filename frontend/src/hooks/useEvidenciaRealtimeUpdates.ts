@@ -5,9 +5,14 @@ import type { DesvioEvento } from '../types';
 export function useEvidenciaRealtimeUpdates(idGestion: string, initialEventos: DesvioEvento[]) {
   const [eventos, setEventos] = useState<DesvioEvento[]>(initialEventos);
 
-  useEffect(() => {
+  // Resincroniza cuando el padre trae otra lista. Se ajusta durante el render
+  // (patrón recomendado por React para estado derivado de props) en vez de en
+  // un efecto: así no hay un render intermedio con la lista vieja.
+  const [prevInitial, setPrevInitial] = useState(initialEventos);
+  if (prevInitial !== initialEventos) {
+    setPrevInitial(initialEventos);
     setEventos(initialEventos);
-  }, [initialEventos]);
+  }
 
   useEffect(() => {
     if (!idGestion) return;

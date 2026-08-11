@@ -29,8 +29,10 @@ export function ChatMensajes({ idGestion, eventos, onSent }: ChatMensajesProps) 
   const { mensajes, enviar, enviando, error } = useMensajesInternos(idGestion, eventos);
   const [texto, setTexto] = useState('');
 
-  const handleSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
+  // El evento es opcional porque tambien se dispara con Ctrl+Enter desde el
+  // textarea, donde no hay un submit de formulario que cancelar.
+  const handleSubmit = async (event?: React.FormEvent) => {
+    event?.preventDefault();
     const value = texto.trim();
     if (!value) return;
 
@@ -92,7 +94,8 @@ export function ChatMensajes({ idGestion, eventos, onSent }: ChatMensajesProps) 
           onChange={(event) => setTexto(event.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && e.ctrlKey) {
-              handleSubmit(e as any);
+              e.preventDefault(); // sin esto queda un salto de linea en el textarea
+              void handleSubmit();
             }
           }}
           rows={2}

@@ -99,12 +99,15 @@ export default function SucursalesDashboard() {
 
   // La 'sucursal' rara vez cae acá (ve "Mi sucursal"), pero por las dudas la
   // acotamos a su propia sucursal.
+  // Hoisted: con `profile?.id_sucursal` leido dentro del useMemo, el React
+  // Compiler no puede preservar la memoizacion (react-hooks/preserve-manual-memoization).
+  const idSucursalPropia = profile?.id_sucursal;
   const scoped = useMemo(() => {
-    if (role === 'sucursal' && profile?.id_sucursal) {
-      return data.filter((s) => s.id === profile.id_sucursal);
+    if (role === 'sucursal' && idSucursalPropia) {
+      return data.filter((s) => s.id === idSucursalPropia);
     }
     return data;
-  }, [data, role, profile?.id_sucursal]);
+  }, [data, role, idSucursalPropia]);
 
   const conteos = useMemo(() => {
     return scoped.reduce(

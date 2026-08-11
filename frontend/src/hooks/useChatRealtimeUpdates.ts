@@ -5,9 +5,14 @@ import type { DesvioEvento } from '../types';
 export function useChatRealtimeUpdates(idGestion: string, initialMensajes: DesvioEvento[]) {
   const [mensajes, setMensajes] = useState<DesvioEvento[]>(initialMensajes);
 
-  useEffect(() => {
+  // Resincroniza cuando el padre trae otra lista. Se ajusta durante el render
+  // (patrón recomendado por React para estado derivado de props) en vez de en
+  // un efecto: así no hay un render intermedio con la lista vieja.
+  const [prevInitial, setPrevInitial] = useState(initialMensajes);
+  if (prevInitial !== initialMensajes) {
+    setPrevInitial(initialMensajes);
     setMensajes(initialMensajes);
-  }, [initialMensajes]);
+  }
 
   useEffect(() => {
     if (!idGestion) return;

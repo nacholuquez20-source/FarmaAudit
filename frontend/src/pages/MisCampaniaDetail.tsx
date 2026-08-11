@@ -29,7 +29,9 @@ export default function MisCampaniaDetail() {
   const sucursalId = profile?.id_sucursal ?? null;
 
   const [tareas, setTareas] = useState<CampaniaTarea[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Arranca en false si el perfil todavia no trajo sucursal: sin sucursal no
+  // hay nada que cargar, y dejarlo en true colgaria el spinner para siempre.
+  const [loading, setLoading] = useState(Boolean(profile?.id_sucursal));
   const [error, setError] = useState<string | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [insumoTareaId, setInsumoTareaId] = useState<string | null>(null);
@@ -39,26 +41,35 @@ export default function MisCampaniaDetail() {
   const [insumoProveedor, setInsumoProveedor] = useState<SolicitudInsumoProveedor>('laboratorio_apm');
   const [submittingInsumo, setSubmittingInsumo] = useState(false);
 
-  const load = async () => {
-    if (!sucursalId) {
-      setLoading(false);
-      return;
-    }
-    try {
-      setLoading(true);
-      setError(null);
-      const data = await getMisCampaniaTareas(sucursalId);
-      setTareas(data.filter((tarea) => tarea.campania_id === campaniaId));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error al cargar la campania');
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Al cambiar de campania sin desmontar la pagina hay que volver al spinner,
+  // si no se ven las tareas de la anterior mientras carga la nueva. Se ajusta
+  // durante el render (patron de React para estado derivado) y no en el efecto,
+  // donde un setState sincronico dispara un render en cascada.
+  const claveCarga = `${campaniaId}|${sucursalId ?? ''}`;
+  const [prevClave, setPrevClave] = useState(claveCarga);
+  if (prevClave !== claveCarga) {
+    setPrevClave(claveCarga);
+    setLoading(Boolean(sucursalId));
+    setError(null);
+  }
 
+  // El primer statement es el await a proposito (ver comentario de arriba).
   useEffect(() => {
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!sucursalId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = await getMisCampaniaTareas(sucursalId);
+        if (!cancelled) setTareas(data.filter((tarea) => tarea.campania_id === campaniaId));
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Error al cargar la campania');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [campaniaId, sucursalId]);
 
   const actorNombre = profile?.nombre || user?.email || 'Encargado';

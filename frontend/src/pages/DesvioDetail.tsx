@@ -55,13 +55,21 @@ export default function DesvioDetail() {
   const actorName = profile?.nombre || user?.email || null;
   const canManageEstado = role === 'admin' || role === 'auditor';
 
+  const source = reporte?.foto_url;
+
+  // Limpia la URL resuelta cuando cambia la foto de origen (incluido pasar a
+  // no tener foto), para no mostrar la evidencia del reporte anterior mientras
+  // se resuelve la nueva. Se ajusta durante el render y no en el efecto, donde
+  // un setState sincronico dispara un render en cascada.
+  const [prevSource, setPrevSource] = useState(source);
+  if (prevSource !== source) {
+    setPrevSource(source);
+    setResolvedReporteFotoUrl('');
+  }
+
   useEffect(() => {
     let cancelled = false;
-    const source = reporte?.foto_url;
-    if (!source) {
-      setResolvedReporteFotoUrl('');
-      return;
-    }
+    if (!source) return;
 
     const loadEvidenceUrl = async () => {
       try {
@@ -76,7 +84,7 @@ export default function DesvioDetail() {
     return () => {
       cancelled = true;
     };
-  }, [reporte?.foto_url]);
+  }, [source]);
 
   const addTimelineEvent = async (event: Omit<Parameters<typeof addEvento>[0], 'actor_id' | 'actor_nombre'>) => {
     return addEvento({

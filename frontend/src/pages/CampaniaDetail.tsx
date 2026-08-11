@@ -53,31 +53,44 @@ export default function CampaniaDetail() {
   const [ventaUnidad, setVentaUnidad] = useState<'unidades' | 'pesos'>('unidades');
   const [savingResultado, setSavingResultado] = useState(false);
 
-  const load = async () => {
-    if (!id) return;
-    try {
-      setLoading(true);
-      setError(null);
-      const [campaniaData, tareasData, resultadosData] = await Promise.all([
-        getCampaniaById(id),
-        getCampaniaTareas(id),
-        getCampaniaResultados(id),
-      ]);
-      setCampania(campaniaData);
-      setTareas(tareasData);
-      setResultados(resultadosData);
-      const solicitudesData = await getSolicitudesInsumoPorTareas(tareasData.map((t) => t.id));
-      setSolicitudes(solicitudesData);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error al cargar la campania');
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Al cambiar de campania sin desmontar la pagina hay que volver al spinner,
+  // si no se ve la campania anterior mientras carga la nueva. Se ajusta durante
+  // el render (patron de React para estado derivado) y no en el efecto, que es
+  // donde un setState sincronico dispara un render en cascada.
+  const [prevId, setPrevId] = useState(id);
+  if (prevId !== id) {
+    setPrevId(id);
+    setLoading(true);
+    setError(null);
+  }
 
+  // El primer statement es el await a proposito (ver comentario de arriba).
+  // `cancelled` evita escribir estado de una campania que ya no es la abierta.
   useEffect(() => {
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!id) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [campaniaData, tareasData, resultadosData] = await Promise.all([
+          getCampaniaById(id),
+          getCampaniaTareas(id),
+          getCampaniaResultados(id),
+        ]);
+        const solicitudesData = await getSolicitudesInsumoPorTareas(tareasData.map((t) => t.id));
+        if (cancelled) return;
+        setCampania(campaniaData);
+        setTareas(tareasData);
+        setResultados(resultadosData);
+        setSolicitudes(solicitudesData);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Error al cargar la campania');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
   const bySucursal = useMemo(() => {

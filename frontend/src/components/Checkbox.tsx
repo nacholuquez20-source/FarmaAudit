@@ -15,7 +15,7 @@ export function Checkbox({
   ...props
 }: CheckboxProps) {
   return (
-    <div className="flex items-start gap-3">
+    <div className={`flex items-start gap-3 ${className}`.trim()}>
       <div className="relative">
         <input
           type="checkbox"

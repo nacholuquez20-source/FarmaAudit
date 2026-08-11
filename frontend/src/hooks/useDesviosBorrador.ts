@@ -24,9 +24,28 @@ export function useDesviosBorrador() {
     }
   }, []);
 
+  // La carga inicial no reusa `load` a proposito: `load` arranca con
+  // setLoading(true), y un setState sincronico dentro de un efecto dispara un
+  // render en cascada. Aca el estado ya arranca en loading, asi que el primer
+  // statement puede ser el await. `cancelled` evita escribir tras desmontar.
   useEffect(() => {
-    void load();
-  }, [load]);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = await getDesviosBorrador();
+        if (!cancelled) setBorradores(data);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'No se pudieron cargar los borradores.');
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Supabase realtime subscription
   useEffect(() => {

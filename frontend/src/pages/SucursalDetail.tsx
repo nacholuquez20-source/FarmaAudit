@@ -116,10 +116,19 @@ export default function SucursalDetail() {
   // la pestaña Auditorías, así que se cargan una vez al entrar.
   // Se ordena por fecha_auditoria (igual que la vista sucursales_dashboard)
   // para que la "última auditoría" del header coincida con el listado.
+  // Al cambiar de sucursal hay que volver al spinner, si no se ven las fichas
+  // de la anterior. Se ajusta durante el render (patrón de React para estado
+  // derivado) y no dentro del efecto, donde un setState sincrónico dispara un
+  // render en cascada.
+  const [prevFichasId, setPrevFichasId] = React.useState(id);
+  if (prevFichasId !== id) {
+    setPrevFichasId(id);
+    setFichasLoading(true);
+  }
+
   React.useEffect(() => {
     if (!id) return;
     let active = true;
-    setFichasLoading(true);
     supabase
       .from('audit_fiches')
       .select('*')

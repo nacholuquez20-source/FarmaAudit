@@ -11,26 +11,38 @@ export default function MisCampanias() {
   const { profile } = useAuth();
   const sucursalId = profile?.id_sucursal ?? null;
   const [tareas, setTareas] = useState<CampaniaTarea[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Arranca en false si el perfil todavia no trajo sucursal: sin sucursal no
+  // hay nada que cargar, y dejarlo en true colgaria el spinner para siempre.
+  const [loading, setLoading] = useState(Boolean(profile?.id_sucursal));
   const [error, setError] = useState<string | null>(null);
 
+  // Al cambiar de sucursal hay que volver al spinner. Se ajusta durante el
+  // render (patron de React para estado derivado) y no en el efecto, donde un
+  // setState sincronico dispara un render en cascada.
+  const [prevSucursalId, setPrevSucursalId] = useState(sucursalId);
+  if (prevSucursalId !== sucursalId) {
+    setPrevSucursalId(sucursalId);
+    setLoading(Boolean(sucursalId));
+    setError(null);
+  }
+
+  // El primer statement es el await a proposito (ver comentario de arriba).
   useEffect(() => {
-    if (!sucursalId) {
-      setLoading(false);
-      return;
-    }
-    const load = async () => {
+    if (!sucursalId) return;
+    let cancelled = false;
+    void (async () => {
       try {
-        setLoading(true);
-        setError(null);
-        setTareas(await getMisCampaniaTareas(sucursalId));
+        const data = await getMisCampaniaTareas(sucursalId);
+        if (!cancelled) setTareas(data);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Error al cargar campanias');
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Error al cargar campanias');
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
+    })();
+    return () => {
+      cancelled = true;
     };
-    void load();
   }, [sucursalId]);
 
   const campanias = useMemo(() => {

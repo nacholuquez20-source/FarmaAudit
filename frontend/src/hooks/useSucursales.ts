@@ -20,9 +20,26 @@ export function useSucursales() {
     }
   }, []);
 
+  // La carga inicial no reusa `reload` a proposito: `reload` arranca con
+  // setLoading(true), y un setState sincronico dentro de un efecto dispara un
+  // render en cascada. Aca el estado ya arranca en loading, asi que el primer
+  // statement puede ser el await. `cancelled` evita escribir tras desmontar.
   useEffect(() => {
-    reload();
-  }, [reload]);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = await getSucursales();
+        if (!cancelled) setSucursales(data);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load sucursales');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return { sucursales, loading, error, reload };
 }
