@@ -6,11 +6,10 @@ import { Button } from '../components/Button';
 import { FeedbackState } from '../components/FeedbackState';
 import { Input } from '../components/Input';
 import { Select } from '../components/Select';
-import { analisisAuditoria, exportControlesPdf, getFichaById, getGestionesByFicha, getSucursales } from '../lib/api';
+import { analisisAuditoria, exportControlesPdf, getFichaById, getSucursales } from '../lib/api';
 import type { AnalisisAuditoria } from '../lib/api';
 import { supabase } from '../lib/supabase';
-import { useAuth } from '../hooks/useAuth';
-import type { AuditFicha, Gestion, Sucursal } from '../types';
+import type { AuditFicha, Sucursal } from '../types';
 import { toast } from 'sonner';
 
 type Ficha = AuditFicha;
@@ -80,7 +79,6 @@ function dayLabel(key: string): string {
 
 export default function AuditFichesGallery() {
   const [searchParams] = useSearchParams();
-  const { role } = useAuth();
 
   const [fichas, setFichas] = useState<Ficha[]>([]);
   const [total, setTotal] = useState(0);
@@ -98,8 +96,6 @@ export default function AuditFichesGallery() {
   const [exporting, setExporting] = useState(false);
   const [analisis, setAnalisis] = useState<AnalisisAuditoria | null>(null);
   const [loadingAnalisis, setLoadingAnalisis] = useState(false);
-  const [fichaGestiones, setFichaGestiones] = useState<Gestion[]>([]);
-  const [loadingFichaGestiones, setLoadingFichaGestiones] = useState(false);
 
   const sucursalNombre = useMemo(() => {
     const map = new Map(sucursales.map((s) => [s.id, s.nombre]));
@@ -179,12 +175,6 @@ export default function AuditFichesGallery() {
     setSelected(ficha);
     setAnalisis(null);
     setLoadingAnalisis(false);
-    setFichaGestiones([]);
-    setLoadingFichaGestiones(true);
-    getGestionesByFicha(ficha.id)
-      .then(setFichaGestiones)
-      .catch(() => setFichaGestiones([]))
-      .finally(() => setLoadingFichaGestiones(false));
   };
 
   // Deep-link desde DesvioDetail ("Ver ficha"): abre el modal de una ficha
@@ -498,37 +488,18 @@ export default function AuditFichesGallery() {
               </div>
             </div>
 
-            {/* Desvios de esta ficha (ARQUITECTURA_PANEL_DESVIOS.md §6) */}
+            {/* Desvios de esta ficha: el detalle completo (con fotos) vive en
+                la página de la sucursal, no se duplica ese listado acá. */}
             <div className="border-t border-gray-200 px-5 py-4">
-              {loadingFichaGestiones ? (
-                <p className="text-sm text-gray-500">Cargando desvíos...</p>
-              ) : fichaGestiones.length === 0 ? (
-                <p className="text-sm text-gray-500">
-                  {selected.desvios_count > 0
-                    ? 'Los desvíos de esta auditoría son anteriores al vínculo — no se pueden listar acá.'
-                    : 'Esta ficha no generó desvíos.'}
-                </p>
+              {selected.desvios_count > 0 ? (
+                <Link
+                  to={`/sucursales/${selected.sucursal_id}/auditorias/${selected.id}`}
+                  className="flex items-center justify-center gap-2 rounded-lg border border-primary-navy/20 px-3 py-2 text-sm font-medium text-primary-navy hover:bg-primary-navy/5"
+                >
+                  Ver desvíos y fotos de esta auditoría
+                </Link>
               ) : (
-                <>
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
-                    Desvios ·{' '}
-                    {fichaGestiones.filter((g) => g.estado === 'Resuelta' || g.estado === 'Cerrada').length} de{' '}
-                    {fichaGestiones.length} resueltos
-                  </p>
-                  <ul className="space-y-1">
-                    {fichaGestiones.map((g) => (
-                      <li key={g.id_gestion}>
-                        <Link
-                          to={role === 'sucursal' ? `/mis-desvios/${g.id_gestion}` : `/desvios/${g.id_gestion}`}
-                          className="flex items-center justify-between gap-2 text-sm text-primary-navy hover:underline"
-                        >
-                          <span className="truncate">{g.desvio}</span>
-                          <span className="shrink-0 text-xs text-gray-400">{g.estado}</span>
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                </>
+                <p className="text-sm text-gray-500">Esta ficha no generó desvíos.</p>
               )}
             </div>
 

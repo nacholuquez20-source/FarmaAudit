@@ -153,3 +153,19 @@ export function esMesActual(fecha: string | null | undefined): boolean {
   const hoy = new Date();
   return d.getFullYear() === hoy.getFullYear() && d.getMonth() === hoy.getMonth();
 }
+
+// Compartido entre SucursalDetail y AuditFichaDetail: los 4 bloques que
+// puntúa una auditoría de perfumería.
+export const BLOQUES_FICHA: { key: 'score_limpieza' | 'score_stock' | 'score_ofertas' | 'score_burbujas'; label: string }[] = [
+  { key: 'score_limpieza', label: 'Limpieza' },
+  { key: 'score_stock', label: 'Stock' },
+  { key: 'score_ofertas', label: 'Ofertas' },
+  { key: 'score_burbujas', label: 'Displays' },
+];
+
+export function scoreColor(score: number | null): string {
+  if (score === null) return 'text-slate-400';
+  if (score >= 4) return 'text-green-600 font-semibold';
+  if (score >= 3) return 'text-yellow-600 font-semibold';
+  return 'text-red-600 font-semibold';
+}

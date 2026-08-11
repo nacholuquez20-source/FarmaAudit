@@ -23,7 +23,6 @@ export type DashboardView = 'general' | 'zona';
  * estado esta el desvio (ver ARQUITECTURA_PANEL_DESVIOS.md seccion 5).
  */
 export type DesvioBandeja = 'decidir' | 'esperando' | 'cerrado';
-export type SucursalDetailTab = 'resumen' | 'reportes' | 'gestiones' | 'stock' | 'auditorias';
 export type SucursalEditableField = 'nombre' | 'direccion' | 'zona' | 'responsable' | 'tel_responsable';
 export type AutosaveStatus = 'idle' | 'pending' | 'saving' | 'saved' | 'error';
 

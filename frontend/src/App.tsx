@@ -15,6 +15,7 @@ const MisDesvios = lazy(() => import('./pages/MisDesvios'));
 const Sucursales = lazy(() => import('./pages/Sucursales'));
 const SucursalesDashboard = lazy(() => import('./pages/SucursalesDashboard'));
 const SucursalDetail = lazy(() => import('./pages/SucursalDetail'));
+const AuditFichaDetail = lazy(() => import('./pages/AuditFichaDetail'));
 const AuditFichesGallery = lazy(() => import('./pages/AuditFichesGallery'));
 const Admin = lazy(() => import('./pages/Admin'));
 const Campanias = lazy(() => import('./pages/Campanias'));
@@ -241,6 +242,15 @@ export default function App() {
             element={
               <ProtectedRoute module="sucursales">
                 <SucursalDetail />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/sucursales/:id/auditorias/:fichaId"
+            element={
+              <ProtectedRoute module="sucursales">
+                <AuditFichaDetail />
               </ProtectedRoute>
             }
           />
