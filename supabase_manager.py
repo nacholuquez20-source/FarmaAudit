@@ -128,28 +128,23 @@ class SupabaseManager:
     # ========== Auditores ==========
 
     def get_auditor(self, telefono: str) -> Optional[Auditor]:
-        """Get auditor by phone number."""
-        telefono_norm = self._normalize_phone(telefono)
-        try:
-            response = self.client.table("auditores").select("*").execute()
-            auditores = response.data or []
-            logger.debug(f"get_auditor: searching for {telefono_norm}, total auditores in DB: {len(auditores)}")
-            for aud in auditores:
-                aud_phone_norm = self._normalize_phone(str(aud.get("telefono", "")))
-                logger.debug(f"get_auditor: comparing {telefono_norm} == {aud_phone_norm} (stored: {aud.get('telefono')}, nombre: {aud.get('nombre')})")
-                if aud_phone_norm == telefono_norm:
-                    logger.info(f"get_auditor: MATCH found for {telefono_norm}")
-                    return Auditor(
-                        telefono=str(aud.get("telefono", "")),
-                        nombre=aud.get("nombre", ""),
-                        cuadrilla=aud.get("cuadrilla", ""),
-                        activo=aud.get("activo", False),
-                    )
-            logger.warning(f"get_auditor: NO MATCH found for {telefono_norm}")
+        """Get auditor by phone number.
+
+        Envoltorio sobre usuarios_whatsapp (etapa-21): resuelve la identidad
+        una sola vez contra la fuente única y la traduce al shape legacy
+        Auditor para no tocar los call sites existentes en router.py.
+        """
+        from identity import resolve_whatsapp_user
+
+        user = resolve_whatsapp_user(telefono)
+        if not user or user.rol != "auditor":
             return None
-        except Exception as e:
-            logger.error(f"Failed to get auditor {telefono}: {e}")
-            return None
+        return Auditor(
+            telefono=user.telefono,
+            nombre=user.nombre,
+            cuadrilla="",
+            activo=user.activo,
+        )
 
     def get_all_auditores(self) -> List[Auditor]:
         """Get all auditors."""
@@ -201,7 +196,7 @@ class SupabaseManager:
 
         try:
             logger.debug("Fetching sucursales from Supabase...")
-            response = self.client.table("sucursales").select("*").execute()
+            response = self.client.table("sucursales").select("*").eq("activo", True).execute()
             logger.debug(f"Supabase response: {response}")
             sucursales = [
                 Sucursal(
@@ -762,44 +757,28 @@ class SupabaseManager:
             return None
 
     def get_encargado_by_phone(self, telefono: str) -> Optional[Dict[str, Any]]:
-        """Find a branch manager by profiles.telefono or sucursales.tel_responsable."""
-        telefono_norm = self._normalize_phone(telefono)
-        if not telefono_norm:
+        """Find a branch manager by phone number.
+
+        Envoltorio sobre usuarios_whatsapp (etapa-21): antes esto consultaba
+        profiles y, si no encontraba nada, caía a sucursales.tel_responsable.
+        Ahora es una sola fuente; se conserva el shape de dict que ya
+        consumen los call sites en router.py.
+        """
+        from identity import resolve_whatsapp_user
+
+        user = resolve_whatsapp_user(telefono)
+        if not user or not user.activo or user.rol != "responsable_sucursal" or not user.id_sucursal:
             return None
 
-        try:
-            response = self.client.table("profiles").select("id, role, nombre, telefono, id_sucursal").execute()
-            for row in response.data or []:
-                if row.get("role") != "sucursal":
-                    continue
-                if self._normalize_phone(row.get("telefono", "")) == telefono_norm and row.get("id_sucursal"):
-                    sucursal = self.get_sucursal(str(row.get("id_sucursal")))
-                    return {
-                        "source": "profiles",
-                        "user_id": row.get("id"),
-                        "nombre": row.get("nombre") or (sucursal.nombre if sucursal else "Encargado"),
-                        "telefono": telefono_norm,
-                        "id_sucursal": row.get("id_sucursal"),
-                        "sucursal": sucursal.nombre if sucursal else row.get("id_sucursal"),
-                    }
-        except Exception as e:
-            logger.warning(f"Could not lookup encargado in profiles: {e}")
-
-        try:
-            for sucursal in self.get_all_sucursales():
-                if self._normalize_phone(sucursal.tel_responsable) == telefono_norm:
-                    return {
-                        "source": "sucursales",
-                        "user_id": None,
-                        "nombre": sucursal.responsable or "Encargado",
-                        "telefono": telefono_norm,
-                        "id_sucursal": sucursal.id,
-                        "sucursal": sucursal.nombre,
-                    }
-        except Exception as e:
-            logger.warning(f"Could not lookup encargado in sucursales: {e}")
-
-        return None
+        sucursal = self.get_sucursal(str(user.id_sucursal))
+        return {
+            "source": "usuarios_whatsapp",
+            "user_id": user.id,
+            "nombre": user.nombre or (sucursal.nombre if sucursal else "Encargado"),
+            "telefono": user.telefono,
+            "id_sucursal": user.id_sucursal,
+            "sucursal": sucursal.nombre if sucursal else user.id_sucursal,
+        }
 
     def get_gestiones_pendientes_sucursal(self, id_sucursal: str) -> List[Dict[str, Any]]:
         """Get open deviations for a branch manager portal/chat flow."""

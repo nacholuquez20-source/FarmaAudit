@@ -947,7 +947,7 @@ class AuditConversationHandler:
 
         try:
             db = SupabaseManager()
-            res = db.client.table("sucursales").select("id, nombre").order("nombre").execute()
+            res = db.client.table("sucursales").select("id, nombre").eq("activo", True).order("nombre").execute()
             sucursales = res.data or []
         except Exception as e:
             logger.error(f"Error loading sucursales for audit init: {e}")

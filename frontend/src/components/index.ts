@@ -2,6 +2,7 @@ export { Alert } from './Alert';
 export { Button } from './Button';
 export { Checkbox } from './Checkbox';
 export { ChatMensajes } from './ChatMensajes';
+export { ConfirmDialog } from './ConfirmDialog';
 export { EvidenciaGaleria } from './EvidenciaGaleria';
 export { EvidenciaUploader } from './EvidenciaUploader';
 export { FeedbackState } from './FeedbackState';

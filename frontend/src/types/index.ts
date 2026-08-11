@@ -16,7 +16,7 @@ export type DesvioEventoTipo = 'creacion' | 'contacto' | 'respuesta' | 'cierre' 
 export type DesvioOrigen = 'auditor' | 'sucursal';
 export type NotificacionTipo = 'mensaje_nuevo' | 'encargado_respondio' | 'estado_cambio' | 'vencimiento_proximo' | 'sla_revision_vencido';
 export type GestionRevisionAccion = 'aprobar' | 'rechazar' | 'en_gestion_terceros' | 'retomar';
-export type AdminTabKey = 'auditores' | 'usuarios' | 'marcas';
+export type AdminTabKey = 'sucursales' | 'whatsapp' | 'usuarios' | 'marcas';
 export type DashboardView = 'general' | 'zona';
 export type SucursalDetailTab = 'resumen' | 'reportes' | 'gestiones' | 'stock' | 'auditorias';
 export type SucursalEditableField = 'nombre' | 'direccion' | 'zona' | 'responsable' | 'tel_responsable';
@@ -31,6 +31,16 @@ export interface Sucursal {
   zona: string;
   categoria?: string | null;
   tiene_perfumeria?: boolean;
+  activo: boolean;
+}
+
+export interface SucursalCreate {
+  id: string;
+  nombre: string;
+  direccion?: string;
+  responsable?: string;
+  tel_responsable?: string;
+  zona?: string;
 }
 
 export type EstadoSalud = 'critica' | 'atencion' | 'ok' | 'sin_datos';
@@ -60,6 +70,7 @@ export interface SucursalUpdate {
   responsable?: string;
   tel_responsable?: string;
   zona?: string;
+  activo?: boolean;
 }
 
 export interface Reporte {
@@ -204,6 +215,50 @@ export interface Auditor {
   nombre: string;
   cuadrilla: string;
   activo: boolean;
+}
+
+// ============ Identidad de WhatsApp (etapa-21) ============
+// Reemplaza auditores + profiles.telefono + sucursales.tel_responsable como
+// fuente única de "quién es este teléfono y qué puede hacer".
+
+export type RolWhatsapp = 'responsable_sucursal' | 'auditor';
+
+export interface TipoAuditoria {
+  id: string;
+  nombre: string;
+  descripcion: string | null;
+  activo: boolean;
+  orden: number;
+}
+
+export interface UsuarioWhatsapp {
+  id: string;
+  telefono: string;
+  nombre: string;
+  rol: RolWhatsapp;
+  id_sucursal: string | null;
+  activo: boolean;
+  profile_id: string | null;
+  notas: string | null;
+  created_at: string;
+  /** Presente solo para rol='auditor'; join contra usuario_tipos_auditoria. */
+  tipos_auditoria?: string[];
+}
+
+export interface CreateUsuarioWhatsappInput {
+  telefono: string;
+  nombre: string;
+  rol: RolWhatsapp;
+  id_sucursal?: string | null;
+  tipos_auditoria?: string[];
+  notas?: string | null;
+}
+
+export interface UpdateUsuarioWhatsappInput {
+  nombre?: string;
+  activo?: boolean;
+  id_sucursal?: string | null;
+  notas?: string | null;
 }
 
 export interface Marca {

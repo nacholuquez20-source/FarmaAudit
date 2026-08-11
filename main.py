@@ -26,6 +26,7 @@ from init_supabase import init_supabase_schema
 
 # NEW: Imports for perfumery audit v2
 from audit_session import AuditState, get_session
+from identity import resolve_whatsapp_user
 
 # Configure logging
 logging.basicConfig(
@@ -1066,13 +1067,28 @@ async def webhook(request: Request):
         meta_client = MetaClient()
         route = get_router()
 
-        # Route to v2 handler while there is any active v2 session (including DONE state,
-        # which still expects responsable name and ficha-download answer)
-        session = get_session(payload.telefono)
-        if session:
-            result = await route.handle_perfumeria_audit(payload, meta_client)
+        # Identidad se resuelve acá, antes de cualquier rama de sesión. Antes
+        # de esto, un teléfono con una fila vieja en sesiones_whatsapp
+        # entraba directo al flujo v2 sin haberse verificado contra ninguna
+        # tabla (bastaba con haber iniciado una auditoría alguna vez).
+        whatsapp_user = resolve_whatsapp_user(payload.telefono)
+        if not whatsapp_user or not whatsapp_user.activo:
+            logger.warning(
+                f"[{correlation_id}] Telefono no registrado o inactivo: {payload.telefono}"
+            )
+            await meta_client.send_text(
+                payload.telefono,
+                "❌ No estás registrado. Contactá al coordinador.",
+            )
+            result = "unknown_or_inactive_phone"
         else:
-            result = await route.handle_message(payload, meta_client)
+            # Route to v2 handler while there is any active v2 session (including DONE state,
+            # which still expects responsable name and ficha-download answer)
+            session = get_session(payload.telefono)
+            if session:
+                result = await route.handle_perfumeria_audit(payload, meta_client)
+            else:
+                result = await route.handle_message(payload, meta_client)
 
         # Mark message as processed (after successful processing)
         if message_id:

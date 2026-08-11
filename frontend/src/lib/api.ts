@@ -1,11 +1,16 @@
 import { supabase } from './supabase';
 import type {
   Sucursal,
+  SucursalCreate,
   SucursalDashboard,
   SucursalUpdate,
   Reporte,
   Gestion,
   Auditor,
+  TipoAuditoria,
+  UsuarioWhatsapp,
+  CreateUsuarioWhatsappInput,
+  UpdateUsuarioWhatsappInput,
   DashboardStats,
   ZonaResumen,
   GestionState,
@@ -96,6 +101,23 @@ export async function updateSucursal(id: string, patch: SucursalUpdate): Promise
 
   if (error) throw new Error(handleApiError(error));
   return data;
+}
+
+export async function createSucursal(input: SucursalCreate): Promise<Sucursal> {
+  const { data, error } = await supabase
+    .from('sucursales')
+    .insert([input])
+    .select('*')
+    .single();
+
+  if (error) throw new Error(handleApiError(error));
+  return data;
+}
+
+// Baja lógica: seis tablas referencian sucursales(id) sin ON DELETE, así que
+// un borrado real fallaría en cuanto hubiera un reporte/gestión asociados.
+export async function setSucursalActiva(id: string, activo: boolean): Promise<Sucursal> {
+  return updateSucursal(id, { activo });
 }
 
 export async function getReporte(id: string): Promise<Reporte | null> {
@@ -585,6 +607,90 @@ export async function updateAuditor(telefono: string, data: Partial<Auditor>): P
 
   if (error) throw new Error(handleApiError(error));
   return result;
+}
+
+// ============ Identidad de WhatsApp (etapa-21) ============
+
+export async function getTiposAuditoria(): Promise<TipoAuditoria[]> {
+  const { data, error } = await supabase
+    .from('tipos_auditoria')
+    .select('*')
+    .order('orden');
+  if (error) {
+    if (isMissingTableError(error, 'tipos_auditoria')) return [];
+    throw new Error(handleApiError(error));
+  }
+  return data || [];
+}
+
+interface UsuarioWhatsappRow extends Omit<UsuarioWhatsapp, 'tipos_auditoria'> {
+  usuario_tipos_auditoria?: { tipo_auditoria_id: string }[] | null;
+}
+
+function mapUsuarioWhatsappRow(row: UsuarioWhatsappRow): UsuarioWhatsapp {
+  const { usuario_tipos_auditoria, ...rest } = row;
+  return {
+    ...rest,
+    tipos_auditoria: usuario_tipos_auditoria?.map((t) => t.tipo_auditoria_id) || [],
+  };
+}
+
+export async function listUsuariosWhatsapp(): Promise<UsuarioWhatsapp[]> {
+  const { data, error } = await supabase
+    .from('usuarios_whatsapp')
+    .select('*, usuario_tipos_auditoria(tipo_auditoria_id)')
+    .order('nombre');
+  if (error) {
+    if (isMissingTableError(error, 'usuarios_whatsapp')) return [];
+    throw new Error(handleApiError(error));
+  }
+  return (data || []).map(mapUsuarioWhatsappRow);
+}
+
+export async function createUsuarioWhatsapp(input: CreateUsuarioWhatsappInput): Promise<UsuarioWhatsapp> {
+  const { tipos_auditoria, ...usuarioInput } = input;
+  const { data, error } = await supabase
+    .from('usuarios_whatsapp')
+    .insert([usuarioInput])
+    .select('*')
+    .single();
+  if (error) throw new Error(handleApiError(error));
+
+  if (usuarioInput.rol === 'auditor' && tipos_auditoria?.length) {
+    await setUsuarioTiposAuditoria(data.id, tipos_auditoria);
+  }
+
+  return { ...data, tipos_auditoria: tipos_auditoria || [] };
+}
+
+export async function updateUsuarioWhatsapp(
+  id: string,
+  patch: UpdateUsuarioWhatsappInput,
+): Promise<UsuarioWhatsapp> {
+  const { data, error } = await supabase
+    .from('usuarios_whatsapp')
+    .update(patch)
+    .eq('id', id)
+    .select('*')
+    .single();
+  if (error) throw new Error(handleApiError(error));
+  return data;
+}
+
+// Reemplaza por completo la cobertura de tipos de auditoría de un auditor.
+export async function setUsuarioTiposAuditoria(usuarioId: string, tipos: string[]): Promise<void> {
+  const { error: deleteError } = await supabase
+    .from('usuario_tipos_auditoria')
+    .delete()
+    .eq('usuario_id', usuarioId);
+  if (deleteError) throw new Error(handleApiError(deleteError));
+
+  if (tipos.length === 0) return;
+
+  const { error: insertError } = await supabase
+    .from('usuario_tipos_auditoria')
+    .insert(tipos.map((tipo_auditoria_id) => ({ usuario_id: usuarioId, tipo_auditoria_id })));
+  if (insertError) throw new Error(handleApiError(insertError));
 }
 
 export async function getMarcas(): Promise<Marca[]> {
