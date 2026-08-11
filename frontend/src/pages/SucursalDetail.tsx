@@ -77,7 +77,11 @@ export default function SucursalDetail() {
   const [activeTab, setActiveTab] = useState<SucursalDetailTab>('resumen');
   const [fichas, setFichas] = useState<AuditFiche[]>([]);
   const [fichasLoading, setFichasLoading] = useState(true);
-  const [estadoContacto, setEstadoContacto] = useState<EstadoContactoSucursal | undefined>(undefined);
+  // undefined = todavia no se intento cargar (ReminderButton muestra
+  // "Cargando..."); null = ya se intento y no hay dato (falla la llamada o
+  // esta sucursal no aparecio) — debe degradar a "Asignar encargado", nunca
+  // quedarse en "Cargando..." para siempre.
+  const [estadoContacto, setEstadoContacto] = useState<EstadoContactoSucursal | null | undefined>(undefined);
   const navigate = useNavigate();
 
   const canAudit = role === 'admin' || role === 'auditor';
@@ -89,8 +93,8 @@ export default function SucursalDetail() {
   const recargarEstadoContacto = () => {
     if (!id || !canAudit) return;
     getEstadoContactoSucursales()
-      .then((rows) => setEstadoContacto(rows.find((r) => r.id_sucursal === id)))
-      .catch(() => setEstadoContacto(undefined));
+      .then((rows) => setEstadoContacto(rows.find((r) => r.id_sucursal === id) ?? null))
+      .catch(() => setEstadoContacto(null));
   };
 
   useEffect(() => {
@@ -98,10 +102,10 @@ export default function SucursalDetail() {
     let active = true;
     getEstadoContactoSucursales()
       .then((rows) => {
-        if (active) setEstadoContacto(rows.find((r) => r.id_sucursal === id));
+        if (active) setEstadoContacto(rows.find((r) => r.id_sucursal === id) ?? null);
       })
       .catch(() => {
-        if (active) setEstadoContacto(undefined);
+        if (active) setEstadoContacto(null);
       });
     return () => {
       active = false;

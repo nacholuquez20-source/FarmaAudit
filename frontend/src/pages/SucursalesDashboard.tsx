@@ -100,6 +100,12 @@ export default function SucursalesDashboard() {
 
   const [data, setData] = useState<SucursalDashboard[]>([]);
   const [contacto, setContacto] = useState<Record<string, EstadoContactoSucursal>>({});
+  // Distingue "todavia no intentamos cargar el contacto" (ReminderButton
+  // muestra "Cargando...") de "ya intentamos y esta sucursal no aparecio o
+  // fallo la llamada" (debe degradar a "Asignar encargado", no quedarse
+  // colgado en "Cargando..." para siempre — contacto[id] es undefined en
+  // ambos casos, por eso hace falta este flag aparte).
+  const [contactoLoaded, setContactoLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -111,7 +117,8 @@ export default function SucursalesDashboard() {
     if (!canAudit) return;
     getEstadoContactoSucursales()
       .then((rows) => setContacto(Object.fromEntries(rows.map((r) => [r.id_sucursal, r]))))
-      .catch(() => setContacto({}));
+      .catch(() => setContacto({}))
+      .finally(() => setContactoLoaded(true));
   };
 
   useEffect(() => {
@@ -135,6 +142,9 @@ export default function SucursalesDashboard() {
         })
         .catch(() => {
           if (active) setContacto({});
+        })
+        .finally(() => {
+          if (active) setContactoLoaded(true);
         });
     }
     return () => {
@@ -387,7 +397,7 @@ export default function SucursalesDashboard() {
                         sucursalNombre={s.nombre}
                         cantidadDesvios={s.desvios_abiertos}
                         diasSinAccion={s.dias_sin_accion}
-                        estadoContacto={contacto[s.id]}
+                        estadoContacto={contactoLoaded ? (contacto[s.id] ?? null) : undefined}
                         onSent={recargarContacto}
                         compact
                       />
