@@ -43,6 +43,73 @@ El otro norte de esta etapa fue **coherencia y confiabilidad, no features**. El 
    corregido también en `META_SETUP.md`) y se probó con un mensaje real: el bot respondió. Con esto el
    incidente de la key legacy de Supabase queda cerrado de punta a punta — webhook, Railway, Supabase, todo
    verificado con tráfico real, no solo con curl.
+7. **⚡ 15 de 25 sucursales no tienen encargado cargado en Admin → Usuarios WhatsApp.** Es el bloqueo de mayor
+   impacto de todo lo que hay pendiente: 60 de los 70 desvíos abiertos (86%) no se le pueden reclamar a nadie
+   por WhatsApp porque no hay teléfono asociado. `/sucursales` ya lo muestra con un banner fijo mientras dure.
+   Cargar esos 15 teléfonos vale más que cualquier feature nueva ahora mismo.
+
+---
+
+## Qué se hizo en la etapa 2026-08-11 (unificación sucursales + desvíos)
+
+El dueño pidió una experiencia simple para el auditor, sin que haga falta explicarle nada: lista de
+sucursales, fecha de última auditoría, cuántos desvíos, y al entrar a una, si el encargado actuó o hace
+cuánto que no — con un botón para mandarle un recordatorio por WhatsApp que dispara el bot. Y una decisión
+más de fondo: **integrar `/desvios` y `/sucursales` en una sola cosa fluida**, no dos pantallas separadas.
+
+**Antes de tocar código**: se armó una revisión UX de los tres módulos existentes con 3 revisores
+independientes (terminología, primera impresión de un auditor sin contexto, jerarquía visual — mismo patrón
+de especialistas que usó el diagnóstico original del proyecto). Encontraron problemas reales y coincidentes:
+"Vencida"/"Vencido" mostrados dos veces, "Notificar encargado"/"Contactar responsable" como sinónimos
+confusos, el modal de ficha diciendo "Desvíos: 5" y "no generó desvíos" en el mismo cuadro, pestañas con
+nombres que no coinciden con lo que muestran, y texto placeholder con corchetes sin terminar.
+
+**El dato que ordenó todo**: antes de diseñar el botón de recordatorio, se midió contra producción. De 70
+desvíos abiertos, 60 (86%) están en 15 sucursales **sin ningún encargado cargado** — no hay a quién
+reclamarle. Y de los 4 usuarios de WhatsApp registrados, solo 1 tenía la ventana de 24h de Meta abierta en el
+momento de medir. Dos revisiones expertas (arquitectura de información + flujo de trabajo en campo)
+convergieron con estos números reales en mano, no en abstracto.
+
+**Bloque implementado — "Etapa 1: el centro de trabajo por sucursal"** (`95c9a41`):
+
+- `etapa-24-seguimiento-encargado.sql` (**ya corrida**): la vista `sucursales_dashboard` suma
+  `dias_sin_accion` (derivado de `desvio_eventos`, mismo predicado de "esto es una acción del encargado" que
+  documenta `ARQUITECTURA_PANEL_DESVIOS.md`) y `desvios_para_revisar` (`en_revision_desde` no nulo — el turno
+  es del auditor). Tabla nueva `recordatorios_sucursal`: sin esto no había forma de calcular el cooldown de
+  24h del botón manual, ni de saber si el job automático de cada 3 días realmente entregó algo.
+- `GET /api/sucursales/estado-contacto` (todas las sucursales de una) y
+  `POST /api/sucursales/{id}/recordatorio`, con las reglas en orden: sin encargado → 409, en cooldown → 429,
+  ventana cerrada → 409 (**nunca manda la plantilla sin aprobar** — un botón que falla la mayoría de las
+  veces rompe más confianza que no tenerlo), ventana abierta → manda y registra. El job automático
+  (`remind_responsable_desvios_pendientes`) pasó a compartir esta misma función: antes llamaba `send_text`
+  sin chequear la ventana y fallaba en silencio para casi todo el mundo.
+- `ReminderButton`, un componente único (con variante compacta) usado igual en la grilla de `/sucursales`, el
+  detalle de sucursal y el detalle de desvío — reemplaza los tres controles de contacto que existían antes,
+  cada uno con un comportamiento distinto.
+- `/sucursales` ordena por de quién es el turno (para revisar > vencido con encargado > bloqueado sin
+  encargado > resto), no solo por salud, y muestra el silencio del encargado con tres redacciones distintas:
+  "nunca respondió" (violeta — puede ser un teléfono mal cargado) vs. "sin novedades hace N días" (gris — hay
+  que reclamar) vs. "respondió, falta que revises" (azul — el turno es tuyo). Antes esas tres situaciones se
+  veían idénticas.
+- Pestaña Gestiones de `/sucursales/:id` pasó a filtrar por abiertos (antes mostraba todo y su contador no
+  coincidía con el KPI "Desvíos abiertos" del Resumen — mismo dato, dos números) y las filas son clickeables
+  (ya lo prometían con el hover, pero no llevaban a ningún lado).
+- Limpieza puntual de lo que encontró la revisión UX: chip duplicado Vencida/Vencido, el placeholder
+  `[Por definir por el responsable]` con corchetes, la contradicción del modal de ficha, y acentos en las
+  páginas que toca esta etapa.
+- Se sacó `notificarEncargado` de `api.ts` — no mandaba `Authorization` header pese a que el backend ya
+  exigía uno, así que el botón "Notificar encargado" devolvía 401 siempre desde que se agregó el auth guard.
+  Quedó reemplazado por el `ReminderButton`.
+
+**Verificado de punta a punta con datos y backend reales**: `estado-contacto` devuelve el estado real de las
+25 sucursales; el único caso enviable hoy (Plazoleta Crisóstomo / SUC025) mandó un WhatsApp real y el reintento
+inmediato dio 429 con la hora exacta de disponibilidad; los casos sin encargado y sin ventana devuelven 409
+sin mandar nada. `eslint`/`tsc -b` en cero.
+
+**Lo que queda explícitamente afuera de esta etapa** (decisión tomada: "etapa 1 primero, ver y seguir"):
+retirar `/desvios`, `/hoy` y `/auditorias` como páginas separadas, y el modo "Revisar" enfocado que proponían
+los especialistas — ambas cosas quedaron en la revisión de dos agentes como visión más completa, para evaluar
+después de ver esta etapa en uso real.
 
 ---
 
