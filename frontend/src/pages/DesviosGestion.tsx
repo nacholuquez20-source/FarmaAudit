@@ -15,7 +15,7 @@ import {
 } from '../lib/api';
 import { formatDate, formatDateTime, gestionStateLabel, getWhatsappUrl, timeSince } from '../lib/utils';
 import { useAuth } from '../hooks/useAuth';
-import type { DesvioEvento, Gestion, GestionState, Notificacion, Severidad } from '../types';
+import type { DesvioBandeja, DesvioEvento, Gestion, GestionState, Notificacion, Severidad } from '../types';
 import { toast } from 'sonner';
 import { validateResolutionForm } from '../lib/validation';
 
@@ -29,6 +29,15 @@ type SlaStatus = 'overdue' | 'today' | 'soon' | 'ok' | 'closed' | 'paused';
 
 const ESTADOS: GestionState[] = ['Vencida', 'Abierta', 'En_proceso', 'En_revision', 'En_gestion_terceros', 'Resuelta', 'Cerrada'];
 const SEVERIDADES: Severidad[] = ['Alta', 'Media', 'Baja'];
+
+// Que estados entran en cada bandeja. 'decidir' es lo unico que espera una
+// accion del auditor; el resto esta esperando al responsable o ya cerro.
+// Sin bandeja (uso standalone de la pagina) se ven todos, como antes.
+const ESTADOS_POR_BANDEJA: Record<DesvioBandeja, GestionState[]> = {
+  decidir: ['En_revision'],
+  esperando: ['Vencida', 'Abierta', 'En_proceso'],
+  cerrado: ['En_gestion_terceros', 'Resuelta', 'Cerrada'],
+};
 
 function filterChipLabel(estado: GestionState): string {
   return estado === 'En_revision' ? 'Pendiente de revision' : gestionStateLabel(estado);
@@ -560,7 +569,13 @@ function DetailDrawer({
   );
 }
 
-export function DesviosGestionPanel({ embedded = false }: { embedded?: boolean }) {
+export function DesviosGestionPanel({
+  embedded = false,
+  bandeja,
+}: {
+  embedded?: boolean;
+  bandeja?: DesvioBandeja;
+}) {
   const { user, profile } = useAuth();
   const [desvios, setDesvios] = useState<DesvioCard[]>([]);
   const [loading, setLoading] = useState(true);
@@ -583,65 +598,75 @@ export function DesviosGestionPanel({ embedded = false }: { embedded?: boolean }
   const [resolving, setResolving] = useState(false);
   const [notifByGestion, setNotifByGestion] = useState<Map<string, Notificacion[]>>(new Map());
   const [reviewUpdating, setReviewUpdating] = useState(false);
-  const [autoFilterApplied, setAutoFilterApplied] = useState(false);
 
-  const load = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const [data, notificaciones] = await Promise.all([getGestion(), getNotificaciones().catch(() => [])]);
-      const enriched = await Promise.all(
-        data.map(async (gestion) => ({
-          ...gestion,
-          eventos: await getDesvioEventos(gestion.id_gestion),
-        })),
-      );
-      setDesvios(enriched);
-
-      const byGestion = new Map<string, Notificacion[]>();
-      notificaciones
-        .filter((notificacion) => notificacion.tipo === 'encargado_respondio')
-        .forEach((notificacion) => {
-          byGestion.set(notificacion.id_gestion, [...(byGestion.get(notificacion.id_gestion) || []), notificacion]);
-        });
-      setNotifByGestion(byGestion);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error al cargar desvios');
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // Carga inicial. El primer statement es el await a proposito: el estado ya
+  // arranca en loading, y volver a setearlo de forma sincronica dentro del
+  // efecto dispara un render en cascada. `cancelled` evita escribir estado si
+  // el panel se desmonto mientras la carga estaba en vuelo.
   useEffect(() => {
-    void load();
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [data, notificaciones] = await Promise.all([getGestion(), getNotificaciones().catch(() => [])]);
+        const enriched = await Promise.all(
+          data.map(async (gestion) => ({
+            ...gestion,
+            eventos: await getDesvioEventos(gestion.id_gestion),
+          })),
+        );
+        if (cancelled) return;
+        setDesvios(enriched);
+
+        const byGestion = new Map<string, Notificacion[]>();
+        notificaciones
+          .filter((notificacion) => notificacion.tipo === 'encargado_respondio')
+          .forEach((notificacion) => {
+            byGestion.set(notificacion.id_gestion, [...(byGestion.get(notificacion.id_gestion) || []), notificacion]);
+          });
+        setNotifByGestion(byGestion);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Error al cargar desvios');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  useEffect(() => {
-    if (autoFilterApplied || loading) return;
-    if (desvios.some((desvio) => desvio.estado === 'En_revision')) {
-      setEstadoFilter('En_revision');
-    }
-    setAutoFilterApplied(true);
-  }, [desvios, loading, autoFilterApplied]);
+  const estadosVisibles = useMemo(
+    () => (bandeja ? ESTADOS_POR_BANDEJA[bandeja] : ESTADOS),
+    [bandeja],
+  );
 
-  useEffect(() => {
+  const enBandeja = useMemo(
+    () => (bandeja ? desvios.filter((desvio) => estadosVisibles.includes(desvio.estado)) : desvios),
+    [desvios, bandeja, estadosVisibles],
+  );
+
+  // Al abrir otro desvio se limpia el borrador de comentario y el drawer
+  // arranca en la pestaña que corresponde. Se ajusta durante el render, no en
+  // un efecto, para no mostrar un frame con el comentario del desvio anterior.
+  const [prevOpenId, setPrevOpenId] = useState(openId);
+  if (prevOpenId !== openId) {
+    setPrevOpenId(openId);
     setComentario('');
     const opened = desvios.find((desvio) => desvio.id_gestion === openId);
     setDrawerTab(opened?.estado === 'En_revision' ? 'revision' : 'actividad');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openId]);
+  }
 
   const counts = useMemo(() => {
-    const result = ESTADOS.reduce((acc, estado) => ({ ...acc, [estado]: 0 }), { total: desvios.length } as Record<GestionState | 'total', number>);
-    desvios.forEach((desvio) => {
+    const result = ESTADOS.reduce((acc, estado) => ({ ...acc, [estado]: 0 }), { total: enBandeja.length } as Record<GestionState | 'total', number>);
+    enBandeja.forEach((desvio) => {
       result[desvio.estado] += 1;
     });
     return result;
-  }, [desvios]);
+  }, [enBandeja]);
 
   const filtered = useMemo(() => {
     const search = normalize(searchText);
-    return desvios.filter((desvio) => {
+    return enBandeja.filter((desvio) => {
       if (estadoFilter && desvio.estado !== estadoFilter) return false;
       if (severidadFilter && desvio.severidad !== severidadFilter) return false;
       if (!search) return true;
@@ -654,7 +679,7 @@ export function DesviosGestionPanel({ embedded = false }: { embedded?: boolean }
         desvio.responsable,
       ].some((value) => normalize(value).includes(search));
     });
-  }, [desvios, estadoFilter, severidadFilter, searchText]);
+  }, [enBandeja, estadoFilter, severidadFilter, searchText]);
 
   const sortByPendingReview = (items: DesvioCard[]) =>
     [...items].sort((a, b) => {
@@ -696,7 +721,7 @@ export function DesviosGestionPanel({ embedded = false }: { embedded?: boolean }
     filtered.forEach((desvio) => {
       byState.set(desvio.estado, [...(byState.get(desvio.estado) || []), desvio]);
     });
-    return ESTADOS
+    return estadosVisibles
       .filter((estado) => byState.has(estado))
       .map((estado) => ({
         key: estado,
@@ -705,7 +730,7 @@ export function DesviosGestionPanel({ embedded = false }: { embedded?: boolean }
         items: sortByPendingReview(byState.get(estado) || []),
         pendingReview: 0,
       }));
-  }, [filtered, groupBy]);
+  }, [filtered, groupBy, estadosVisibles]);
 
   const selectedDesvio = openId ? desvios.find((desvio) => desvio.id_gestion === openId) || null : null;
   const visibleIds = filtered.map((desvio) => desvio.id_gestion);
@@ -954,14 +979,19 @@ export function DesviosGestionPanel({ embedded = false }: { embedded?: boolean }
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <span className="mr-1 text-xs font-bold uppercase tracking-wide text-slate-500">Estado</span>
-              <FilterChip active={estadoFilter === ''} count={counts.total} onClick={() => setEstadoFilter('')}>Todos</FilterChip>
-              {ESTADOS.map((estado) => (
-                <FilterChip key={estado} active={estadoFilter === estado} count={counts[estado]} danger={estado === 'Vencida'} onClick={() => setEstadoFilter(estado)}>
-                  {filterChipLabel(estado)}
-                </FilterChip>
-              ))}
-              <span className="mx-2 hidden h-6 w-px bg-slate-200 lg:block" />
+              {/* Con un solo estado en la bandeja los chips no filtran nada. */}
+              {estadosVisibles.length > 1 && (
+                <>
+                  <span className="mr-1 text-xs font-bold uppercase tracking-wide text-slate-500">Estado</span>
+                  <FilterChip active={estadoFilter === ''} count={counts.total} onClick={() => setEstadoFilter('')}>Todos</FilterChip>
+                  {estadosVisibles.map((estado) => (
+                    <FilterChip key={estado} active={estadoFilter === estado} count={counts[estado]} danger={estado === 'Vencida'} onClick={() => setEstadoFilter(estado)}>
+                      {filterChipLabel(estado)}
+                    </FilterChip>
+                  ))}
+                  <span className="mx-2 hidden h-6 w-px bg-slate-200 lg:block" />
+                </>
+              )}
               <span className="mr-1 text-xs font-bold uppercase tracking-wide text-slate-500">Severidad</span>
               <FilterChip active={severidadFilter === ''} onClick={() => setSeveridadFilter('')}>Todas</FilterChip>
               {SEVERIDADES.map((severidad) => (

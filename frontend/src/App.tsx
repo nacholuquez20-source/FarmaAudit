@@ -194,9 +194,11 @@ export default function App() {
             }
           />
 
-          {/* Legacy routes — redirect to merged Desvios page */}
-          <Route path="/gestion-desvios" element={<Navigate to="/desvios?v=gestion" replace />} />
-          <Route path="/revision-desvios" element={<Navigate to="/desvios?v=revision" replace />} />
+          {/* Legacy routes — redirect to merged Desvios page.
+              Desvios.tsx igual mapea ?v=gestion / ?v=revision por si quedan
+              enlaces viejos guardados. */}
+          <Route path="/gestion-desvios" element={<Navigate to="/desvios?v=esperando" replace />} />
+          <Route path="/revision-desvios" element={<Navigate to="/desvios?v=decidir" replace />} />
 
           <Route
             path="/mis-desvios"

@@ -1,5 +1,5 @@
-import { useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { useMountedTabs } from '../hooks/useMountedTabs';
 import { AppLayout } from '../components/AppLayout';
 import { MarcasTab, SucursalesTab, UsuariosPanelTab, UsuariosWhatsappTab } from '../components/admin';
 import type { AdminTabKey } from '../types';
@@ -20,15 +20,12 @@ export default function Admin() {
   const tabParam = params.get('tab');
   const activeTab: AdminTabKey = isAdminTabKey(tabParam) ? tabParam : 'sucursales';
 
-  const mounted = useRef<Record<AdminTabKey, boolean>>({
-    sucursales: false,
-    whatsapp: false,
-    usuarios: false,
-    marcas: false,
-  });
-  mounted.current[activeTab] = true;
+  const { isMounted, markVisited } = useMountedTabs(activeTab);
 
-  const setTab = (tab: AdminTabKey) => setParams({ tab }, { replace: true });
+  const setTab = (tab: AdminTabKey) => {
+    markVisited(tab);
+    setParams({ tab }, { replace: true });
+  };
 
   return (
     <AppLayout title="Administración">
@@ -48,16 +45,16 @@ export default function Admin() {
       </div>
 
       <div style={{ display: activeTab === 'sucursales' ? 'block' : 'none' }}>
-        {mounted.current.sucursales && <SucursalesTab />}
+        {isMounted('sucursales') && <SucursalesTab />}
       </div>
       <div style={{ display: activeTab === 'whatsapp' ? 'block' : 'none' }}>
-        {mounted.current.whatsapp && <UsuariosWhatsappTab />}
+        {isMounted('whatsapp') && <UsuariosWhatsappTab />}
       </div>
       <div style={{ display: activeTab === 'usuarios' ? 'block' : 'none' }}>
-        {mounted.current.usuarios && <UsuariosPanelTab />}
+        {isMounted('usuarios') && <UsuariosPanelTab />}
       </div>
       <div style={{ display: activeTab === 'marcas' ? 'block' : 'none' }}>
-        {mounted.current.marcas && <MarcasTab />}
+        {isMounted('marcas') && <MarcasTab />}
       </div>
     </AppLayout>
   );

@@ -18,6 +18,11 @@ export type NotificacionTipo = 'mensaje_nuevo' | 'encargado_respondio' | 'estado
 export type GestionRevisionAccion = 'aprobar' | 'rechazar' | 'en_gestion_terceros' | 'retomar';
 export type AdminTabKey = 'sucursales' | 'whatsapp' | 'usuarios' | 'marcas';
 export type DashboardView = 'general' | 'zona';
+/**
+ * Bandejas del panel de desvios. El eje es de quien es el turno, no en que
+ * estado esta el desvio (ver ARQUITECTURA_PANEL_DESVIOS.md seccion 5).
+ */
+export type DesvioBandeja = 'decidir' | 'esperando' | 'cerrado';
 export type SucursalDetailTab = 'resumen' | 'reportes' | 'gestiones' | 'stock' | 'auditorias';
 export type SucursalEditableField = 'nombre' | 'direccion' | 'zona' | 'responsable' | 'tel_responsable';
 export type AutosaveStatus = 'idle' | 'pending' | 'saving' | 'saved' | 'error';

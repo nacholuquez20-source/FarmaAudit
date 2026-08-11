@@ -23,6 +23,7 @@ import type {
   Notificacion,
   NotificacionTipo,
   DesvioBorrador,
+  DesvioBandeja,
   CreatePanelUserInput,
   UpdatePanelUserInput,
   GestionRevisionAccion,
@@ -455,6 +456,36 @@ export async function getDesviosBorrador(): Promise<DesvioBorrador[]> {
   }
 
   return (data ?? []) as DesvioBorrador[];
+}
+
+// Contadores de las bandejas del panel de desvios. Se piden aparte de los
+// paneles a proposito: las pestañas tienen que mostrar cuanto hay esperando
+// SIN haber entrado, y cada panel se monta recien cuando lo visitas.
+// Trae solo la columna estado, no las filas completas.
+export async function getDesviosBandejaCounts(): Promise<Record<DesvioBandeja, number>> {
+  const [gestionResult, borradorResult] = await Promise.all([
+    supabase.from('gestion').select('estado'),
+    supabase.from('desvios_borrador').select('id').eq('estado', 'pendiente'),
+  ]);
+
+  if (gestionResult.error) throw new Error(handleApiError(gestionResult.error));
+
+  // Un borrador que no se puede leer no debe romper los contadores del resto.
+  const borradores =
+    borradorResult.error && !isMissingTableError(borradorResult.error, 'desvios_borrador')
+      ? 0
+      : (borradorResult.data?.length ?? 0);
+
+  const counts: Record<DesvioBandeja, number> = { decidir: borradores, esperando: 0, cerrado: 0 };
+
+  for (const row of gestionResult.data ?? []) {
+    const estado = (row as { estado: GestionState }).estado;
+    if (estado === 'En_revision') counts.decidir += 1;
+    else if (estado === 'Abierta' || estado === 'En_proceso' || estado === 'Vencida') counts.esperando += 1;
+    else counts.cerrado += 1;
+  }
+
+  return counts;
 }
 
 async function getAuthHeaders(): Promise<HeadersInit> {
