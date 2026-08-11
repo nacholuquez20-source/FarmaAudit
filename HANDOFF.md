@@ -34,10 +34,14 @@ El otro norte de esta etapa fue **coherencia y confiabilidad, no features**. El 
    por log al arrancar. Con WhatsApp como único canal, es el agujero más serio que queda abierto.
 4. **`etapa-16-campania-sucursal-rls.sql`** sigue sin correr. Sin ella, `/mis-campanias` devuelve 0 filas para
    el rol `sucursal` por RLS. Solo importa si vas a tocar campañas.
-5. **`SUPABASE_SERVICE_KEY` en el `.env` raíz es una key legacy deshabilitada.** Supabase las apagó el
-   2026-08-07; correr el backend en local hoy devuelve 401 en cualquier endpoint autenticado. Actualizala
-   desde el dashboard de Supabase antes de tocar el backend en esta máquina. Railway probablemente ya tiene la
-   key nueva (no se pudo confirmar esta sesión) — esto es solo el `.env` local desincronizado.
+5. ~~`SUPABASE_SERVICE_KEY` legacy deshabilitada.~~ **Resuelto 2026-08-11** (`3414155`), y fue más grave de lo
+   que parecía al principio — **Railway estaba caído**, no solo el `.env` local. Detalle abajo en "Supabase
+   cortó las keys legacy — Railway estuvo caído".
+   - **Verificar ahora**: confirmar en el dashboard de Railway que el deploy de `3414155` salió bien y el
+     backend arrancó sin el error `Invalid API key`. La URL que tenía documentada `META_SETUP.md`
+     (`farmaaudit-production-3f78.up.railway.app`) devolvía *"Application not found"* de Railway en **todas**
+     las rutas al probarla esta sesión — puede ser que la URL real cambió y el doc quedó desactualizado; si
+     es así, corregir `META_SETUP.md` con la URL correcta.
 
 ---
 
@@ -101,18 +105,32 @@ a aparecer latencia.
 - Mitad "mostrar" de "estado de entrega visible": `ChatMensajes` ya sabe renderizar un badge de
   `desvio_eventos.metadata.entrega` (enviado/fallido/sin ventana) — capacidad muerta hasta que el Bloque 4
   empiece a escribir ese campo al enviar.
-- **Hallazgo aparte, sin arreglar todavía**: el `.env` raíz de esta máquina tiene una `SUPABASE_SERVICE_KEY`
-  del formato *legacy* que Supabase deshabilitó el 2026-08-07 — cualquier llamada autenticada del backend
-  corrido localmente devuelve 401 (`"Legacy API keys are disabled"`). Es preexistente, afecta a **todos** los
-  endpoints con auth, no solo a los nuevos, y probablemente Railway ya tiene la key rotada por separado (la
-  key vieja acá es simplemente una copia sin sincronizar). Si vas a correr el backend en local, actualizala
-  primero desde el dashboard de Supabase.
-- Verificado: el endpoint nuevo no se pudo probar con datos reales (ni local, por la key vieja; ni contra
-  Railway, porque este commit todavía no está deployado ahí). Sí se confirmó de punta a punta que el frontend
-  degrada bien cuando la llamada falla: muestra "Sin responsable activo", deshabilita ambos botones de
-  contacto, no rompe la página. Falta la prueba real: que el webhook realmente marque
-  `ultimo_mensaje_entrante_at` con tráfico real de WhatsApp, y que el job de recordatorio resuelva bien en
-  producción — ninguna se puede simular sin riesgo desde acá.
+- Verificado de punta a punta contra Supabase real (ver incidente abajo): el endpoint nuevo devuelve el
+  responsable correcto tanto para una sucursal sin responsable activo (`{"responsable": null, ...}`) como para
+  una con responsable activo (`{"responsable": {"nombre": "juan", "telefono": "549..."}, "ventana_abierta":
+  false}`). `ventana_abierta` da `false` en todos los casos todavía porque `ultimo_mensaje_entrante_at` nunca
+  se pobló con tráfico real — falta esa prueba, no se puede simular sin riesgo desde acá.
+
+### Supabase cortó las keys legacy — Railway estuvo caído (`3414155`)
+
+Lo que en la sesión anterior parecía "solo el `.env` local desincronizado" resultó ser más grave: **Railway
+también estaba corriendo con la key legacy**, y al rotarla a la nueva (`sb_secret_...`) el deploy quedó roto
+con `supabase.client.SupabaseException: Invalid API key` — un error distinto y más duro que el 401 original.
+Con eso, el backend arrancaba pero **no podía hablar con Supabase para nada**: ni el webhook, ni los jobs de
+fondo, ni ningún endpoint autenticado.
+
+Causa real: `supabase-py==2.0.3` (la versión pineada en `requirements.txt` desde siempre) valida la key con
+una regex que exige forma de JWT (`algo.algo.algo`) **antes de mandar cualquier request** — rechaza el formato
+nuevo de Supabase en el cliente, ni siquiera llega a la red. No alcanzaba con cambiar la key: hacía falta
+actualizar la librería.
+
+Fix: `supabase` `2.0.3` → `2.31.0`, más `httpx<0.25.0` → `httpx>=0.26,<0.29` (la dependencia interna
+`supabase-auth` de la versión nueva lo exige; `anthropic` y `openai` declaran `httpx<1,>=0.23`, así que el
+rango más ancho no choca con ellos). Verificado localmente con la key nueva: arranque limpio, sin errores de
+Supabase, y el endpoint de responsable-activo del Bloque 3 devolviendo datos reales.
+
+**Al retomar**: confirmar en Railway que `3414155` se deployó y el backend arrancó bien (ver ítem 5 de "Primer
+paso al retomar" más arriba).
 
 ---
 
