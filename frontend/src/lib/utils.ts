@@ -93,6 +93,15 @@ export function cn(...classes: (string | undefined | null | false)[]): string {
   return classes.filter(Boolean).join(' ');
 }
 
+// Deja solo dígitos. Tiene que coincidir exactamente con
+// SupabaseManager._normalize_phone / identity.normalize_phone del backend,
+// que es contra lo que se compara el número entrante de un mensaje de
+// WhatsApp — si acá se guardara con espacios, guiones o "+", el bot nunca
+// lo matchearía y esa persona quedaría con acceso roto en silencio.
+export function normalizePhoneDigits(tel: string): string {
+  return tel.replace(/\D/g, '');
+}
+
 // Enlace directo de WhatsApp normalizando teléfonos argentinos.
 // Quita el 0 de trunk, antepone 54 y descarta números demasiado cortos
 // (evita links basura como wa.me/54 que no abren ningún chat).

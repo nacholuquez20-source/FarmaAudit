@@ -141,12 +141,13 @@ export function SucursalesTab() {
               label="Responsable"
               value={form.responsable || ''}
               onChange={(e) => setForm({ ...form, responsable: e.target.value })}
-              helperText="Opcional: podés vincular el responsable desde la pestaña Usuarios WhatsApp"
+              helperText="Solo texto informativo, se ve en reportes"
             />
             <Input
               label="Teléfono responsable"
               value={form.tel_responsable || ''}
               onChange={(e) => setForm({ ...form, tel_responsable: e.target.value })}
+              helperText="Informativo — no da acceso al bot. Para eso, cargalo en 'Usuarios WhatsApp'"
             />
           </div>
           {formError && <p className="mt-3 text-sm font-medium text-red-600">{formError}</p>}

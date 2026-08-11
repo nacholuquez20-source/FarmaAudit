@@ -24,15 +24,18 @@ const sizeClasses: Record<ButtonSize, string> = {
   lg: 'px-6 py-3 text-lg',
 };
 
-export function Button({
-  variant = 'primary',
-  size = 'md',
-  isLoading = false,
-  disabled = false,
-  className = '',
-  children,
-  ...props
-}: ButtonProps) {
+export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  {
+    variant = 'primary',
+    size = 'md',
+    isLoading = false,
+    disabled = false,
+    className = '',
+    children,
+    ...props
+  },
+  ref,
+) {
   const classes = `
     font-medium rounded-lg transition-all duration-200
     disabled:opacity-50 disabled:cursor-not-allowed
@@ -44,6 +47,7 @@ export function Button({
   return (
     <button
       {...props}
+      ref={ref}
       disabled={disabled || isLoading}
       className={classes}
     >
@@ -64,4 +68,4 @@ export function Button({
       )}
     </button>
   );
-}
+});
