@@ -17,6 +17,7 @@ from audit_session import (
 from models import WhatsAppPayload
 from meta_client import MetaClient
 from photo_validator import PhotoValidator, PhotoValidationResult
+from audio import AudioTranscriber
 from audit_database import save_audit_to_database, send_manager_notification, get_previous_audit
 from supabase_manager import SupabaseManager
 from audit_pdf_generator import generate_audit_pdf
@@ -1338,8 +1339,21 @@ class AuditConversationHandler:
         elif payload.tipo == "audio":
             # Handle audio message
             if payload.media_id:
-                # Create a note marking it as audio
-                audio_description = f"[AUDIO] {payload.contenido or 'Sin transcripción'}"
+                # payload.contenido nunca trae la transcripcion real — el
+                # webhook (main.py) lo deja en un placeholder "[Audio message
+                # <id>]" a proposito (nunca descarga el audio ahi). Se
+                # transcribe aca, con el mismo patron de descarga que ya usa
+                # la foto de arriba. El prefijo "[AUDIO]" se preserva siempre
+                # (transcriba bien o no) porque otro codigo de esta funcion ya
+                # cuenta "audios vs notas" por bloque buscando ese prefijo.
+                transcript = ""
+                try:
+                    media_bytes, mime_type = await meta_client.download_media_with_metadata(payload.media_id)
+                    transcript = await AudioTranscriber().transcribe_bytes(media_bytes, mime_type)
+                except Exception as e:
+                    logger.warning(f"No se pudo transcribir audio {payload.media_id}: {e}")
+
+                audio_description = f"[AUDIO] {transcript.strip() if transcript else 'Sin transcripción'}"
                 session.add_desvio(bloque=current_bloque, descripcion=audio_description)
                 save_session(session)
 
