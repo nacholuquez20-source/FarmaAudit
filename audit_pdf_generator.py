@@ -12,6 +12,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch, cm
 from reportlab.platypus import (
     Image as RLImage,
+    KeepTogether,
     PageBreak,
     Paragraph,
     SimpleDocTemplate,
@@ -511,6 +512,219 @@ def generate_controles_summary_pdf(
             "Los links de ficha son temporales (validos por unos dias desde que se genero este PDF).",
             small,
         ))
+
+    doc.build(story)
+    result = buf.getvalue()
+    buf.close()
+    return result
+
+
+def _severidad_color(severidad: Optional[str]):
+    return {"Alta": RED, "Media": AMBER, "Baja": GREEN}.get(severidad or "", GREY)
+
+
+def _severidad_bg(severidad: Optional[str]):
+    return {"Alta": LIGHT_RED, "Media": LIGHT_AMB, "Baja": LIGHT_GRN}.get(severidad or "", colors.HexColor("#f8fafc"))
+
+
+def _horas_transcurridas(desde: Optional[str], hasta: Optional[str]) -> Optional[float]:
+    if not desde or not hasta:
+        return None
+    try:
+        t0 = datetime.fromisoformat(str(desde).replace("Z", "+00:00"))
+        t1 = datetime.fromisoformat(str(hasta).replace("Z", "+00:00"))
+        return (t1 - t0).total_seconds() / 3600
+    except Exception:
+        return None
+
+
+def _fmt_horas(horas: Optional[float]) -> str:
+    if horas is None:
+        return "—"
+    if horas < 1:
+        return f"{int(horas * 60)} min"
+    if horas < 48:
+        return f"{horas:.1f} h"
+    return f"{horas / 24:.1f} dias"
+
+
+def generate_respuestas_pdf(
+    sucursal_nombre: str,
+    items: List[Dict[str, Any]],
+    encargado_nombre: Optional[str] = None,
+    auditor_nombre: Optional[str] = None,
+    desvios_abiertos_restantes: Optional[int] = None,
+) -> bytes:
+    """Informe de las correcciones que un encargado mando por WhatsApp para un
+    grupo de desvios, con lo detectado y lo respondido enfrentados item por
+    item (circuito de vuelta auditor <- encargado, ver plan en memoria).
+
+    Cada item de `items` describe un desvio ya respondido:
+        id_gestion: str
+        desvio_descripcion: str
+        severidad: 'Alta' | 'Media' | 'Baja'
+        detectado_at: str ISO o None       — cuando se creo la gestion
+        foto_detectada_bytes: bytes o None — foto original del hallazgo
+        respuesta_comentario: str o None
+        respuesta_foto_bytes: bytes o None — foto de la correccion
+        respuesta_at: str ISO o None       — cuando respondio el encargado
+
+    Es deliberadamente independiente de AuditSession: no describe una
+    auditoria en curso, describe una tanda de respuestas ya guardadas en
+    desvio_eventos, así que no hay sesión que pasarle.
+    """
+    buf = BytesIO()
+    page_w, page_h = A4
+    margin = 1.5 * cm
+    usable_w = page_w - 2 * margin
+
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        rightMargin=margin,
+        leftMargin=margin,
+        topMargin=margin,
+        bottomMargin=margin,
+    )
+
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("H1", parent=styles["Normal"],
+                        fontSize=18, fontName="Helvetica-Bold",
+                        textColor=NAVY, alignment=TA_CENTER, spaceAfter=2)
+    sub = ParagraphStyle("Sub", parent=styles["Normal"],
+                         fontSize=10, textColor=GREY, alignment=TA_CENTER, spaceAfter=8)
+    section = ParagraphStyle("Section", parent=styles["Normal"],
+                              fontSize=11, fontName="Helvetica-Bold",
+                              textColor=NAVY, spaceBefore=12, spaceAfter=4)
+    body = ParagraphStyle("Body", parent=styles["Normal"], fontSize=9, leading=13, textColor=colors.black)
+    label = ParagraphStyle("Label", parent=styles["Normal"], fontSize=8, fontName="Helvetica-Bold", textColor=GREY)
+    small = ParagraphStyle("Small", parent=styles["Normal"], fontSize=8, textColor=GREY)
+    caption = ParagraphStyle("Caption", parent=styles["Normal"], fontSize=8, alignment=TA_CENTER, textColor=GREY)
+
+    story = []
+    story.append(Paragraph("FarmaAudit", h1))
+    story.append(Paragraph("Respuestas del encargado a desvios pendientes", sub))
+
+    bar = Table([[""]], colWidths=[usable_w], rowHeights=[4])
+    bar.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), NAVY)]))
+    story.append(bar)
+    story.append(Spacer(1, 10))
+
+    col1 = 3.8 * cm
+    col2 = usable_w - col1
+    info_rows = [
+        ["Sucursal", sucursal_nombre],
+        ["Encargado", encargado_nombre or "—"],
+        ["Auditor", auditor_nombre or "—"],
+        ["Generado", datetime.now().strftime("%d/%m/%Y %H:%M")],
+        ["Desvios en este informe", str(len(items))],
+    ]
+    if desvios_abiertos_restantes is not None:
+        info_rows.append(["Desvios aun abiertos en la sucursal", str(desvios_abiertos_restantes)])
+
+    info_table = Table(info_rows, colWidths=[col1, col2])
+    info_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, -1), LIGHT_BLUE),
+        ("FONTNAME",   (0, 0), (0, -1), "Helvetica-Bold"),
+        ("FONTSIZE",   (0, 0), (-1, -1), 9),
+        ("TOPPADDING",    (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.5, LINE),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    story.append(info_table)
+    story.append(Spacer(1, 14))
+
+    max_img_w = (usable_w - 0.6 * cm) / 2
+    max_img_h = 6 * cm
+
+    for idx, item in enumerate(items, start=1):
+        severidad = item.get("severidad")
+        sc = _severidad_color(severidad)
+        bg = _severidad_bg(severidad)
+
+        # Cada item se arma en su propia lista y se agrega con KeepTogether:
+        # sin esto, ReportLab puede cortar un item a la mitad justo antes de
+        # la tabla de fotos (el header y la descripcion quedan en una pagina,
+        # las fotos solas al inicio de la siguiente, con un hueco enorme).
+        item_flowables = []
+
+        hdr_data = [[
+            Paragraph(
+                f'<font color="white"><b>#{idx} — {severidad or "Sin severidad"}</b></font>',
+                ParagraphStyle("DH", parent=styles["Normal"], fontSize=9,
+                               fontName="Helvetica-Bold", textColor=colors.white),
+            ),
+        ]]
+        hdr = Table(hdr_data, colWidths=[usable_w])
+        hdr.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, -1), sc),
+            ("TOPPADDING",    (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+        ]))
+        item_flowables.append(hdr)
+
+        desc = item.get("desvio_descripcion") or "—"
+        desc_table = Table([[Paragraph(desc, body)]], colWidths=[usable_w])
+        desc_table.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, -1), bg),
+            ("TOPPADDING",    (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 8),
+        ]))
+        item_flowables.append(desc_table)
+        item_flowables.append(Spacer(1, 6))
+
+        # Detectado vs. respondido, enfrentados en dos columnas.
+        detectado_img = _rl_image(item["foto_detectada_bytes"], max_img_w, max_img_h) if item.get("foto_detectada_bytes") else None
+        respuesta_img = _rl_image(item["respuesta_foto_bytes"], max_img_w, max_img_h) if item.get("respuesta_foto_bytes") else None
+
+        horas = _horas_transcurridas(item.get("detectado_at"), item.get("respuesta_at"))
+
+        left_cell = [
+            Paragraph("DETECTADO", label),
+            Paragraph(_fmt_fecha(item.get("detectado_at")), small),
+        ]
+        if detectado_img:
+            left_cell.append(Spacer(1, 4))
+            left_cell.append(detectado_img)
+
+        right_cell = [
+            Paragraph("RESPUESTA DEL ENCARGADO", label),
+            Paragraph(_fmt_fecha(item.get("respuesta_at")), small),
+        ]
+        comentario = item.get("respuesta_comentario")
+        if comentario:
+            right_cell.append(Spacer(1, 3))
+            right_cell.append(Paragraph(comentario, body))
+        if respuesta_img:
+            right_cell.append(Spacer(1, 4))
+            right_cell.append(respuesta_img)
+        if not comentario and not respuesta_img:
+            right_cell.append(Spacer(1, 3))
+            right_cell.append(Paragraph("Sin detalle registrado.", small))
+
+        compare_table = Table([[left_cell, right_cell]], colWidths=[usable_w / 2, usable_w / 2])
+        compare_table.setStyle(TableStyle([
+            ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+            ("BACKGROUND",    (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
+            ("TOPPADDING",    (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 8),
+            ("LINEAFTER",     (0, 0), (0, -1), 0.5, LINE),
+            ("GRID",          (0, 0), (-1, -1), 0.5, LINE),
+        ]))
+        item_flowables.append(compare_table)
+
+        item_flowables.append(Spacer(1, 3))
+        item_flowables.append(Paragraph(f"Tiempo de respuesta: {_fmt_horas(horas)}", caption))
+
+        story.append(KeepTogether(item_flowables))
+        story.append(Spacer(1, 14))
 
     doc.build(story)
     result = buf.getvalue()
