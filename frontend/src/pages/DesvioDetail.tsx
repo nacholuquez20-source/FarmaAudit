@@ -326,7 +326,7 @@ export default function DesvioDetail() {
       )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <DesvioInfoCard gestion={gestion} reporte={reporte} ficha={ficha} dueState={dueState} />
+        <DesvioInfoCard gestion={gestion} reporte={reporte} ficha={ficha} dueState={dueState} reporteFotoUrl={resolvedReporteFotoUrl || undefined} />
 
         <DesvioResponsibleCard gestion={gestion} responsableActivo={responsableActivo} />
 

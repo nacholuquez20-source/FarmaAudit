@@ -19,20 +19,34 @@ interface DesvioInfoCardProps {
   reporte: Reporte | null;
   ficha: AuditFicha | null;
   dueState: { label: string; className: string };
+  /** Foto que se mandó al bot cuando se detectó este desvío, ya resuelta a
+      URL firmada. undefined mientras carga o si no hay foto. */
+  reporteFotoUrl?: string;
 }
 
-export function DesvioInfoCard({ gestion, reporte, ficha, dueState }: DesvioInfoCardProps) {
+export function DesvioInfoCard({ gestion, reporte, ficha, dueState, reporteFotoUrl }: DesvioInfoCardProps) {
   return (
     <section className="rounded-lg bg-white p-6 shadow lg:col-span-2">
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <SeverityBadge severity={gestion.severidad} size="sm" />
-        <StatusBadge status={gestion.estado} size="sm" />
-        {/* Si el estado ya es 'Vencida', el badge de arriba ya lo dice — mostrar
-            "Vencido" de nuevo acá es el mismo hecho dos veces con dos
-            etiquetas distintas. Solo se agrega cuando aporta algo nuevo
-            (En plazo / Cerrado no son valores de gestion.estado). */}
-        {gestion.estado !== 'Vencida' && (
-          <span className={`text-sm font-semibold ${dueState.className}`}>{dueState.label}</span>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <SeverityBadge severity={gestion.severidad} size="sm" />
+          <StatusBadge status={gestion.estado} size="sm" />
+          {/* Si el estado ya es 'Vencida', el badge de arriba ya lo dice — mostrar
+              "Vencido" de nuevo acá es el mismo hecho dos veces con dos
+              etiquetas distintas. Solo se agrega cuando aporta algo nuevo
+              (En plazo / Cerrado no son valores de gestion.estado). */}
+          {gestion.estado !== 'Vencida' && (
+            <span className={`text-sm font-semibold ${dueState.className}`}>{dueState.label}</span>
+          )}
+        </div>
+        {reporteFotoUrl && (
+          <a href={reporteFotoUrl} target="_blank" rel="noreferrer" className="shrink-0" title="Ver foto completa">
+            <img
+              src={reporteFotoUrl}
+              alt="Foto enviada al bot"
+              className="h-20 w-20 rounded-lg object-cover ring-1 ring-gray-200 transition hover:opacity-80"
+            />
+          </a>
         )}
       </div>
 
