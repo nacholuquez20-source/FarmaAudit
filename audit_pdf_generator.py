@@ -221,14 +221,13 @@ def generate_audit_pdf(
     if session.desvios:
         story.append(Paragraph(f"Hallazgos encontrados ({len(session.desvios)})", section))
 
-        # No hay vínculo foto→desvío individual (Desvio.fotos nunca se puebla),
-        # solo foto→bloque (FotoEvidence.bloque se setea al capturar). Se
-        # agrupan los desvíos por bloque y se muestran las fotos de ese bloque
-        # una sola vez al final del grupo, no repetidas por cada desvío.
-        fotos_por_bloque: Dict[str, List] = {}
-        for foto in session.fotos:
-            if foto.bloque:
-                fotos_por_bloque.setdefault(foto.bloque, []).append(foto)
+        # Cada hallazgo muestra SU propia foto (Desvio.fotos, poblado desde el
+        # flujo libre de evidencia — ver audit_handlers.py). Antes no existia
+        # ese vinculo y se mostraba una galeria generica de todas las fotos del
+        # bloque al final, sin decir cual foto correspondia a cual hallazgo.
+        foto_by_id = {f.id: f for f in session.fotos}
+        max_img_w = (usable_w - 0.3 * cm) / 2  # 2 columns
+        max_img_h = 5 * cm
 
         bloques_con_desvios: List[str] = []
         desvios_por_bloque: Dict[str, List] = {}
@@ -247,6 +246,11 @@ def generate_audit_pdf(
             for desvio in desvios_por_bloque[bloque]:
                 idx += 1
 
+                # Cada hallazgo se arma en su propia lista y se agrega con
+                # KeepTogether: sin esto ReportLab puede cortar un hallazgo a
+                # la mitad justo antes de su foto en el salto de pagina.
+                item_flowables = []
+
                 # Desvío header bar
                 hdr_data = [[
                     Paragraph(
@@ -263,7 +267,7 @@ def generate_audit_pdf(
                     ("BOTTOMPADDING", (0,0), (-1,-1), 5),
                     ("LEFTPADDING",   (0,0), (-1,-1), 8),
                 ]))
-                story.append(hdr)
+                item_flowables.append(hdr)
 
                 # Descripción
                 desc = desvio.descripcion[:500] + "…" if len(desvio.descripcion) > 500 else desvio.descripcion
@@ -276,24 +280,23 @@ def generate_audit_pdf(
                     ("LEFTPADDING",   (0,0), (-1,-1), 8),
                     ("RIGHTPADDING",  (0,0), (-1,-1), 8),
                 ]))
-                story.append(desc_table)
-                story.append(Spacer(1, 6))
+                item_flowables.append(desc_table)
 
-            # Fotos del bloque, una vez por grupo
-            fotos_bloque = fotos_por_bloque.get(bloque, [])
-            if photo_bytes and fotos_bloque:
-                max_img_w = (usable_w - 0.3 * cm) / 2  # 2 columns
-                max_img_h = 5 * cm
+                # Fotos ligadas a ESTE hallazgo puntual (no a todo el bloque).
                 images = []
-                for foto in fotos_bloque:
-                    raw = photo_bytes.get(foto.id)
-                    if raw:
-                        img = _rl_image(raw, max_img_w, max_img_h)
-                        if img:
-                            images.append(img)
+                if photo_bytes:
+                    for foto_id in desvio.fotos:
+                        foto = foto_by_id.get(foto_id)
+                        if not foto:
+                            continue
+                        raw = photo_bytes.get(foto.id)
+                        if raw:
+                            img = _rl_image(raw, max_img_w, max_img_h)
+                            if img:
+                                images.append(img)
 
                 if images:
-                    # Pad to even count for 2-column grid
+                    item_flowables.append(Spacer(1, 4))
                     if len(images) % 2 != 0:
                         images.append("")
                     rows = [images[i:i+2] for i in range(0, len(images), 2)]
@@ -305,12 +308,10 @@ def generate_audit_pdf(
                         ("BOTTOMPADDING", (0,0), (-1,-1), 4),
                         ("BACKGROUND",    (0,0), (-1,-1), colors.HexColor("#f8fafc")),
                     ]))
-                    story.append(photo_table)
-                    story.append(Paragraph(
-                        f"{len([x for x in images if x])} foto(s) de evidencia — {bloque_label}", small
-                    ))
+                    item_flowables.append(photo_table)
 
-            story.append(Spacer(1, 8))
+                item_flowables.append(Spacer(1, 8))
+                story.append(KeepTogether(item_flowables))
 
     else:
         story.append(Paragraph("✅ No se encontraron hallazgos críticos en esta auditoría.", body))
