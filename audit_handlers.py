@@ -28,46 +28,6 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 
-# Predefined notes templates by bloque
-NOTES_TEMPLATES = {
-    "LIMPIEZA": [
-        {"id": "1", "title": "Góndolas desorganizadas"},
-        {"id": "2", "title": "Polvo/suciedad en estantes"},
-        {"id": "3", "title": "Falta de reposición"},
-        {"id": "4", "title": "Desorden en piso"},
-        {"id": "5", "title": "Señalización sucia/faltante"},
-    ],
-    "STOCK": [
-        {"id": "1", "title": "Productos vencidos"},
-        {"id": "2", "title": "Falta de stock"},
-        {"id": "3", "title": "Exceso de inventario"},
-        {"id": "4", "title": "Productos mal ubicados"},
-        {"id": "5", "title": "Falta rotulación de precios"},
-    ],
-    "OFERTAS": [
-        {"id": "1", "title": "Promociones incorrectas"},
-        {"id": "2", "title": "Precios no actualizados"},
-        {"id": "3", "title": "Exhibición desordenada"},
-        {"id": "4", "title": "Falta de material promocional"},
-        {"id": "5", "title": "Marcas no destacadas"},
-    ],
-    "BURBUJAS": [
-        {"id": "1", "title": "Displays dañados"},
-        {"id": "2", "title": "Señalización ilegible"},
-        {"id": "3", "title": "Falta de displays"},
-        {"id": "4", "title": "Material vencido/desgastado"},
-        {"id": "5", "title": "Ubicación incorrecta"},
-    ],
-}
-
-# Explicit "nothing to report" option, offered alongside NOTES_TEMPLATES after
-# an auditor saves a photo/audio. Selecting it must NOT create a desvío/nota.
-NO_PROBLEMS_OPTION = {"id": "sin_problemas", "title": "✅ Sin problemas"}
-
-# Id used for the "write a custom description" row appended to NOTES_TEMPLATES
-# list messages. Selecting it must prompt for free text, not save the id itself.
-CUSTOM_NOTE_OPTION_ID = "otro"
-
 # Sí/No se comparan por TOKEN EXACTO, nunca por subcadena. El matcheo por
 # subcadena hacía que "no sirve" confirmara la auditoría entera, porque "si"
 # está contenido en "sirve".
@@ -630,6 +590,11 @@ class AuditConversationHandler:
         """Enter current bloque: verify pending desvíos from previous audits, then scoring."""
         telefono = session.telefono
         bloque = session.get_current_bloque()
+
+        # Corre una vez por bloque, antes de que arranque el puntaje — limpia
+        # la foto ancla del bloque anterior para que un hallazgo de un bloque
+        # nuevo nunca quede ligado a una foto de otro bloque.
+        session.current_foto_id = None
 
         pendientes = []
         try:
@@ -1209,44 +1174,14 @@ class AuditConversationHandler:
 
                 return await AuditConversationHandler.send_summary(payload.telefono, meta_client, session)
 
-            # Text without "SIGUIENTE" — could be free text, OR the id of a
-            # list_reply/button_reply (main.py maps list_reply.id -> contenido
-            # and sets tipo="text" for downstream handlers). Handle the
-            # special list ids before falling back to "save raw text as note".
-            raw_id = payload.contenido.strip()
+            # Texto sin "SIGUIENTE" — flujo libre: se guarda directo como nota,
+            # ligada a la ultima foto recibida en este bloque (si hay una).
+            raw_text = payload.contenido.strip()
 
-            # "✅ Sin problemas" — auditor confirms nothing to report for this
-            # evidence. Just acknowledge; do NOT create a desvío/nota.
-            if raw_id == NO_PROBLEMS_OPTION["id"]:
-                await meta_client.send_text(
-                    payload.telefono,
-                    "👍 Perfecto, ¿algo más? (foto, audio, texto, o 'SIGUIENTE')"
-                )
-                return "no_problems_confirmed"
-
-            # "Escribir otro..." — the auditor still needs to type the real
-            # description. Prompt for it and wait for the next message;
-            # do NOT save the button id itself as the note.
-            if raw_id == CUSTOM_NOTE_OPTION_ID:
-                session.awaiting_note_text = True
-                save_session(session)
-                await meta_client.send_text(
-                    payload.telefono,
-                    "Escribí tu descripción del problema:"
-                )
-                return "awaiting_custom_note"
-
-            # If the text matches a predefined template id, resolve it to its
-            # readable title before saving (never persist the raw numeric id).
-            templates = NOTES_TEMPLATES.get(current_bloque, [])
-            template_match = next((t for t in templates if t.get("id") == raw_id), None)
-            descripcion = template_match["title"] if template_match else raw_id
-
-            # Un "ok" o un "gracias" no es un desvío. Sólo se acepta como
-            # descripción si veníamos esperándola (botón "Escribir otro...") o
-            # si no es un simple acuse de recibo; si no, terminaba en la tabla
-            # `gestion` como un desvío real que nadie reportó.
-            if not session.awaiting_note_text and not template_match and _es_asentimiento(raw_id):
+            # Un "ok" o un "gracias" no es un desvío — se filtra siempre, sin
+            # excepcion, para que el auditor pueda escribir cosas casuales sin
+            # que se cuelen como hallazgos falsos en `gestion`.
+            if _es_asentimiento(raw_text):
                 await meta_client.send_text(
                     payload.telefono,
                     f"👍 Anotado. ¿Algo más para {bloque_label}? "
@@ -1254,8 +1189,11 @@ class AuditConversationHandler:
                 )
                 return "acknowledgement_ignored"
 
-            session.add_desvio(bloque=current_bloque, descripcion=descripcion)
-            session.awaiting_note_text = False
+            session.add_desvio(
+                bloque=current_bloque,
+                descripcion=raw_text,
+                fotos=[session.current_foto_id] if session.current_foto_id else None,
+            )
             save_session(session)
 
             await meta_client.send_text(
@@ -1266,11 +1204,6 @@ class AuditConversationHandler:
 
             return "note_saved"
 
-        # NOTA: acá había un bloque `if payload.tipo == "text"` que ofrecía las
-        # plantillas al escribir "problema". Era inalcanzable —el bloque de
-        # texto de más arriba retorna por todos sus caminos— así que la función
-        # nunca existió en la práctica y se eliminó. Las plantillas se siguen
-        # ofreciendo después de cada foto y cada audio, que es donde se usan.
         if payload.tipo == "image":
             # Handle photo
             if not payload.media_id:
@@ -1306,25 +1239,16 @@ class AuditConversationHandler:
                 )
 
                 session.add_foto(foto)
+                # Esta foto pasa a ser el ancla: todo audio/texto que llegue
+                # despues (hasta la proxima foto) se liga a ella en Desvio.fotos.
+                session.current_foto_id = foto.id
                 save_session(session)
 
                 await meta_client.send_text(
                     payload.telefono,
                     f"✓ Foto guardada en {bloque_label}\n\n"
-                    f"¿Algo más?"
+                    f"¿Algo más? (audio, texto, otra foto, o 'SIGUIENTE')"
                 )
-
-                # Offer predefined notes for this bloque
-                templates = NOTES_TEMPLATES.get(current_bloque, [])
-                if templates:
-                    await meta_client.send_list_message(
-                        payload.telefono,
-                        header=f"Describe el problema",
-                        body=f"Problemas comunes en {bloque_label}:",
-                        footer="O envía tu propia descripción",
-                        button_text="Selecciona o agrega",
-                        options=[NO_PROBLEMS_OPTION] + templates + [{"id": CUSTOM_NOTE_OPTION_ID, "title": "Escribir otro..."}]
-                    )
 
                 return "photo_received"
 
@@ -1354,26 +1278,18 @@ class AuditConversationHandler:
                     logger.warning(f"No se pudo transcribir audio {payload.media_id}: {e}")
 
                 audio_description = f"[AUDIO] {transcript.strip() if transcript else 'Sin transcripción'}"
-                session.add_desvio(bloque=current_bloque, descripcion=audio_description)
+                session.add_desvio(
+                    bloque=current_bloque,
+                    descripcion=audio_description,
+                    fotos=[session.current_foto_id] if session.current_foto_id else None,
+                )
                 save_session(session)
 
                 await meta_client.send_text(
                     payload.telefono,
                     f"✓ Audio guardado en {bloque_label}\n\n"
-                    f"¿Algo más?"
+                    f"¿Algo más? (foto, audio, texto, o 'SIGUIENTE')"
                 )
-
-                # Offer predefined notes
-                templates = NOTES_TEMPLATES.get(current_bloque, [])
-                if templates:
-                    await meta_client.send_list_message(
-                        payload.telefono,
-                        header=f"Describe el problema",
-                        body=f"Problemas comunes en {bloque_label}:",
-                        footer="O envía 'SIGUIENTE'",
-                        button_text="Agregar problema",
-                        options=[NO_PROBLEMS_OPTION] + templates[:4] + [{"id": "siguiente", "title": "Siguiente bloque"}]
-                    )
 
                 return "audio_received"
 

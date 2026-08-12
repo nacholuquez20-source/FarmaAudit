@@ -132,6 +132,12 @@ class AuditSession:
     fotos: List[FotoEvidence] = field(default_factory=list)
     desvios: List[Desvio] = field(default_factory=list)
 
+    # Foto "ancla" del bloque actual: la última FotoEvidence.id recibida. Todo
+    # audio/texto que llegue despues se liga a esta foto (Desvio.fotos), hasta
+    # que llegue una foto nueva que la reemplaza. Se resetea en enter_bloque(),
+    # antes de que arranque la recoleccion de evidencia de cada bloque.
+    current_foto_id: Optional[str] = None
+
     # Verification of previous open desvíos (per bloque)
     pending_verifications: List[Dict[str, Any]] = field(default_factory=list)
     current_verification_index: int = 0
@@ -142,11 +148,6 @@ class AuditSession:
     # Standalone desvío management (no scoring, queue spans all bloques)
     verification_only: bool = False
     verification_menu: List[Dict[str, Any]] = field(default_factory=list)
-
-    # True mientras se espera que el auditor escriba la descripción de una nota
-    # (lo activa el botón "Escribir otro..."). Sin esto no hay forma de
-    # distinguir una descripción real de un "ok" suelto.
-    awaiting_note_text: bool = False
 
     # Post-audit fields (persisted so they survive session reload between messages)
     pending_ficha_reporte_id: Optional[str] = None   # reporte_id deferred until responsable is known
@@ -184,6 +185,7 @@ class AuditSession:
             'current_brand_index': self.current_brand_index,
             'fotos': [f.to_dict() for f in self.fotos],
             'desvios': [d.to_dict() for d in self.desvios],
+            'current_foto_id': self.current_foto_id,
             'pending_verifications': self.pending_verifications,
             'current_verification_index': self.current_verification_index,
             'awaiting_verification_photo': self.awaiting_verification_photo,
@@ -191,7 +193,6 @@ class AuditSession:
             'verified_persisten': self.verified_persisten,
             'verification_only': self.verification_only,
             'verification_menu': self.verification_menu,
-            'awaiting_note_text': self.awaiting_note_text,
             'pending_ficha_reporte_id': self.pending_ficha_reporte_id,
             'pending_ficha_gestion_ids': self.pending_ficha_gestion_ids,
             'desvios_responsable': self.desvios_responsable,
@@ -276,12 +277,13 @@ class AuditSession:
         self.fotos.append(foto)
         self.last_message_at = datetime.now(timezone.utc).isoformat()
 
-    def add_desvio(self, bloque: str, descripcion: str) -> Desvio:
-        """Add deviation/problem."""
+    def add_desvio(self, bloque: str, descripcion: str, fotos: Optional[List[str]] = None) -> Desvio:
+        """Add deviation/problem, optionally linked to one or more FotoEvidence ids."""
         desvio = Desvio(
             id=f"desvio_{uuid.uuid4().hex[:8]}",
             bloque=bloque,
             descripcion=descripcion,
+            fotos=fotos or [],
         )
         self.desvios.append(desvio)
         self.last_message_at = datetime.now(timezone.utc).isoformat()

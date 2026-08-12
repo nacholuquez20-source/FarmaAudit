@@ -323,17 +323,41 @@ def test_descripcion_real_si_crea_desvio():
     assert s.desvios[0].descripcion == "Góndola de shampoo sin precios"
 
 
-def test_tras_escribir_otro_se_acepta_cualquier_texto():
-    """Si el auditor pidió escribir una nota, su texto vale aunque sea corto."""
+def test_notas_se_ligan_a_la_ultima_foto():
+    """Foto + varios audios/textos despues: todos los hallazgos quedan ligados
+    a esa misma foto, hasta que llegue una foto nueva (circuito de vuelta, flujo
+    libre de evidencia)."""
     s = _session_recolectando()
-    s.awaiting_note_text = True
+    s.current_foto_id = "f1"  # simula que "f1" (ya sembrada en session.fotos) es el ancla
     meta = MockMetaClient()
+
     result = asyncio.run(
-        AuditConversationHandler.handle_bloque_evidence(make_payload(contenido="ok"), meta, s)
+        AuditConversationHandler.handle_bloque_evidence(
+            make_payload(contenido="Polvo en las góndolas"), meta, s
+        )
     )
     assert result == "note_saved"
     assert len(s.desvios) == 1
-    assert s.awaiting_note_text is False
+    assert s.desvios[0].fotos == ["f1"], "el primer hallazgo tiene que quedar ligado a la foto ancla"
+
+    result = asyncio.run(
+        AuditConversationHandler.handle_bloque_evidence(
+            make_payload(contenido="Productos vencidos en el mismo estante"), meta, s
+        )
+    )
+    assert result == "note_saved"
+    assert len(s.desvios) == 2
+    assert s.desvios[1].fotos == ["f1"], "una misma foto puede generar varios hallazgos distintos"
+
+    # Foto nueva: pisa el ancla, los hallazgos siguientes ya no se ligan a "f1".
+    s.current_foto_id = "f2"
+    result = asyncio.run(
+        AuditConversationHandler.handle_bloque_evidence(
+            make_payload(contenido="Otro problema en otra góndola"), meta, s
+        )
+    )
+    assert result == "note_saved"
+    assert s.desvios[2].fotos == ["f2"]
 
 
 # ---------------------------------------------------------------- W4.5
