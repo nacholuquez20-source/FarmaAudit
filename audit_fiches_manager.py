@@ -103,6 +103,11 @@ class AuditFichesManager:
                 "id_reporte": reporte_id,
                 "sucursal_id": session.sucursal_id,
                 "auditor_nombre": session.auditor_nombre,
+                # Telefono del auditor que corrio la sesion — es lo unico que
+                # permite, mas adelante, avisarle por WhatsApp cuando el
+                # encargado responde (el nombre solo no alcanza para resolver
+                # un destinatario). session.telefono siempre esta poblado.
+                "auditor_telefono": session.telefono,
                 "responsable_desvios": responsable_desvios,
                 "fecha_auditoria": session.started_at or datetime.now(timezone.utc).isoformat(),
                 "url_pdf": signed_url,
