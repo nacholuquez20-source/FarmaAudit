@@ -67,7 +67,7 @@ def resolve_whatsapp_user(telefono: str) -> Optional[WhatsAppUser]:
         db = SupabaseManager()
         response = (
             db.client.table("usuarios_whatsapp")
-            .select("id, telefono, nombre, rol, activo, id_sucursal")
+            .select("id, telefono, nombre, rol, activo, id_sucursal, ultimo_mensaje_entrante_at")
             .eq("telefono", telefono_norm)
             .limit(1)
             .execute()
@@ -95,6 +95,7 @@ def resolve_whatsapp_user(telefono: str) -> Optional[WhatsAppUser]:
             activo=bool(row.get("activo", False)),
             id_sucursal=row.get("id_sucursal"),
             tipos_auditoria=tipos,
+            ultimo_mensaje_entrante_at=row.get("ultimo_mensaje_entrante_at"),
         )
     except Exception as e:
         logger.error(f"Failed to resolve whatsapp user {telefono}: {e}")

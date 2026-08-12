@@ -28,6 +28,7 @@ from init_supabase import init_supabase_schema
 # NEW: Imports for perfumery audit v2
 from audit_session import AuditState, get_session
 from identity import resolve_responsable_by_sucursal, resolve_whatsapp_user, ventana_abierta
+from informes_respuesta import enviar_informes_respuesta
 
 # Configure logging
 logging.basicConfig(
@@ -453,6 +454,13 @@ async def startup_event():
         minute=0,
         id="responsable_desvios_reminder",
         timezone=pytz.UTC,
+        max_instances=1,  # Prevent concurrent executions
+    )
+    scheduler.add_job(
+        enviar_informes_respuesta,
+        "interval",
+        minutes=15,
+        id="informes_respuesta_encargado",
         max_instances=1,  # Prevent concurrent executions
     )
     # Disabled: Using Supabase directly, no longer syncing from Google Sheets
@@ -1812,6 +1820,20 @@ async def regenerate_thumbnails_job():
         logger.info(f"Thumbnail regeneration completed: {result}")
     except Exception as e:
         logger.error(f"Error in thumbnail regeneration job: {e}", exc_info=True)
+
+
+@app.post("/admin/informes-respuesta/run")
+async def run_informes_respuesta_endpoint(request: Request):
+    """Dispara a demanda el job de informes de respuestas (circuito de vuelta
+    auditor <- encargado). Requiere admin. Util para probar sin esperar los
+    45 min de debounce ni el intervalo de 15 min del scheduler."""
+    await _require_admin(request)
+    try:
+        await enviar_informes_respuesta()
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Error running informes_respuesta job manually: {e}")
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 
 @app.post("/admin/thumbnails/regenerate")

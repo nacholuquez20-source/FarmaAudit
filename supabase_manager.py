@@ -1128,6 +1128,28 @@ class SupabaseManager:
             logger.warning(f"Failed to create signed ficha URL for {path}: {e}")
             return ""
 
+    def upload_informe_respuesta_pdf(self, id_sucursal: str, content: bytes) -> Dict[str, str]:
+        """Upload a generated 'respuestas del encargado' report PDF to the private
+        desvio-evidencias bucket (circuito de vuelta auditor <- encargado)."""
+        path = f"informes/{id_sucursal}/{uuid.uuid4().hex}.pdf"
+        self.client.storage.from_("desvio-evidencias").upload(
+            path,
+            content,
+            {"content-type": "application/pdf", "upsert": "false"},
+        )
+        return {"path": path, "bucket": "desvio-evidencias"}
+
+    def create_signed_informe_url(self, path: str, expires_seconds: int = 86400) -> str:
+        """Create a signed URL for a 'respuestas del encargado' report PDF in Storage."""
+        try:
+            response = self.client.storage.from_("desvio-evidencias").create_signed_url(path, expires_seconds)
+            if isinstance(response, dict):
+                return response.get("signedURL") or response.get("signedUrl") or ""
+            return getattr(response, "signed_url", "") or getattr(response, "signedURL", "")
+        except Exception as e:
+            logger.warning(f"Failed to create signed informe URL for {path}: {e}")
+            return ""
+
     def regenerate_missing_thumbnails(self) -> Dict[str, int]:
         """
         Find evidences without thumbnails in desvios_borrador and regenerate them.
