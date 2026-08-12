@@ -872,6 +872,24 @@ export async function updatePanelProfile(
   return response.json();
 }
 
+// Dispara a demanda el job del circuito de vuelta (informes_respuesta.py):
+// agrupa respuestas de encargados sin informar y, para las que ya llevan mas
+// de 45 min sin actividad, genera y manda el PDF al auditor. Existe para
+// probar sin esperar el debounce ni el intervalo de 15 min del scheduler.
+export async function runInformesRespuesta(): Promise<void> {
+  const apiUrl = getBotApiUrl();
+  if (!apiUrl) throw new Error('Falta configurar VITE_API_URL con la URL del bot.');
+
+  const response = await fetch(`${apiUrl}/admin/informes-respuesta/run`, {
+    method: 'POST',
+    headers: await getAuthHeaders(),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail || 'No se pudo ejecutar el job de informes.');
+  }
+}
+
 function getGestionDate(gestion: Gestion): string | null {
   return gestion.created_at || gestion.updated_at || gestion.plazo_fecha || null;
 }

@@ -1,7 +1,7 @@
 import { useSearchParams } from 'react-router-dom';
 import { useMountedTabs } from '../hooks/useMountedTabs';
 import { AppLayout } from '../components/AppLayout';
-import { MarcasTab, SucursalesTab, UsuariosPanelTab, UsuariosWhatsappTab } from '../components/admin';
+import { MarcasTab, SistemaTab, SucursalesTab, UsuariosPanelTab, UsuariosWhatsappTab } from '../components/admin';
 import type { AdminTabKey } from '../types';
 
 const TABS: { key: AdminTabKey; label: string }[] = [
@@ -9,6 +9,7 @@ const TABS: { key: AdminTabKey; label: string }[] = [
   { key: 'whatsapp', label: 'Usuarios WhatsApp' },
   { key: 'usuarios', label: 'Usuarios del panel' },
   { key: 'marcas', label: 'Marcas (campañas)' },
+  { key: 'sistema', label: 'Sistema' },
 ];
 
 function isAdminTabKey(value: string | null): value is AdminTabKey {
@@ -55,6 +56,9 @@ export default function Admin() {
       </div>
       <div style={{ display: activeTab === 'marcas' ? 'block' : 'none' }}>
         {isMounted('marcas') && <MarcasTab />}
+      </div>
+      <div style={{ display: activeTab === 'sistema' ? 'block' : 'none' }}>
+        {isMounted('sistema') && <SistemaTab />}
       </div>
     </AppLayout>
   );

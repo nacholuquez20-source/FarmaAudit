@@ -16,7 +16,7 @@ export type DesvioEventoTipo = 'creacion' | 'contacto' | 'respuesta' | 'cierre' 
 export type DesvioOrigen = 'auditor' | 'sucursal';
 export type NotificacionTipo = 'mensaje_nuevo' | 'encargado_respondio' | 'estado_cambio' | 'vencimiento_proximo' | 'sla_revision_vencido';
 export type GestionRevisionAccion = 'aprobar' | 'rechazar' | 'en_gestion_terceros' | 'retomar';
-export type AdminTabKey = 'sucursales' | 'whatsapp' | 'usuarios' | 'marcas';
+export type AdminTabKey = 'sucursales' | 'whatsapp' | 'usuarios' | 'marcas' | 'sistema';
 export type DashboardView = 'general' | 'zona';
 /**
  * Bandejas del panel de desvios. El eje es de quien es el turno, no en que
