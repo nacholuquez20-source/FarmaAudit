@@ -515,11 +515,7 @@ async def send_encargado_notification(payload: EncargadoNotificationRequest, req
 
 @app.post("/api/gestion/{id_gestion}/mensajes")
 async def create_internal_message(id_gestion: str, payload: InternalMessageRequest, request: Request):
-    """Create an internal timeline message for one managed deviation.
-
-    Bloque 4: Si el auditor manda un mensaje y el responsable existe, envía por
-    WhatsApp dentro de ventana de 24h (send_text) o fuera (send_template farmaaudit_novedades).
-    """
+    """Create an internal timeline message for one managed deviation."""
     profile = await _require_profile(request)
     comentario = (payload.comentario or "").strip()
     if not comentario:
@@ -548,39 +544,6 @@ async def create_internal_message(id_gestion: str, payload: InternalMessageReque
 
     actor_id = profile["id"]
     actor_nombre = profile.get("nombre") or "Usuario"
-
-    # Bloque 4: Intentar enviar por WhatsApp si el auditor escribió y hay responsable
-    entrega_estado = None
-    if payload.origen == "auditor":
-        id_sucursal = gestion.get("id_sucursal")
-        responsable = resolve_responsable_by_sucursal(id_sucursal)
-        if responsable:
-            meta_client = MetaClient()
-            if ventana_abierta(responsable):
-                # Dentro de 24h: send_text
-                enviado = await meta_client.send_text(
-                    responsable.telefono,
-                    f"📩 Mensaje del auditor en tu desvío:\n\n{comentario}"
-                )
-                entrega_estado = "enviado" if enviado else "fallido"
-            else:
-                # Fuera de 24h: send_template farmaaudit_novedades
-                enviado = await meta_client.send_template(
-                    responsable.telefono,
-                    "farmaaudit_novedades",
-                    language_code="es_AR",
-                    body_params=[actor_nombre, "1"],
-                )
-                entrega_estado = "enviado" if enviado else "sin_ventana"
-
-    metadata = {
-        "origen": payload.origen,
-        "leido_por_auditor": payload.origen == "auditor",
-        "leido_por_sucursal": payload.origen == "sucursal",
-    }
-    if entrega_estado:
-        metadata["entrega"] = entrega_estado
-
     event_response = (
         client.table("desvio_eventos")
         .insert({
@@ -589,7 +552,11 @@ async def create_internal_message(id_gestion: str, payload: InternalMessageReque
             "comentario": comentario,
             "actor_id": actor_id,
             "actor_nombre": actor_nombre,
-            "metadata": metadata,
+            "metadata": {
+                "origen": payload.origen,
+                "leido_por_auditor": payload.origen == "auditor",
+                "leido_por_sucursal": payload.origen == "sucursal",
+            },
         })
         .execute()
     )
