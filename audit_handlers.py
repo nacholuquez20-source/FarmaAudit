@@ -77,6 +77,13 @@ SCORE_OPTIONS = [
     {"id": "5", "title": "Excelente", "description": "Cumple perfectamente"},
 ]
 
+# Botón ofrecido junto a cada confirmación de evidencia guardada (foto, audio,
+# nota). El id "siguiente" no necesita manejo especial: main.py ya mapea
+# button_reply.id -> payload.contenido con tipo="text", y el check de
+# "SIGUIENTE" en handle_bloque_evidence usa .upper() sobre el contenido, así
+# que "siguiente".upper() lo matchea sin tocar nada más.
+SIGUIENTE_BUTTON = {"id": "siguiente", "title": "➡️ Siguiente"}
+
 SEVERITY_ESCALATION = {"Baja": "Media", "Media": "Alta", "Alta": "Alta"}
 
 
@@ -1196,10 +1203,10 @@ class AuditConversationHandler:
             )
             save_session(session)
 
-            await meta_client.send_text(
+            await meta_client.send_quick_reply(
                 payload.telefono,
-                f"✓ Nota guardada en {bloque_label}\n\n"
-                f"¿Algo más? (foto, audio, texto, o 'SIGUIENTE')"
+                f"✓ Nota guardada en {bloque_label}\n\n¿Algo más? (foto, audio, o texto)",
+                [SIGUIENTE_BUTTON],
             )
 
             return "note_saved"
@@ -1244,10 +1251,10 @@ class AuditConversationHandler:
                 session.current_foto_id = foto.id
                 save_session(session)
 
-                await meta_client.send_text(
+                await meta_client.send_quick_reply(
                     payload.telefono,
-                    f"✓ Foto guardada en {bloque_label}\n\n"
-                    f"¿Algo más? (audio, texto, otra foto, o 'SIGUIENTE')"
+                    f"✓ Foto guardada en {bloque_label}\n\n¿Algo más? (audio, texto, u otra foto)",
+                    [SIGUIENTE_BUTTON],
                 )
 
                 return "photo_received"
@@ -1285,10 +1292,10 @@ class AuditConversationHandler:
                 )
                 save_session(session)
 
-                await meta_client.send_text(
+                await meta_client.send_quick_reply(
                     payload.telefono,
-                    f"✓ Audio guardado en {bloque_label}\n\n"
-                    f"¿Algo más? (foto, audio, texto, o 'SIGUIENTE')"
+                    f"✓ Audio guardado en {bloque_label}\n\n¿Algo más? (foto, audio, o texto)",
+                    [SIGUIENTE_BUTTON],
                 )
 
                 return "audio_received"
