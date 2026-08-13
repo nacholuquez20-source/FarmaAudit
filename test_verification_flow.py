@@ -47,9 +47,8 @@ def make_payload(telefono, tipo="text", contenido="", media_id=None):
     )
 
 
-def make_db_mock(pendientes=None):
+def make_db_mock():
     db = MagicMock()
-    db.get_gestiones_pendientes_bloque.return_value = pendientes if pendientes is not None else []
     db.upload_desvio_evidencia.return_value = {
         "path": "gestion/g1/whatsapp-x.jpg",
         "thumb_path": "gestion/g1/whatsapp-x-thumb.jpg",
@@ -84,40 +83,21 @@ def make_verifying_session(telefono, pendientes):
     return session
 
 
-async def test_enter_bloque_sin_pendientes():
-    """Without pending gestiones the flow goes straight to SCORING (regression)."""
+async def test_enter_bloque_va_directo_a_scoring():
+    """enter_bloque ya no verifica desvíos pendientes de auditorías anteriores
+    (se sacó a pedido del dueño) — siempre va directo a SCORING, sin importar
+    si hay gestiones pendientes o no."""
     telefono = "+5491100000001"
     delete_session(telefono)
     session = create_session(telefono, "SC-001", "Test Auditor")
     meta = MockMetaClient()
 
-    with patch("audit_handlers.SupabaseManager", return_value=make_db_mock([])):
-        result = await AuditConversationHandler.enter_bloque(meta, session)
+    result = await AuditConversationHandler.enter_bloque(meta, session)
 
     assert result == "scoring_started", f"Expected scoring_started, got {result}"
     assert session.estado == AuditState.SCORING
     assert len(meta.lists) == 1, "Scoring list message should be sent"
     assert "Paso 1 de 4" in meta.lists[0]["header"]
-    delete_session(telefono)
-
-
-async def test_enter_bloque_con_pendientes():
-    """With pending gestiones the flow enters VERIFY_PREVIOUS and sends buttons."""
-    telefono = "+5491100000002"
-    delete_session(telefono)
-    session = create_session(telefono, "SC-001", "Test Auditor")
-    meta = MockMetaClient()
-
-    with patch("audit_handlers.SupabaseManager", return_value=make_db_mock(pendientes_fixture())):
-        result = await AuditConversationHandler.enter_bloque(meta, session)
-
-    assert result == "verification_started", f"Expected verification_started, got {result}"
-    assert session.estado == AuditState.VERIFY_PREVIOUS
-    assert len(session.pending_verifications) == 2
-    assert len(meta.quick_replies) == 1
-    buttons = [b["id"] for b in meta.quick_replies[0]["buttons"]]
-    assert buttons == ["verif_resuelto", "verif_persiste", "verif_omitir"]
-    assert "1/2" in meta.quick_replies[0]["body"]
     delete_session(telefono)
 
 
@@ -413,8 +393,7 @@ async def test_desvio_management_cancelar():
 
 
 TESTS = [
-    test_enter_bloque_sin_pendientes,
-    test_enter_bloque_con_pendientes,
+    test_enter_bloque_va_directo_a_scoring,
     test_resuelto_con_foto,
     test_resuelto_sin_foto,
     test_persiste_escala_severidad,

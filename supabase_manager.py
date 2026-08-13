@@ -796,23 +796,6 @@ class SupabaseManager:
             logger.error(f"Failed to get pending gestiones for {id_sucursal}: {e}")
             return []
 
-    def get_gestiones_pendientes_bloque(self, id_sucursal: str, bloque: str) -> List[Dict[str, Any]]:
-        """Get open deviations for a sucursal filtered by audit bloque."""
-        try:
-            response = (
-                self.client.table("gestion")
-                .select("*")
-                .eq("id_sucursal", id_sucursal)
-                .eq("bloque", bloque)
-                .in_("estado", ["Abierta", "En_proceso", "Vencida"])
-                .order("plazo_fecha")
-                .execute()
-            )
-            return response.data or []
-        except Exception as e:
-            logger.error(f"Failed to get pending gestiones for {id_sucursal}/{bloque}: {e}")
-            return []
-
     def get_sucursales_con_pendientes(self) -> List[Dict[str, Any]]:
         """List sucursales that have active gestiones, with counts."""
         try:

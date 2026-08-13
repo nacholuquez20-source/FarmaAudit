@@ -594,45 +594,25 @@ class AuditConversationHandler:
 
     @staticmethod
     async def enter_bloque(meta_client: MetaClient, session: AuditSession, intro_msg: str = "") -> str:
-        """Enter current bloque: verify pending desvíos from previous audits, then scoring."""
+        """Enter current bloque: score directly. Ya no verifica desvíos
+        pendientes de auditorías anteriores acá (se sacó a pedido del dueño,
+        interrumpia el flujo) — esos desvíos se siguen gestionando por otro
+        lado: el encargado respondiendo por WhatsApp, o el comando standalone
+        'desvios' (ver handle_verify_sucursal_selection), que sigue intacto."""
         telefono = session.telefono
-        bloque = session.get_current_bloque()
 
         # Corre una vez por bloque, antes de que arranque el puntaje — limpia
         # la foto ancla del bloque anterior para que un hallazgo de un bloque
         # nuevo nunca quede ligado a una foto de otro bloque.
         session.current_foto_id = None
 
-        pendientes = []
-        try:
-            db = SupabaseManager()
-            pendientes = db.get_gestiones_pendientes_bloque(session.sucursal_id, bloque)
-        except Exception as e:
-            logger.warning(f"Could not fetch pending gestiones for {session.sucursal_id}/{bloque}: {e}")
-
         if intro_msg:
             await meta_client.send_text(telefono, intro_msg)
 
-        if not pendientes:
-            session.estado = AuditState.SCORING
-            save_session(session)
-            await AuditConversationHandler._send_scoring_list(meta_client, telefono, session)
-            return "scoring_started"
-
-        session.pending_verifications = AuditConversationHandler._queue_from_gestiones(pendientes)
-        session.current_verification_index = 0
-        session.awaiting_verification_photo = False
-        session.estado = AuditState.VERIFY_PREVIOUS
+        session.estado = AuditState.SCORING
         save_session(session)
-
-        label = BLOQUE_LABELS.get(bloque, bloque)
-        await meta_client.send_text(
-            telefono,
-            f"📋 Hay {len(pendientes)} desvío(s) pendiente(s) de {label} en esta sucursal.\n"
-            f"Verifiquemos antes de puntuar."
-        )
-        await AuditConversationHandler._send_current_verification(meta_client, session)
-        return "verification_started"
+        await AuditConversationHandler._send_scoring_list(meta_client, telefono, session)
+        return "scoring_started"
 
     @staticmethod
     async def _send_current_verification(meta_client: MetaClient, session: AuditSession) -> None:
