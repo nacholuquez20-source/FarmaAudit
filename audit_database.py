@@ -199,29 +199,27 @@ async def save_audit_to_database(
 
 
 async def get_previous_audit(sucursal_id: str) -> Optional[Dict]:
-    """Get the most recent previous audit for a sucursal.
+    """Get bloque scores from the most recent COMPLETED audit for a sucursal.
 
-    Returns dict with bloque scores from last audit, or None if no previous audit.
+    Returns dict {bloque: score}, or None if no previous audit. La auditoria
+    en curso todavia no tiene fila en audit_fiches (esa se crea recien al
+    confirmar al final, ver audit_fiches_manager.py), asi que no hace falta
+    "saltear la actual" — la mas reciente en la tabla siempre es una anterior.
     """
     try:
         db = SupabaseManager()
 
-        # Query for most recent reporte for this sucursal
-        response = db.client.table("reporte").select(
-            "id, sucursal_id, puntuaciones"
+        response = db.client.table("audit_fiches").select(
+            "bloques_json"
         ).eq("sucursal_id", sucursal_id).order(
-            "created_at", desc=True
-        ).limit(2).execute()
+            "fecha_auditoria", desc=True
+        ).limit(1).execute()
 
         records = response.data if response.data else []
+        if not records:
+            return None
 
-        # Return the second most recent (skip current if in progress)
-        if len(records) >= 2:
-            prev_audit = records[1]
-            puntuaciones = prev_audit.get("puntuaciones", {})
-            return puntuaciones
-
-        return None
+        return records[0].get("bloques_json") or None
 
     except Exception as e:
         logger.warning(f"Could not fetch previous audit for {sucursal_id}: {e}")

@@ -310,6 +310,28 @@ class AuditConversationHandler:
             )
             return "awaiting_start"
 
+        # "cancelar" en medio de una auditoria (puntuando, cargando evidencia,
+        # o confirmando) no se manejaba en absoluto: en SCORING/SCORING_BRANDS
+        # tiraba "responde 1-5", y en BLOQUE_EVIDENCE_COLLECTION la palabra
+        # "cancelar" se guardaba como si fuera un hallazgo real en la base.
+        # Los demas estados (SELECT_SUCURSAL, VERIFY_*, DONE) ya tienen su
+        # propio manejo de cancelar mas especifico, no se tocan.
+        estados_sin_cancelar = {
+            AuditState.SCORING,
+            AuditState.SCORING_BRANDS,
+            AuditState.BLOQUE_EVIDENCE_COLLECTION,
+            AuditState.SUMMARY,
+        }
+        if session.estado in estados_sin_cancelar and payload.tipo == "text":
+            texto_cancelar = payload.contenido.strip().lower()
+            if texto_cancelar in {"cancelar", "cancel", "salir"}:
+                delete_session(telefono)
+                await meta_client.send_text(
+                    telefono,
+                    "Auditoría cancelada. Nada se guardó. Escribí *auditoria* para empezar de nuevo."
+                )
+                return "audit_cancelled"
+
         # Active session: route by state
         if session.estado == AuditState.IDLE:
             return await AuditConversationHandler.handle_init(payload, meta_client)
@@ -1700,14 +1722,27 @@ class AuditConversationHandler:
                 return "audit_saved"
 
         elif _es_negativo(texto):
-            # Ask what to change
-            await meta_client.send_text(
-                payload.telefono,
-                "¿Qué quieres cambiar?\n"
-                "Puedo volver a las puntuaciones, agregar/quitar fotos, o editar descripciones."
+            # Antes esto preguntaba "¿que queres cambiar?" y no hacia nada
+            # mas: la sesion se quedaba en SUMMARY, asi que el siguiente
+            # mensaje del auditor (la respuesta a esa pregunta) volvia a caer
+            # en este mismo handler, no matcheaba ni si ni no, y terminaba en
+            # el "responde 1 o 2" de mas abajo. Loop muerto real, sin salida.
+            #
+            # Fix: reinicia el puntaje desde el primer bloque. Las fotos y
+            # notas ya cargadas NO se pierden — si un bloque ya esta bien,
+            # alcanza con puntuarlo de nuevo y escribir 'SIGUIENTE' sin
+            # repetir evidencia.
+            session.current_bloque_index = 0
+            await AuditConversationHandler.enter_bloque(
+                meta_client, session,
+                intro_msg=(
+                    "Dale, volvemos a puntuar desde el primer bloque. Las fotos y notas que ya "
+                    "cargaste se mantienen — si un bloque ya está bien, puntualo de nuevo y "
+                    "escribí 'SIGUIENTE' para pasar sin repetir nada."
+                ),
             )
 
-            return "audit_edit_requested"
+            return "audit_edit_restarted"
 
         else:
             await meta_client.send_text(

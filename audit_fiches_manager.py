@@ -118,6 +118,12 @@ class AuditFichesManager:
                 "desvios_count": len(session.desvios),
                 "fotos_count": len(session.fotos),
                 "puntuacion_promedio": round(avg_score, 2),
+                # Puntaje por bloque (LIMPIEZA, STOCK, ...) de ESTA auditoria —
+                # es lo unico que permite calcular la comparacion "subio/bajo
+                # vs. la vez pasada" en la proxima auditoria (get_previous_audit
+                # en audit_database.py). Antes no se guardaba en ningun lado:
+                # la comparacion siempre devolvia None, en silencio.
+                "bloques_json": session.bloques,
             }
 
             response = db.client.table("audit_fiches").insert(ficha_data).execute()
