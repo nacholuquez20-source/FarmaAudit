@@ -142,6 +142,10 @@ class AuditSession:
     pending_verifications: List[Dict[str, Any]] = field(default_factory=list)
     current_verification_index: int = 0
     awaiting_verification_photo: bool = False
+    # True mientras se espera el motivo obligatorio de "depende de terceros"
+    # (Meta limita a 3 botones por quick_reply, ya ocupados por
+    # Resuelto/Persiste/Omitir — esta opcion se ofrece como comando de texto).
+    awaiting_verification_motivo: bool = False
     verified_resueltos: int = 0
     verified_persisten: int = 0
 
@@ -189,6 +193,7 @@ class AuditSession:
             'pending_verifications': self.pending_verifications,
             'current_verification_index': self.current_verification_index,
             'awaiting_verification_photo': self.awaiting_verification_photo,
+            'awaiting_verification_motivo': self.awaiting_verification_motivo,
             'verified_resueltos': self.verified_resueltos,
             'verified_persisten': self.verified_persisten,
             'verification_only': self.verification_only,

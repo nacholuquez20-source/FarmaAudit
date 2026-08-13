@@ -756,7 +756,9 @@ class AuditConversationHandler:
             f"{idx}/{total} · {desvio_txt}\n"
             f"{bloque_line}"
             f"Severidad: {verif.get('severidad')} · Plazo: {plazo}{vencido}\n\n"
-            f"¿Cómo está hoy?",
+            f"¿Cómo está hoy?\n\n"
+            f"(Si no depende del encargado — falta de droguería, obra, etc. — "
+            f"escribí 'depende de terceros')",
             [
                 {"id": "verif_resuelto", "title": "✅ Resuelto"},
                 {"id": "verif_persiste", "title": "⚠️ Persiste"},
@@ -816,6 +818,18 @@ class AuditConversationHandler:
             )
             return "awaiting_verification_photo"
 
+        # Waiting for the mandatory motivo after "depende de terceros"
+        if session.awaiting_verification_motivo:
+            motivo = (payload.contenido or "").strip() if payload.tipo == "text" else ""
+            if not motivo:
+                await meta_client.send_text(
+                    telefono,
+                    "Necesito el motivo en texto (por qué depende de un tercero) para poder marcarlo."
+                )
+                return "terceros_motivo_invalid"
+            session.awaiting_verification_motivo = False
+            return await AuditConversationHandler._mark_terceros(meta_client, session, verif, motivo)
+
         # Expect a button reply (or its typed equivalent)
         respuesta = (payload.contenido or "").lower().strip() if payload.tipo == "text" else ""
 
@@ -840,6 +854,19 @@ class AuditConversationHandler:
         if respuesta == "verif_omitir" or "omitir" in respuesta:
             verif["resultado"] = "omitido"
             return await AuditConversationHandler._advance_verification(meta_client, session)
+
+        # No es un boton de Meta (limite de 3, ya ocupados por Resuelto/
+        # Persiste/Omitir) — se ofrece como comando de texto, ver el hint en
+        # _send_current_verification.
+        if "tercero" in respuesta or respuesta == "trabar":
+            session.awaiting_verification_motivo = True
+            save_session(session)
+            await meta_client.send_text(
+                telefono,
+                "Escribí el motivo (por qué depende de un tercero — falta de droguería, obra, etc.). "
+                "Mientras esté en este estado no escala ni cuenta como incumplimiento del encargado."
+            )
+            return "awaiting_terceros_motivo"
 
         await meta_client.send_text(telefono, "Por favor usá los botones 👇")
         await AuditConversationHandler._send_current_verification(meta_client, session)
@@ -933,6 +960,45 @@ class AuditConversationHandler:
             session.telefono,
             f"⚠️ Reincidencia registrada (severidad: {nueva_severidad})."
         )
+        return await AuditConversationHandler._advance_verification(meta_client, session)
+
+    @staticmethod
+    async def _mark_terceros(meta_client: MetaClient, session: AuditSession, verif: dict, motivo: str) -> str:
+        """Marca el desvío como dependiente de un tercero (falta de droguería,
+        obra, personal — algo que el encargado no puede resolver solo).
+        Mientras esté en GestionState.EN_GESTION_TERCEROS no escala, no cuenta
+        como incumplimiento del encargado, y no vence — ver arquitectura,
+        ARQUITECTURA_DESVIOS_CAMPANIAS.md §1.2 punto 8. Motivo obligatorio,
+        ya validado por el caller antes de llegar acá."""
+        actor = session.auditor_nombre or "Auditor"
+        bloque = verif.get("bloque") if session.verification_only else session.get_current_bloque()
+
+        try:
+            db = SupabaseManager()
+            db.save_encargado_evento(
+                id_gestion=verif["id_gestion"],
+                tipo="nota",
+                contenido=f"Marcado como dependiente de terceros: {motivo}",
+                actor_nombre=actor,
+                metadata={
+                    "origen": "gestion_desvios_wsp" if session.verification_only else "auditoria_v2",
+                    "bloque": bloque,
+                    "id_sesion": session.id_sesion,
+                    "canal": "whatsapp",
+                    "motivo_terceros": motivo,
+                },
+            )
+            db.update_gestion_fields(verif["id_gestion"], {"estado": "En_gestion_terceros"})
+            verif["resultado"] = "terceros"
+        except Exception as e:
+            logger.error(f"Error marking gestion {verif.get('id_gestion')} en_gestion_terceros: {e}")
+            await meta_client.send_text(
+                session.telefono,
+                "⚠️ No pude registrar el estado en el sistema, seguimos con la auditoría."
+            )
+            return await AuditConversationHandler._advance_verification(meta_client, session)
+
+        await meta_client.send_text(session.telefono, "🔧 Marcado como dependiente de terceros.")
         return await AuditConversationHandler._advance_verification(meta_client, session)
 
     @staticmethod
@@ -1055,6 +1121,67 @@ class AuditConversationHandler:
         return "sucursal_menu_sent"
 
     @staticmethod
+    async def _send_ficha_llegada(meta_client: MetaClient, session: AuditSession, telefono: str) -> None:
+        """Contexto rapido al elegir sucursal: ultima auditoria, desvios
+        abiertos/vencidos, y quien es el encargado. Best-effort — si falla
+        cualquier consulta no bloquea el arranque de la auditoria, solo se
+        pierde el contexto (mismo criterio que el resto de los avisos
+        best-effort de este archivo)."""
+        try:
+            db = SupabaseManager()
+
+            ficha_resp = (
+                db.client.table("audit_fiches")
+                .select("fecha_auditoria, puntuacion_promedio")
+                .eq("sucursal_id", session.sucursal_id)
+                .order("fecha_auditoria", desc=True)
+                .limit(1)
+                .execute()
+            )
+            ultima_ficha = (ficha_resp.data or [None])[0]
+
+            gestion_resp = (
+                db.client.table("gestion")
+                .select("estado")
+                .eq("id_sucursal", session.sucursal_id)
+                .not_.in_("estado", ["Resuelta", "Cerrada"])
+                .execute()
+            )
+            filas = gestion_resp.data or []
+            abiertos = len(filas)
+            vencidos = sum(1 for f in filas if f.get("estado") == "Vencida")
+
+            responsable = resolve_responsable_by_sucursal(session.sucursal_id)
+
+            lineas = []
+            if ultima_ficha and ultima_ficha.get("fecha_auditoria"):
+                try:
+                    fecha = datetime.fromisoformat(str(ultima_ficha["fecha_auditoria"]).replace("Z", "+00:00"))
+                    fecha_txt = fecha.strftime("%d/%m/%Y")
+                except Exception:
+                    fecha_txt = str(ultima_ficha["fecha_auditoria"])[:10]
+                promedio = ultima_ficha.get("puntuacion_promedio")
+                promedio_txt = f"{promedio}/5" if promedio is not None else "—"
+                lineas.append(f"📅 Última auditoría: {fecha_txt} — {promedio_txt}")
+            else:
+                lineas.append("📅 No hay auditorías previas registradas.")
+
+            if abiertos:
+                extra = f" ({vencidos} vencido{'s' if vencidos != 1 else ''})" if vencidos else ""
+                lineas.append(f"⚠️ Desvíos abiertos: {abiertos}{extra}")
+            else:
+                lineas.append("✅ Sin desvíos abiertos.")
+
+            if responsable and responsable.telefono:
+                lineas.append(f"👤 Encargado/a: {responsable.nombre or 'sin nombre'}")
+            else:
+                lineas.append("👤 Sin encargado cargado para esta sucursal.")
+
+            await meta_client.send_text(telefono, "\n".join(lineas))
+        except Exception as e:
+            logger.warning(f"No se pudo armar la ficha de llegada para {session.sucursal_id}: {e}")
+
+    @staticmethod
     async def handle_select_sucursal(
         payload: WhatsAppPayload, meta_client: MetaClient, session: AuditSession
     ) -> str:
@@ -1139,6 +1266,11 @@ class AuditConversationHandler:
         session.started_at = datetime.now(timezone.utc).isoformat()
         session.verification_menu = []
         save_session(session)
+
+        # Contexto rapido antes de arrancar a puntuar — antes el auditor
+        # llegaba a ciegas, sin saber que paso la ultima vez ni con quien
+        # coordinar en el piso.
+        await AuditConversationHandler._send_ficha_llegada(meta_client, session, telefono)
 
         await AuditConversationHandler.enter_bloque(
             meta_client, session,
