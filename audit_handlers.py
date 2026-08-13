@@ -1237,6 +1237,68 @@ class AuditConversationHandler:
         return "evidence_collection_started"
 
     @staticmethod
+    async def _send_estado_parcial(meta_client: MetaClient, session: AuditSession, telefono: str) -> None:
+        """Resumen de lo cargado hasta ahora en la auditoria en curso. Antes
+        no habia forma de preguntar "que llevo" sin terminar la auditoria —
+        cualquier texto (incluido "resumen") se guardaba como un hallazgo."""
+        lineas = []
+        for bloque in BLOQUE_ORDER:
+            score = session.bloques.get(bloque)
+            if score is None:
+                continue
+            label = BLOQUE_LABELS.get(bloque, bloque)
+            fotos = len([f for f in session.fotos if f.bloque == bloque])
+            audios = len([d for d in session.desvios if d.bloque == bloque and "[AUDIO]" in d.descripcion])
+            notas = len([d for d in session.desvios if d.bloque == bloque and "[AUDIO]" not in d.descripcion])
+            lineas.append(f"  {label}: {score}/5 — 📸{fotos} 🎙️{audios} 📝{notas}")
+
+        bloques_txt = "\n".join(lineas) if lineas else "  (todavía no puntuaste ningún bloque)"
+
+        hallazgos_txt = ""
+        if session.desvios:
+            items = "\n".join(
+                f"  {i + 1}. [{BLOQUE_LABELS.get(d.bloque, d.bloque)}] {d.descripcion[:60]}"
+                for i, d in enumerate(session.desvios)
+            )
+            hallazgos_txt = f"\n\nHallazgos hasta ahora ({len(session.desvios)}):\n{items}"
+
+        await meta_client.send_text(
+            telefono,
+            f"📊 *Lo que llevás cargado:*\n\n{bloques_txt}{hallazgos_txt}\n\n"
+            f"Escribí 'SIGUIENTE' para pasar al siguiente bloque, o seguí sumando evidencia."
+        )
+
+    @staticmethod
+    async def _deshacer_ultimo_hallazgo(
+        meta_client: MetaClient,
+        session: AuditSession,
+        bloque: str,
+        bloque_label: str,
+        telefono: str,
+    ) -> None:
+        """Saca el ultimo hallazgo cargado en ESTE bloque (no toca otros
+        bloques). No deshace fotos — si una foto sale mal, alcanza con mandar
+        una nueva; lo que faltaba era poder sacar una nota/audio mal cargado
+        sin tener que terminar la auditoria para corregirlo desde 'No, editar'."""
+        desvios_bloque = [d for d in session.desvios if d.bloque == bloque]
+        if not desvios_bloque:
+            await meta_client.send_text(
+                telefono,
+                f"No hay ningún hallazgo cargado en {bloque_label} todavía para deshacer."
+            )
+            return
+
+        ultimo = desvios_bloque[-1]
+        session.desvios.remove(ultimo)
+        save_session(session)
+
+        preview = ultimo.descripcion[:100] + ("…" if len(ultimo.descripcion) > 100 else "")
+        await meta_client.send_text(
+            telefono,
+            f"🗑️ Borrado: \"{preview}\"\n\n¿Algo más? (foto, audio, texto, o 'SIGUIENTE')"
+        )
+
+    @staticmethod
     async def handle_bloque_evidence(payload: WhatsAppPayload, meta_client: MetaClient, session: AuditSession) -> str:
         """Handle evidence collection for current bloque (fotos, audios, textos)."""
 
@@ -1285,6 +1347,23 @@ class AuditConversationHandler:
             # Texto sin "SIGUIENTE" — flujo libre: se guarda directo como nota,
             # ligada a la ultima foto recibida en este bloque (si hay una).
             raw_text = payload.contenido.strip()
+            texto_comando = raw_text.lower()
+
+            # "resumen"/"estado": antes CUALQUIER texto que no fuera SIGUIENTE
+            # se guardaba como hallazgo — asi que ni siquiera se podia
+            # preguntar "que llevo cargado" sin ensuciar la auditoria.
+            if texto_comando in {"resumen", "estado", "status"}:
+                await AuditConversationHandler._send_estado_parcial(meta_client, session, payload.telefono)
+                return "estado_parcial_sent"
+
+            # "deshacer": el ultimo hallazgo de ESTE bloque (no de toda la
+            # auditoria) queda sin forma de sacarlo si un audio se transcribe
+            # mal o un texto se manda antes de terminar de escribirlo.
+            if texto_comando in {"deshacer", "undo", "borrar"}:
+                await AuditConversationHandler._deshacer_ultimo_hallazgo(
+                    meta_client, session, current_bloque, bloque_label, payload.telefono
+                )
+                return "undo_processed"
 
             # Un "ok" o un "gracias" no es un desvío — se filtra siempre, sin
             # excepcion, para que el auditor pueda escribir cosas casuales sin
