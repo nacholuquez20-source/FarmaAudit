@@ -19,6 +19,7 @@ from meta_client import MetaClient
 from photo_validator import PhotoValidator, PhotoValidationResult
 from audio import AudioTranscriber
 from audit_database import save_audit_to_database, send_manager_notification, get_previous_audit
+from identity import resolve_responsable_by_sucursal, ventana_abierta
 from supabase_manager import SupabaseManager
 from audit_pdf_generator import generate_audit_pdf
 from audit_fiches_manager import AuditFichesManager
@@ -163,6 +164,90 @@ async def _send_forward_invitation_text(
         await meta_client.send_text(telefono, mensaje_para_reenviar)
     except Exception as e:
         logger.warning(f"Could not send forward-invitation text to auditor: {e}")
+
+
+async def _ask_avisar_encargado(meta_client: MetaClient, telefono: str) -> None:
+    """Ask the auditor whether the bot should send the ficha PDF directly to
+    the sucursal's encargado, instead of leaving that to the auditor
+    personally (ver _send_forward_invitation_text — el flujo anterior, que
+    dependia de que el auditor la reenviara a mano y a veces nunca pasaba)."""
+    await meta_client.send_quick_reply(
+        telefono,
+        "📤 ¿Querés que le mande yo el informe al encargado por WhatsApp ahora?",
+        [
+            {"id": "avisar_encargado_si", "title": "✅ Sí, mandalo"},
+            {"id": "avisar_encargado_no", "title": "❌ No, yo lo mando"},
+        ],
+    )
+
+
+async def _enviar_ficha_a_encargado(
+    meta_client: MetaClient,
+    session: AuditSession,
+    telefono_auditor: str,
+) -> None:
+    """Send the ficha PDF directly to the sucursal's active encargado.
+
+    Resuelve el responsable en vivo (identity.resolve_responsable_by_sucursal,
+    no sucursal.tel_responsable — ese campo es una foto congelada, ver Bloque
+    3 del circuito de vuelta). Si no hay responsable, o su ventana de 24h esta
+    cerrada (Meta no entrega un documento fuera de ventana), degrada al texto
+    para reenviar a mano en vez de fallar en silencio — el auditor siempre
+    termina con alguna forma de avisarle al encargado.
+    """
+    ficha_url = session.ficha_url
+    if not ficha_url:
+        await meta_client.send_text(telefono_auditor, "⚠️ No encontré la ficha para mandarle al encargado.")
+        return
+
+    responsable = resolve_responsable_by_sucursal(session.sucursal_id)
+    if not responsable or not responsable.telefono:
+        await meta_client.send_text(
+            telefono_auditor,
+            "No hay un encargado cargado para esta sucursal, así que no te lo puedo mandar yo. "
+            "Te paso el mensaje para que lo reenvíes vos:",
+        )
+        await _send_forward_invitation_text(meta_client, session, telefono_auditor)
+        return
+
+    if not ventana_abierta(responsable):
+        await meta_client.send_text(
+            telefono_auditor,
+            f"{responsable.nombre or 'El encargado'} no le escribió al bot en las últimas 24h, así que no le "
+            "puedo mandar el documento directo (Meta no entrega archivos fuera de esa ventana). "
+            "Te paso el mensaje para que se lo reenvíes vos:",
+        )
+        await _send_forward_invitation_text(meta_client, session, telefono_auditor)
+        return
+
+    try:
+        db = SupabaseManager()
+        sucursal = db.get_sucursal(session.sucursal_id)
+        nombre_sucursal = sucursal.nombre if sucursal else session.sucursal_id
+
+        saludo = f"Hola {responsable.nombre}!" if responsable.nombre else "Hola!"
+        caption = (
+            f"{saludo} Te comparto el informe de la auditoría de hoy en {nombre_sucursal}, "
+            f"con el detalle y las fotos de cada desvío encontrado."
+        )
+        filename = f"Auditoria_{session.id_sesion}.pdf"
+        download_url = await _ficha_download_url(ficha_url)
+        ok = await meta_client.send_document(responsable.telefono, download_url, filename, caption=caption)
+    except Exception as e:
+        logger.warning(f"Error sending ficha to encargado for {session.sucursal_id}: {e}")
+        ok = False
+
+    if ok:
+        await meta_client.send_text(
+            telefono_auditor,
+            f"✅ Listo, le mandé el informe directo a {responsable.nombre or 'el encargado'}."
+        )
+    else:
+        await meta_client.send_text(
+            telefono_auditor,
+            "⚠️ No pude mandarle el documento directo. Te paso el mensaje para que lo reenvíes vos:",
+        )
+        await _send_forward_invitation_text(meta_client, session, telefono_auditor)
 
 
 async def _send_desvios_summary(
@@ -374,6 +459,17 @@ class AuditConversationHandler:
                     delete_session(payload.telefono)
                     return "ficha_download_declined"
 
+                # Quick-reply: auditor quiere que el bot le avise al encargado
+                # directo (no borra la sesion — todavia puede quedar pendiente
+                # la pregunta de si el auditor quiere su propia copia).
+                if texto == "avisar_encargado_si":
+                    await _enviar_ficha_a_encargado(meta_client, session, payload.telefono)
+                    return "encargado_notified"
+
+                if texto == "avisar_encargado_no":
+                    await _send_forward_invitation_text(meta_client, session, payload.telefono)
+                    return "encargado_notify_declined"
+
                 # Salida explícita: sin esto una sesión en DONE quedaba viva
                 # para siempre y el auditor no podía arrancar otra auditoría.
                 if texto in {"cancelar", "salir", "cancel", "listo", "terminar"}:
@@ -431,12 +527,15 @@ class AuditConversationHandler:
                         await _send_desvios_summary(meta_client, session, payload.telefono)
 
                         if ficha_url:
-                            # Short heads-up to the manager (no PDF) — the detailed
-                            # report is sent by the auditor personally, see below.
+                            # Short heads-up to the manager (no PDF) — best-effort
+                            # safety net en caso de que el envio directo de abajo
+                            # falle o el auditor prefiera reenviarlo el mismo.
                             await _notify_responsable_desvios_pendientes(meta_client, session)
-                            # Give the auditor a ready-to-forward invitation text
-                            # (with the bot's number) to send along with the PDF.
-                            await _send_forward_invitation_text(meta_client, session, payload.telefono)
+                            # Preguntar si el bot le manda el PDF directo al
+                            # encargado (en vez de depender de que el auditor lo
+                            # reenvie a mano, que es el gap operativo real que
+                            # esto cierra — ver _enviar_ficha_a_encargado).
+                            await _ask_avisar_encargado(meta_client, payload.telefono)
                             # Ask auditor if they want the PDF too
                             await _ask_ficha_download(
                                 meta_client, payload.telefono, session, ficha_url
