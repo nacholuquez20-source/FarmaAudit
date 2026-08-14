@@ -8,7 +8,7 @@ import json
 import asyncio
 import uuid
 from collections import OrderedDict
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -1644,6 +1644,27 @@ Para mÃ¡s detalles, consulta la hoja de Reportes."""
         logger.error(f"Error in daily summary job: {e}")
 
 
+async def _resolver_auditor_telefono_por_ficha(
+    db: SupabaseManager, gestiones: List[Dict[str, Any]]
+) -> Dict[str, str]:
+    """Batch-resuelve gestion.ficha_id -> audit_fiches.auditor_telefono para un
+    lote de gestiones. Devuelve {id_gestion: auditor_telefono}, solo las que
+    se pudieron resolver (ficha_id nulo o sin auditor_telefono quedan afuera —
+    mismo criterio de degradar en vez de fallar que ya usa informes_respuesta.py).
+    Usado por check_overdue_gestion y remind_sla_auditor_revision para avisarle
+    al auditor dueño de cada gestion, no solo al panel/coordinador."""
+    ficha_ids = sorted({g["ficha_id"] for g in gestiones if g.get("ficha_id")})
+    if not ficha_ids:
+        return {}
+    fichas_resp = db.client.table("audit_fiches").select("id, auditor_telefono").in_("id", ficha_ids).execute()
+    tel_by_ficha = {f["id"]: f.get("auditor_telefono") for f in (fichas_resp.data or []) if f.get("auditor_telefono")}
+    return {
+        g["id_gestion"]: tel_by_ficha[g["ficha_id"]]
+        for g in gestiones
+        if g.get("ficha_id") and g["ficha_id"] in tel_by_ficha
+    }
+
+
 async def check_overdue_gestion(notify: bool = True):
     """Background job: mark gestiones past their plazo_fecha as Vencida and notify.
 
@@ -1659,6 +1680,16 @@ async def check_overdue_gestion(notify: bool = True):
 
         settings = get_settings()
         meta_client = MetaClient() if notify else None
+
+        # Antes esto solo avisaba al panel (campanita in-app) y al
+        # coordinador — nunca al auditor dueño de la gestion, que es quien
+        # mas puede hacer algo al respecto. Se resuelve en lote (no un query
+        # por gestion) para armar UN digest por auditor al final, no un
+        # mensaje por desvio vencido si vencen varios a la vez.
+        auditor_tel_por_gestion = (
+            await _resolver_auditor_telefono_por_ficha(db, overdue) if notify else {}
+        )
+        por_auditor: Dict[str, List[Dict[str, Any]]] = {}
 
         for gestion in overdue:
             id_gestion = gestion.get("id_gestion")
@@ -1684,6 +1715,26 @@ async def check_overdue_gestion(notify: bool = True):
                 except Exception as e:
                     logger.warning(f"Failed to alert coordinator about overdue gestion {id_gestion}: {e}")
 
+            tel = auditor_tel_por_gestion.get(id_gestion)
+            if tel:
+                por_auditor.setdefault(tel, []).append(gestion)
+
+        for tel, gestiones_auditor in por_auditor.items():
+            n = len(gestiones_auditor)
+            lineas = "\n".join(
+                f"  • {g.get('sucursal') or g.get('id_sucursal')}: {(g.get('desvio') or '')[:80]}"
+                for g in gestiones_auditor
+            )
+            texto = (
+                f"⏰ FarmaAudit: {n} desvío{'s' if n != 1 else ''} tuyo{'s' if n != 1 else ''} "
+                f"vencí{'eron' if n != 1 else 'ó'} hoy:\n\n{lineas}\n\n"
+                "Escribí 'desvios' para gestionarlos desde acá, o entrá al panel."
+            )
+            try:
+                await meta_client.send_text(tel, texto)
+            except Exception as exc:
+                logger.warning(f"No se pudo avisar al auditor {tel} de desvios vencidos: {exc}")
+
         logger.info(f"Marked {len(overdue)} gestion(es) as Vencida (notify={notify})")
     except Exception as e:
         logger.error(f"Error in overdue gestion check job: {e}")
@@ -1707,8 +1758,9 @@ async def remind_sla_auditor_revision():
 
         logger.info(f"SLA reminder: {len(stale)} gestion(es) en revision hace mas de 72h")
 
+        meta_client = MetaClient()
+
         if settings.coordinador_tel:
-            meta_client = MetaClient()
             for gestion in stale:
                 try:
                     await meta_client.send_text(
@@ -1718,6 +1770,31 @@ async def remind_sla_auditor_revision():
                     )
                 except Exception as exc:
                     logger.warning(f"Failed to alert coordinator about stale review {gestion.get('id_gestion')}: {exc}")
+
+        # Este caso es mas directo que el de desvios vencidos: el auditor ES
+        # quien tiene la pelota (aprobar/rechazar una correccion ya recibida
+        # del encargado), no algo que dependa de un tercero.
+        auditor_tel_por_gestion = await _resolver_auditor_telefono_por_ficha(db, stale)
+        por_auditor: Dict[str, List[Dict[str, Any]]] = {}
+        for gestion in stale:
+            tel = auditor_tel_por_gestion.get(gestion.get("id_gestion"))
+            if tel:
+                por_auditor.setdefault(tel, []).append(gestion)
+
+        for tel, gestiones_auditor in por_auditor.items():
+            n = len(gestiones_auditor)
+            lineas = "\n".join(
+                f"  • {g.get('sucursal') or g.get('id_sucursal')}: {(g.get('desvio') or '')[:80]}"
+                for g in gestiones_auditor
+            )
+            texto = (
+                f"📋 FarmaAudit: tenés {n} corrección{'es' if n != 1 else ''} esperando tu revisión "
+                f"hace más de 72hs:\n\n{lineas}\n\nEscribí 'pendientes' para revisarlas desde acá."
+            )
+            try:
+                await meta_client.send_text(tel, texto)
+            except Exception as exc:
+                logger.warning(f"No se pudo avisar al auditor {tel} de correcciones estancadas: {exc}")
     except Exception as e:
         logger.error(f"Error in overdue gestion check job: {e}", exc_info=True)
 
