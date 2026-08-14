@@ -8,7 +8,7 @@ if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 import logging
-from typing import Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from audit_session import (
     AuditSession, AuditState, create_session, get_session, save_session,
     delete_session, BloqueType, BrandType, BLOQUE_ORDER, BRAND_ORDER,
@@ -19,7 +19,9 @@ from meta_client import MetaClient
 from photo_validator import PhotoValidator, PhotoValidationResult
 from audio import AudioTranscriber
 from audit_database import save_audit_to_database, send_manager_notification, get_previous_audit
-from identity import resolve_responsable_by_sucursal, ventana_abierta
+from identity import normalize_phone, resolve_responsable_by_sucursal, ventana_abierta
+from informes_respuesta import _consolidar_respuesta
+from gestion_revision import aplicar_revision_gestion
 from supabase_manager import SupabaseManager
 from audit_pdf_generator import generate_audit_pdf
 from audit_fiches_manager import AuditFichesManager
@@ -456,6 +458,9 @@ class AuditConversationHandler:
         elif session.estado == AuditState.VERIFY_PREVIOUS:
             return await AuditConversationHandler.handle_verification(payload, meta_client, session)
 
+        elif session.estado == AuditState.REVISION_BANDEJA:
+            return await AuditConversationHandler.handle_revision_bandeja(payload, meta_client, session)
+
         elif session.estado == AuditState.SCORING:
             return await AuditConversationHandler.handle_score(payload, meta_client, session)
 
@@ -649,6 +654,152 @@ class AuditConversationHandler:
 
         await AuditConversationHandler._send_sucursal_menu(meta_client, session)
         return "desvio_management_menu_sent"
+
+    @staticmethod
+    async def start_revision_bandeja(payload: WhatsAppPayload, meta_client: MetaClient, auditor_nombre: str = "") -> str:
+        """Standalone WhatsApp flow: bandeja de revisión — aprobar/rechazar
+        las correcciones que el encargado ya mandó para desvíos en
+        En_revision, filtrado solo a las gestiones de auditorías de ESTE
+        auditor (gestion.ficha_id -> audit_fiches.auditor_telefono)."""
+        telefono = payload.telefono
+        telefono_norm = normalize_phone(telefono)
+
+        try:
+            db = SupabaseManager()
+            gestion_resp = (
+                db.client.table("gestion")
+                .select(
+                    "id_gestion, id_sucursal, sucursal, desvio, severidad, plazo_fecha, "
+                    "plazo_fecha_original, veces_rechazado, tel_responsable, ficha_id"
+                )
+                .eq("estado", "En_revision")
+                .execute()
+            )
+            en_revision = gestion_resp.data or []
+        except Exception as e:
+            logger.error(f"Error fetching gestiones en revision: {e}")
+            await meta_client.send_text(telefono, "❌ No pude consultar tus correcciones pendientes. Intentá de nuevo.")
+            return "revision_bandeja_error"
+
+        if not en_revision:
+            await meta_client.send_text(telefono, "No tenés correcciones pendientes de revisar. 🎉")
+            return "no_pending_revision"
+
+        # Resolver en lote gestion.ficha_id -> audit_fiches.auditor_telefono
+        # (mismo patron que informes_respuesta.py) para quedarse solo con las
+        # gestiones de ESTE auditor — no las de todos.
+        ficha_ids = sorted({g["ficha_id"] for g in en_revision if g.get("ficha_id")})
+        auditor_tel_by_ficha: Dict[str, Optional[str]] = {}
+        if ficha_ids:
+            fichas_resp = db.client.table("audit_fiches").select("id, auditor_telefono").in_("id", ficha_ids).execute()
+            auditor_tel_by_ficha = {f["id"]: f.get("auditor_telefono") for f in (fichas_resp.data or [])}
+
+        mias = [
+            g for g in en_revision
+            if g.get("ficha_id") and normalize_phone(auditor_tel_by_ficha.get(g["ficha_id"])) == telefono_norm
+        ]
+
+        if not mias:
+            await meta_client.send_text(telefono, "No tenés correcciones pendientes de revisar. 🎉")
+            return "no_pending_revision"
+
+        # Respuesta del encargado por gestion (mismo patron que
+        # informes_respuesta.py: eventos con metadata.origen='sucursal').
+        gestion_ids = [g["id_gestion"] for g in mias]
+        eventos_por_gestion: Dict[str, List[Dict[str, Any]]] = {}
+        try:
+            eventos_resp = (
+                db.client.table("desvio_eventos")
+                .select("id, id_gestion, tipo, comentario, metadata, created_at")
+                .in_("id_gestion", gestion_ids)
+                .in_("tipo", ["mensaje", "evidencia"])
+                .order("created_at")
+                .execute()
+            )
+            for e in (eventos_resp.data or []):
+                if (e.get("metadata") or {}).get("origen") == "sucursal":
+                    eventos_por_gestion.setdefault(e["id_gestion"], []).append(e)
+        except Exception as e:
+            logger.warning(f"No se pudo traer la respuesta del encargado para la bandeja de revision: {e}")
+
+        cola: List[Dict[str, Any]] = []
+        for g in mias:
+            eventos = eventos_por_gestion.get(g["id_gestion"], [])
+            respuesta = _consolidar_respuesta(eventos) if eventos else {"comentario": None, "foto_path": None}
+            cola.append({
+                "id_gestion": g["id_gestion"],
+                "desvio": g.get("desvio") or "",
+                "sucursal": g.get("sucursal") or g.get("id_sucursal") or "",
+                "severidad": g.get("severidad") or "Media",
+                "plazo_fecha": g.get("plazo_fecha") or "",
+                "plazo_fecha_original": g.get("plazo_fecha_original"),
+                "veces_rechazado": g.get("veces_rechazado") or 0,
+                "tel_responsable": g.get("tel_responsable"),
+                "comentario_encargado": respuesta.get("comentario"),
+                "foto_path_encargado": respuesta.get("foto_path"),
+            })
+
+        delete_session(telefono)
+        session = create_session(telefono, "", auditor_nombre or "Auditor")
+        session.pending_verifications = cola
+        session.current_verification_index = 0
+        session.estado = AuditState.REVISION_BANDEJA
+        save_session(session)
+
+        await meta_client.send_text(
+            telefono,
+            f"📋 Tenés {len(cola)} corrección(es) para revisar. Vamos una por una."
+        )
+        await AuditConversationHandler._send_item_revision_bandeja(meta_client, session)
+        return "revision_bandeja_started"
+
+    @staticmethod
+    async def _send_item_revision_bandeja(meta_client: MetaClient, session: AuditSession) -> None:
+        """Manda el item actual de la bandeja: desvío + respuesta del
+        encargado (texto y, si hay, la foto) + botones de accion."""
+        item = session.get_current_verification()
+        if not item:
+            return
+
+        total = len(session.pending_verifications)
+        idx = session.current_verification_index + 1
+
+        texto = (
+            f"{idx}/{total} · {item['sucursal']}\n"
+            f"Desvío: {(item['desvio'] or '')[:200]}\n"
+            f"Severidad: {item['severidad']}"
+        )
+        if item.get("veces_rechazado"):
+            texto += f" · Ya rechazado {item['veces_rechazado']} vez(es)"
+        texto += "\n\n"
+        if item.get("comentario_encargado"):
+            texto += f"Respuesta del encargado:\n{item['comentario_encargado']}"
+        else:
+            texto += "El encargado no dejó comentario, solo evidencia."
+
+        await meta_client.send_text(session.telefono, texto)
+
+        foto_path = item.get("foto_path_encargado")
+        if foto_path:
+            try:
+                db = SupabaseManager()
+                signed = db.create_signed_evidencia_url(foto_path)
+                if signed:
+                    ok = await meta_client.send_image_by_url(session.telefono, signed, caption="📸 Evidencia del encargado")
+                    if not ok:
+                        logger.warning(f"No se pudo reenviar la foto de evidencia {foto_path} en la bandeja de revision")
+            except Exception as e:
+                logger.warning(f"Error resolviendo/mandando la foto de evidencia en la bandeja de revision: {e}")
+
+        await meta_client.send_quick_reply(
+            session.telefono,
+            "¿Qué hacemos con esta corrección?",
+            [
+                {"id": "rev_aprobar", "title": "✅ Aprobar"},
+                {"id": "rev_rechazar", "title": "❌ Rechazar"},
+                {"id": "rev_omitir", "title": "⏭️ Más tarde"},
+            ],
+        )
 
     @staticmethod
     async def _send_sucursal_menu(meta_client: MetaClient, session: AuditSession) -> None:
@@ -1069,6 +1220,87 @@ class AuditConversationHandler:
             await meta_client.send_text(session.telefono, resumen)
         await AuditConversationHandler._send_scoring_list(meta_client, session.telefono, session)
         return "scoring_started"
+
+    @staticmethod
+    async def handle_revision_bandeja(payload: WhatsAppPayload, meta_client: MetaClient, session: AuditSession) -> str:
+        """Handle auditor responses in the standalone revision inbox (aprobar/
+        rechazar/omitir correcciones que el encargado ya mandó)."""
+        telefono = payload.telefono
+        item = session.get_current_verification()
+
+        if not item:
+            return await AuditConversationHandler._advance_revision_bandeja(meta_client, session)
+
+        # Esperando el motivo obligatorio de un rechazo
+        if session.awaiting_revision_motivo:
+            motivo = (payload.contenido or "").strip() if payload.tipo == "text" else ""
+            if not motivo:
+                await meta_client.send_text(
+                    telefono, "Necesito el motivo del rechazo en texto para poder registrarlo."
+                )
+                return "revision_motivo_invalid"
+
+            session.awaiting_revision_motivo = False
+            save_session(session)
+            try:
+                db = SupabaseManager()
+                await aplicar_revision_gestion(
+                    db=db, meta_client=meta_client, gestion=item, accion="rechazar",
+                    actor_nombre=session.auditor_nombre or "Auditor", actor_id=None, motivo=motivo,
+                )
+                await meta_client.send_text(telefono, "❌ Corrección rechazada, el encargado ya fue avisado.")
+            except Exception as e:
+                logger.error(f"Error rechazando gestion {item.get('id_gestion')} desde la bandeja: {e}")
+                await meta_client.send_text(telefono, "⚠️ No pude registrar el rechazo, seguimos con la siguiente.")
+            return await AuditConversationHandler._advance_revision_bandeja(meta_client, session)
+
+        respuesta = (payload.contenido or "").lower().strip() if payload.tipo == "text" else ""
+
+        if respuesta in {"cancelar", "salir", "cancel"}:
+            delete_session(telefono)
+            await meta_client.send_text(telefono, "Bandeja de revisión cerrada. Escribí 'pendientes' para volver.")
+            return "revision_bandeja_cancelled"
+
+        if respuesta == "rev_aprobar" or "aprobar" in respuesta:
+            try:
+                db = SupabaseManager()
+                await aplicar_revision_gestion(
+                    db=db, meta_client=meta_client, gestion=item, accion="aprobar",
+                    actor_nombre=session.auditor_nombre or "Auditor", actor_id=None, motivo=None,
+                )
+                await meta_client.send_text(telefono, "✅ Corrección aprobada.")
+            except Exception as e:
+                logger.error(f"Error aprobando gestion {item.get('id_gestion')} desde la bandeja: {e}")
+                await meta_client.send_text(telefono, "⚠️ No pude registrar la aprobación, seguimos con la siguiente.")
+            return await AuditConversationHandler._advance_revision_bandeja(meta_client, session)
+
+        if respuesta == "rev_rechazar" or "rechazar" in respuesta:
+            session.awaiting_revision_motivo = True
+            save_session(session)
+            await meta_client.send_text(telefono, "Escribí el motivo del rechazo (se lo mandamos al encargado).")
+            return "awaiting_revision_motivo"
+
+        if respuesta == "rev_omitir" or "omitir" in respuesta or "mas tarde" in respuesta or "más tarde" in respuesta:
+            return await AuditConversationHandler._advance_revision_bandeja(meta_client, session)
+
+        await meta_client.send_text(telefono, "Por favor usá los botones 👇")
+        await AuditConversationHandler._send_item_revision_bandeja(meta_client, session)
+        return "revision_bandeja_invalid_input"
+
+    @staticmethod
+    async def _advance_revision_bandeja(meta_client: MetaClient, session: AuditSession) -> str:
+        """Move to next pending review, or finish and close the session."""
+        if session.move_to_next_verification():
+            save_session(session)
+            await AuditConversationHandler._send_item_revision_bandeja(meta_client, session)
+            return "next_revision_item"
+
+        delete_session(session.telefono)
+        await meta_client.send_text(
+            session.telefono,
+            "✅ Revisaste todas tus correcciones pendientes. Escribí 'pendientes' cuando haya nuevas."
+        )
+        return "revision_bandeja_done"
 
     @staticmethod
     async def _send_audit_sucursal_menu(

@@ -241,6 +241,10 @@ class ConversationRouter:
                     return await AuditConversationHandler.start_desvio_management(
                         payload, meta_client, auditor_nombre=auditor.nombre
                     )
+                if trigger in {"pendientes", "revision", "revisión"}:
+                    return await AuditConversationHandler.start_revision_bandeja(
+                        payload, meta_client, auditor_nombre=auditor.nombre
+                    )
 
 
             # Get conversation state

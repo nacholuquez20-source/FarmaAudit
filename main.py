@@ -29,6 +29,7 @@ from init_supabase import init_supabase_schema
 from audit_session import AuditState, get_session
 from identity import resolve_responsable_by_sucursal, resolve_whatsapp_user, ventana_abierta
 from informes_respuesta import enviar_informes_respuesta
+from gestion_revision import ACCIONES_VALIDAS, aplicar_revision_gestion
 
 # Configure logging
 logging.basicConfig(
@@ -723,14 +724,19 @@ async def post_recordatorio_sucursal(id_sucursal: str, request: Request):
 @app.post("/api/gestion/{id_gestion}/revision")
 async def revisar_gestion(id_gestion: str, payload: GestionRevisionRequest, request: Request):
     """Approve/reject a branch manager's correction, or flag/unblock a deviation that
-    depends on third parties (see ARQUITECTURA_DESVIOS_CAMPANIAS.md, Modulo 1)."""
+    depends on third parties (see ARQUITECTURA_DESVIOS_CAMPANIAS.md, Modulo 1).
+
+    La logica real vive en gestion_revision.aplicar_revision_gestion — este
+    endpoint solo valida el request HTTP y la busca la gestion; la comparte
+    con la bandeja de revision del bot de WhatsApp (audit_handlers.py) para
+    no tener dos implementaciones del mismo aprobar/rechazar."""
     profile = await _require_admin_or_auditor(request)
     client = _get_supabase_client()
     if client is None:
         raise HTTPException(status_code=503, detail="Supabase is not configured")
 
     accion = (payload.accion or "").strip()
-    if accion not in {"aprobar", "rechazar", "en_gestion_terceros", "retomar"}:
+    if accion not in ACCIONES_VALIDAS:
         raise HTTPException(status_code=400, detail="accion invalida")
 
     gestion_response = client.table("gestion").select("*").eq("id_gestion", id_gestion).maybe_single().execute()
@@ -742,84 +748,16 @@ async def revisar_gestion(id_gestion: str, payload: GestionRevisionRequest, requ
     if accion in {"rechazar", "en_gestion_terceros"} and not motivo:
         raise HTTPException(status_code=400, detail="El motivo es obligatorio")
 
-    actor_id = profile["id"]
-    actor_nombre = profile.get("nombre") or "Auditor"
-    now = datetime.now(timezone.utc)
-    db = get_sheets()
-
-    veces_rechazado = int(gestion.get("veces_rechazado") or 0)
-    evento_tipo = "nota"
-    evento_comentario = motivo
-
-    if accion == "aprobar":
-        updates = {
-            "estado": "Resuelta",
-            "cerrado_por": actor_nombre,
-            "en_revision_desde": None,
-        }
-        evento_tipo = "cierre"
-        evento_comentario = motivo or "Correccion aprobada por el auditor."
-    elif accion == "rechazar":
-        plazo_dias = payload.plazo_dias or 2
-        nueva_plazo = (now + timedelta(days=plazo_dias)).strftime("%Y-%m-%d")
-        veces_rechazado += 1
-        updates = {
-            "estado": "En_proceso",
-            "plazo_fecha": nueva_plazo,
-            "plazo_fecha_original": gestion.get("plazo_fecha_original") or gestion.get("plazo_fecha"),
-            "veces_rechazado": veces_rechazado,
-            "en_revision_desde": None,
-        }
-        evento_tipo = "rechazo"
-    elif accion == "en_gestion_terceros":
-        updates = {"estado": "En_gestion_terceros", "en_revision_desde": None}
-    else:  # retomar
-        updates = {"estado": "En_proceso"}
-        evento_comentario = motivo or "Se retoma la gestion del desvio."
-
-    db.update_gestion_fields(id_gestion, updates)
-
-    client.table("desvio_eventos").insert({
-        "id_gestion": id_gestion,
-        "tipo": evento_tipo,
-        "comentario": evento_comentario,
-        "actor_id": actor_id,
-        "actor_nombre": actor_nombre,
-        "metadata": {"accion": accion},
-    }).execute()
-
-    try:
-        client.table("desvio_notificaciones").update({"leida": True}).eq("id_gestion", id_gestion).eq(
-            "tipo", "encargado_respondio"
-        ).eq("leida", False).execute()
-    except Exception as exc:
-        logger.warning(f"Failed to mark notifications read for {id_gestion}: {exc}")
-
-    telefono = "".join(ch for ch in str(gestion.get("tel_responsable") or "") if ch.isdigit())
-    if telefono and accion in {"aprobar", "rechazar"}:
-        meta_client = MetaClient()
-        try:
-            if accion == "aprobar":
-                mensaje = f"FarmaAudit: tu correccion para \"{gestion.get('desvio')}\" fue aprobada. Gracias!"
-            else:
-                mensaje = (
-                    f"FarmaAudit: tu correccion para \"{gestion.get('desvio')}\" fue rechazada.\n"
-                    f"Motivo: {motivo}\n"
-                    "Responde este WhatsApp para verla de nuevo y volver a enviar la correccion."
-                )
-            await meta_client.send_text(telefono, mensaje)
-        except Exception as exc:
-            logger.warning(f"Failed to send WhatsApp feedback for {id_gestion}: {exc}")
-
-        if accion == "rechazar" and veces_rechazado >= 3 and settings.coordinador_tel:
-            try:
-                await meta_client.send_text(
-                    settings.coordinador_tel,
-                    f"FarmaAudit: el desvio {id_gestion} ({gestion.get('sucursal')}) fue rechazado "
-                    f"{veces_rechazado} veces. Requiere seguimiento.",
-                )
-            except Exception as exc:
-                logger.warning(f"Failed to alert coordinator about repeated rejection {id_gestion}: {exc}")
+    await aplicar_revision_gestion(
+        db=get_sheets(),
+        meta_client=MetaClient(),
+        gestion=gestion,
+        accion=accion,
+        actor_nombre=profile.get("nombre") or "Auditor",
+        actor_id=profile["id"],
+        motivo=motivo,
+        plazo_dias=payload.plazo_dias or 2,
+    )
 
     updated_response = client.table("gestion").select("*").eq("id_gestion", id_gestion).maybe_single().execute()
     return updated_response.data or {"status": "ok"}

@@ -23,6 +23,7 @@ class AuditState(Enum):
     SCORING_BRANDS = "scoring_brands"         # Collecting brand scores for OFERTAS
     SUMMARY = "summary"                        # Showing summary, waiting confirmation
     DONE = "done"                              # Audit completed and saved
+    REVISION_BANDEJA = "revision_bandeja"      # Aprobar/rechazar correcciones del encargado, standalone
 
 
 class BloqueType(Enum):
@@ -149,6 +150,14 @@ class AuditSession:
     verified_resueltos: int = 0
     verified_persisten: int = 0
 
+    # Bandeja de revision (aprobar/rechazar correcciones del encargado desde
+    # WhatsApp, comando 'pendientes'): reusa pending_verifications/
+    # current_verification_index como cola (mismo mecanismo ya probado por
+    # la verificacion de desvios pendientes), pero es un flujo distinto —
+    # AuditState.REVISION_BANDEJA, no VERIFY_PREVIOUS. True mientras se
+    # espera el motivo obligatorio de un rechazo.
+    awaiting_revision_motivo: bool = False
+
     # Standalone desvío management (no scoring, queue spans all bloques)
     verification_only: bool = False
     verification_menu: List[Dict[str, Any]] = field(default_factory=list)
@@ -194,6 +203,7 @@ class AuditSession:
             'current_verification_index': self.current_verification_index,
             'awaiting_verification_photo': self.awaiting_verification_photo,
             'awaiting_verification_motivo': self.awaiting_verification_motivo,
+            'awaiting_revision_motivo': self.awaiting_revision_motivo,
             'verified_resueltos': self.verified_resueltos,
             'verified_persisten': self.verified_persisten,
             'verification_only': self.verification_only,
