@@ -24,7 +24,7 @@ from supabase_manager import SupabaseManager
 from audit_pdf_generator import generate_audit_pdf
 from audit_fiches_manager import AuditFichesManager
 from config import get_settings
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +86,10 @@ SCORE_OPTIONS = [
 SIGUIENTE_BUTTON = {"id": "siguiente", "title": "➡️ Siguiente"}
 
 SEVERITY_ESCALATION = {"Baja": "Media", "Media": "Alta", "Alta": "Alta"}
+
+# Cuanto extiende "pausar" el expires_at de la sesion, contado desde el
+# momento en que se pausa (no desde que arranco la auditoria).
+PAUSA_EXTENSION_HORAS = 72
 
 
 async def _ficha_download_url(storage_path: str) -> str:
@@ -416,6 +420,28 @@ class AuditConversationHandler:
                     "Auditoría cancelada. Nada se guardó. Escribí *auditoria* para empezar de nuevo."
                 )
                 return "audit_cancelled"
+
+            # "pausar": a diferencia de cancelar, NO borra nada. expires_at se
+            # fija una sola vez al crear la sesion (created_at + 24h) y nunca
+            # se extendia en ningun lado del codigo — un auditor que corta a
+            # la tarde y vuelve al otro dia podia perder toda la auditoria en
+            # curso sin ninguna forma de evitarlo. No hay comando "continuar"
+            # explicito: cualquier mensaje ya retoma la maquina de estados
+            # donde quedo, y agregar la palabra como comando especial
+            # arriesgaba falsos positivos ("hay que continuar con el pedido"
+            # es contenido real de un hallazgo, no una intencion de retomar).
+            if texto_cancelar in {"pausar", "pausa"}:
+                session.expires_at = (
+                    datetime.now(timezone.utc) + timedelta(hours=PAUSA_EXTENSION_HORAS)
+                ).isoformat()
+                session.inactivity_notice_at = None
+                save_session(session)
+                await meta_client.send_text(
+                    telefono,
+                    "⏸️ Pausada. Tu auditoría queda guardada tal cual está — nada se pierde.\n\n"
+                    "Mandá cualquier foto, audio o texto cuando quieras seguir, retomás justo donde quedaste."
+                )
+                return "audit_paused"
 
         # Active session: route by state
         if session.estado == AuditState.IDLE:
