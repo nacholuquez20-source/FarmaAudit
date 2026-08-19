@@ -23,6 +23,10 @@ class Settings:
     meta_access_token: str = os.getenv("META_ACCESS_TOKEN", "")
     meta_verify_token: str = os.getenv("META_VERIFY_TOKEN", "")
     meta_app_secret: str = os.getenv("META_APP_SECRET", "")
+    # App ID (no APP_SECRET) — visible en el dashboard de Meta for Developers,
+    # junto al nombre de la app. Habilita el chequeo periódico de salud del
+    # webhook (check_webhook_health en main.py); sin esto el chequeo se salta.
+    meta_app_id: str = os.getenv("META_APP_ID", "")
     # Human-readable WhatsApp number for the bot, used only in message copy
     # (e.g. "escribinos al +54 9 381 619-9195") — not used for API calls,
     # those go through meta_phone_number_id.

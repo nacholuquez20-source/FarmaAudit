@@ -669,6 +669,49 @@ Acción requerida inmediatamente."""
             return False
 
 
+    async def check_webhook_subscription(self) -> Optional[dict]:
+        """Chequea contra la Graph API si el webhook de WhatsApp sigue activo y
+        suscripto al campo 'messages'. Usa un app access token (app_id|app_secret),
+        no el token de envío de mensajes — por eso requiere META_APP_ID además del
+        META_APP_SECRET ya usado para verificar firmas.
+
+        Devuelve None si falta configuración o si la llamada a Meta falla (fallo
+        de red no implica que el webhook esté roto, así que el caller no debe
+        alertar en ese caso). Si puede chequear, devuelve un dict con 'healthy',
+        'callback_url', 'active' y 'fields' para loguear el detalle.
+        """
+        settings = get_settings()
+        if not settings.meta_app_id or not settings.meta_app_secret:
+            return None
+
+        app_token = f"{settings.meta_app_id}|{settings.meta_app_secret}"
+        url = f"{self.BASE_URL}/{settings.meta_app_id}/subscriptions"
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, params={"access_token": app_token}, timeout=30)
+        except Exception as e:
+            logger.warning(f"No se pudo chequear la suscripción del webhook (red): {e}")
+            return None
+
+        if response.status_code != 200:
+            logger.warning(f"Chequeo de webhook: Meta devolvió {response.status_code} {response.text}")
+            return None
+
+        subs = response.json().get("data", [])
+        wa_sub = next((s for s in subs if s.get("object") == "whatsapp_business_account"), None)
+        if not wa_sub:
+            return {"healthy": False, "callback_url": None, "active": False, "fields": []}
+
+        fields = [f.get("name") for f in wa_sub.get("fields", [])]
+        active = bool(wa_sub.get("active"))
+        return {
+            "healthy": active and "messages" in fields,
+            "callback_url": wa_sub.get("callback_url"),
+            "active": active,
+            "fields": fields,
+        }
+
+
 async def get_meta_client() -> MetaClient:
     """Get Meta WhatsApp client (dependency injection)."""
     return MetaClient()

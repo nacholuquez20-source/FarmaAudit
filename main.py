@@ -464,6 +464,13 @@ async def startup_event():
         id="informes_respuesta_encargado",
         max_instances=1,  # Prevent concurrent executions
     )
+    scheduler.add_job(
+        check_webhook_health,
+        "interval",
+        minutes=15,
+        id="webhook_health_check",
+        max_instances=1,  # Prevent concurrent executions
+    )
     # Disabled: Using Supabase directly, no longer syncing from Google Sheets
     # scheduler.add_job(
     #     sync_sheets_to_supabase,
@@ -1208,6 +1215,28 @@ async def webhook(request: Request):
     finally:
         if message_id and message_claimed and not processed_successfully:
             await _release_message_claim(message_id)
+
+
+async def check_webhook_health():
+    """Background job: chequea contra la Graph API que el webhook de Meta siga
+    activo y suscripto a 'messages'. Detecta al toque un callback_url roto
+    (dominio de Railway cambiado, URL mal tipeada al re-configurar en Meta)
+    en vez de que se note días después porque un encargado no recibe nada.
+    Se salta en silencio si falta META_APP_ID (opcional, ver config.py)."""
+    try:
+        meta_client = MetaClient()
+        status = await meta_client.check_webhook_subscription()
+        if status is None:
+            return
+        if not status["healthy"]:
+            logger.error(
+                "🚨 WEBHOOK DE WHATSAPP DESCONFIGURADO — el bot no está recibiendo "
+                f"mensajes. callback_url={status.get('callback_url')!r} "
+                f"active={status.get('active')} fields={status.get('fields')}. "
+                "Revisar Meta Business Manager > WhatsApp > Configuración > Webhook."
+            )
+    except Exception as exc:
+        logger.warning(f"check_webhook_health failed: {exc}")
 
 
 async def check_expired_confirmations():

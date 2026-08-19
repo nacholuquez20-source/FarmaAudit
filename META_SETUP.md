@@ -59,3 +59,20 @@ META_VERIFY_TOKEN=your_verify_token_here
 - **Method**: POST
 - **Content-Type**: application/json
 - **Endpoint en código**: `/webhook` en `main.py`, maneja `WhatsAppPayload`, parsea JSON
+
+⚠️ Si alguna vez hay que volver a tocar esta pantalla en Meta (recreaste el
+servicio de Railway, cambiaste de plan, etc.), pegá la URL completa de
+arriba tal cual — con `https://` y terminando en `/webhook`. Pegar solo el
+dominio (sin protocolo ni path) queda "guardado" sin avisar y el webhook
+deja de recibir mensajes en silencio. Ya pasó dos veces (11 y 19 de agosto
+2026).
+
+## Chequeo automático de salud del webhook
+Job `check_webhook_health` en `main.py` (cada 15 min) le pregunta a la Graph
+API (`GET /{META_APP_ID}/subscriptions`) si el webhook sigue activo y
+suscripto a `messages`, y si no, deja un `🚨 WEBHOOK DE WHATSAPP
+DESCONFIGURADO` bien visible en los logs de Railway — para enterarse al
+toque en vez de días después por una queja. Requiere la variable
+`META_APP_ID` (además del `META_APP_SECRET` ya usado para firmas); sin ella
+el chequeo se salta en silencio. El App ID está visible en el dashboard de
+Meta for Developers, junto al nombre de la app.
