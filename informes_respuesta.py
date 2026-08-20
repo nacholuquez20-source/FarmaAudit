@@ -227,7 +227,7 @@ async def _generar_y_enviar_informe(
                 auditor_telefono,
                 "farmaaudit_novedades",
                 language_code="es_AR",
-                body_params=[auditor_nombre or "Auditor/a", str(len(items))],
+                body_params=[auditor_nombre or "Auditor/a", str(len(items)), sucursal_nombre],
             )
             estado = "sin_ventana" if ok else "fallido"
 
