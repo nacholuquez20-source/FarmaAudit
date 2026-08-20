@@ -3,7 +3,7 @@
 import asyncio
 import sys
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timezone
 
 from audit_session import (
@@ -12,6 +12,7 @@ from audit_session import (
 )
 from audit_handlers import AuditConversationHandler
 from models import WhatsAppPayload
+from photo_validator import PhotoValidationResult
 
 
 class MockMetaClient:
@@ -46,6 +47,12 @@ class MockMetaClient:
             'timestamp': datetime.now(timezone.utc).isoformat()
         })
         return {'status': 'ok'}
+
+    async def download_media_with_metadata(self, media_id: str):
+        """Mock media download — la validacion real de la foto se mockea por
+        separado (ver PhotoValidator.validate_media_bytes en los tests que la
+        usan), asi que los bytes devueltos acá nunca se inspeccionan."""
+        return b"fake-image-bytes", "image/jpeg"
 
 
 async def test_complete_audit_flow():
@@ -105,30 +112,59 @@ async def test_complete_audit_flow():
         if bloque == BloqueType.OFERTAS.value:
             # For OFERTAS, we expect handle_score to return and move to SCORING_BRANDS
             result = await AuditConversationHandler.handle_score(payload, meta_client, session)
-            print(f"        Score received, moved to brand scoring")
-            assert result == "moved_to_brands", f"Expected moved_to_brands, got {result}"
+            print(f"        Score received, moved to per-brand evidence")
+            assert result == "moved_to_brand_evidence", f"Expected moved_to_brand_evidence, got {result}"
+            assert session.estado == AuditState.SCORING_BRANDS
 
-            # Score each brand
-            for brand_idx, brand in enumerate(BRAND_ORDER):
-                print(f"            [{brand_idx+1}/4] Scoring brand {brand}...")
-                brand_payload = WhatsAppPayload(
-                    telefono=telefono,
-                    tipo="text",
-                    contenido="4",
-                    media_id=None,
-                    media_url=None,
-                    context_message_id=None,
-                    timestamp=datetime.now(timezone.utc).isoformat()
-                )
+            # Report a known brand + a brand not in BRAND_ORDER, foto -> tag -> comentario
+            marcas_a_reportar = [BRAND_ORDER[0], "Marca No Contemplada"]
+            with patch(
+                "photo_validator.PhotoValidator.validate_media_bytes",
+                return_value=PhotoValidationResult(is_valid=True, message="ok"),
+            ):
+                for marca_idx, marca in enumerate(marcas_a_reportar):
+                    print(f"            [{marca_idx+1}/{len(marcas_a_reportar)}] Reportando marca {marca}...")
 
-                if brand_idx < len(BRAND_ORDER) - 1:
-                    brand_result = await AuditConversationHandler.handle_brand_score(brand_payload, meta_client, session)
-                    assert brand_result == "next_brand", f"Expected next_brand, got {brand_result}"
-                else:
-                    # Last brand moves to evidence collection
-                    brand_result = await AuditConversationHandler.handle_brand_score(brand_payload, meta_client, session)
-                    assert brand_result == "ofertas_evidence_collection_started"
-                    assert session.estado == AuditState.BLOQUE_EVIDENCE_COLLECTION
+                    foto_payload = WhatsAppPayload(
+                        telefono=telefono, tipo="image", contenido="",
+                        media_id=f"media_marca_{marca_idx}", media_url=None,
+                        context_message_id=None, timestamp=datetime.now(timezone.utc).isoformat(),
+                    )
+                    foto_result = await AuditConversationHandler.handle_ofertas_marca_evidence(
+                        foto_payload, meta_client, session
+                    )
+                    assert foto_result == "photo_received_awaiting_marca", \
+                        f"Expected photo_received_awaiting_marca, got {foto_result}"
+                    assert session.estado == AuditState.SCORING_BRANDS_TAG
+
+                    tag_payload = WhatsAppPayload(
+                        telefono=telefono, tipo="text", contenido=marca,
+                        media_id=None, media_url=None,
+                        context_message_id=None, timestamp=datetime.now(timezone.utc).isoformat(),
+                    )
+                    tag_result = await AuditConversationHandler.handle_ofertas_marca_tag(
+                        tag_payload, meta_client, session
+                    )
+                    assert tag_result == "marca_tagged", f"Expected marca_tagged, got {tag_result}"
+                    assert session.estado == AuditState.SCORING_BRANDS_COMMENT
+
+                    comment_payload = WhatsAppPayload(
+                        telefono=telefono, tipo="text", contenido="Buena exhibición, sin observaciones.",
+                        media_id=None, media_url=None,
+                        context_message_id=None, timestamp=datetime.now(timezone.utc).isoformat(),
+                    )
+                    comment_result = await AuditConversationHandler.handle_ofertas_marca_comment(
+                        comment_payload, meta_client, session
+                    )
+                    assert comment_result == "marca_comment_saved", \
+                        f"Expected marca_comment_saved, got {comment_result}"
+                    assert session.estado == AuditState.SCORING_BRANDS
+
+            marcas_guardadas = {
+                d.marca for d in session.desvios if d.bloque == BloqueType.OFERTAS.value and d.marca
+            }
+            assert marcas_guardadas == set(marcas_a_reportar), \
+                f"Expected {marcas_a_reportar}, got {marcas_guardadas}"
         else:
             result = await AuditConversationHandler.handle_score(payload, meta_client, session)
             print(f"        Score received, transitioned to evidence collection")
@@ -137,15 +173,6 @@ async def test_complete_audit_flow():
 
         # If not the last bloque, send SIGUIENTE to move to next
         if i < len(BLOQUE_ORDER) - 1:
-            # Photo is mandatory per bloque: add one before advancing
-            session.add_foto(FotoEvidence(
-                id=f"foto_test_{bloque.lower()}",
-                media_id=f"media_test_{bloque.lower()}",
-                bloque=bloque,
-                validated=True,
-            ))
-            save_session(session)
-
             siguiente_payload = WhatsAppPayload(
                 telefono=telefono,
                 tipo="text",
@@ -156,7 +183,25 @@ async def test_complete_audit_flow():
                 timestamp=datetime.now(timezone.utc).isoformat()
             )
 
-            result = await AuditConversationHandler.handle_bloque_evidence(siguiente_payload, meta_client, session)
+            if bloque == BloqueType.OFERTAS.value:
+                # OFERTAS ya tiene fotos (una por marca reportada arriba) —
+                # no hace falta agregar una foto generica antes de avanzar.
+                result = await AuditConversationHandler.handle_ofertas_marca_evidence(
+                    siguiente_payload, meta_client, session
+                )
+            else:
+                # Photo is mandatory per bloque: add one before advancing
+                session.add_foto(FotoEvidence(
+                    id=f"foto_test_{bloque.lower()}",
+                    media_id=f"media_test_{bloque.lower()}",
+                    bloque=bloque,
+                    validated=True,
+                ))
+                save_session(session)
+
+                result = await AuditConversationHandler.handle_bloque_evidence(
+                    siguiente_payload, meta_client, session
+                )
             print(f"        SIGUIENTE sent, moved to next bloque")
             assert result == "next_bloque", f"Expected next_bloque, got {result}"
 

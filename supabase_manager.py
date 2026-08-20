@@ -439,6 +439,7 @@ class SupabaseManager:
                 "foto_url": reporte.foto_url or "",
                 "creado_por_audio": reporte.creado_por_audio,
                 "timestamp": datetime.utcnow().isoformat(),
+                "marca": reporte.marca,
             }).execute()
 
             logger.info(f"Created reporte {reporte.id}")
@@ -470,6 +471,7 @@ class SupabaseManager:
                 "fecha_cierre": gestion.fecha_cierre.isoformat() if gestion.fecha_cierre else None,
                 "cerrado_por": gestion.cerrado_por or "",
                 "bloque": gestion.bloque,
+                "marca": gestion.marca,
             }).execute()
 
             logger.info(f"Created gestion {gestion.id_gestion}")

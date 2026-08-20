@@ -118,6 +118,8 @@ export interface Reporte {
   foto_url: string | null;
   creado_por_audio: boolean;
   timestamp: string;
+  /** Marca reportada, si aplica (bloque OFERTAS, auditoria de perfumeria v2). */
+  marca?: string | null;
 }
 
 export interface Gestion {
@@ -141,6 +143,8 @@ export interface Gestion {
   en_revision_desde?: string | null;
   /** FK a audit_fiches.id (etapa-22). Null en desvios que no vinieron de una auditoria WhatsApp, o historicos previos a la etapa. */
   ficha_id?: string | null;
+  /** Marca reportada, si aplica (bloque OFERTAS, auditoria de perfumeria v2). */
+  marca?: string | null;
 }
 
 export interface GestionUpdate {

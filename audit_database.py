@@ -3,7 +3,7 @@
 import logging
 from typing import Optional, Dict
 from datetime import datetime, date, timedelta, timezone
-from audit_session import AuditSession, BloqueType, BLOQUE_LABELS
+from audit_session import AuditSession, BloqueType, BLOQUE_LABELS, BRAND_LABELS
 from models import Reporte, Gestion, Severidad, GestionState
 from supabase_manager import SupabaseManager
 from meta_client import MetaClient
@@ -65,16 +65,31 @@ async def save_audit_to_database(
                 bloque_score = session.bloques.get(bloque, 3)
                 severity = determine_severity(bloque_score)
 
-                # Find associated foto URL if available
+                # Find associated foto URL if available. Preferir la foto
+                # ligada especificamente a este desvio (desvio.fotos) — antes
+                # tomaba "la primera foto del bloque" sin importar a cual
+                # hallazgo correspondia, lo que con evidencia por marca
+                # mostraría la foto de una marca en el reporte de otra.
                 foto_url = None
-                for foto in session.fotos:
-                    if foto.bloque == bloque and foto.media_url:
+                fotos_by_id = {f.id: f for f in session.fotos}
+                for foto_id in desvio.fotos:
+                    foto = fotos_by_id.get(foto_id)
+                    if foto and foto.media_url:
                         foto_url = foto.media_url
                         break
+
+                if not foto_url:
+                    for foto in session.fotos:
+                        if foto.bloque == bloque and foto.media_url:
+                            foto_url = foto.media_url
+                            break
 
                 # Create Reporte
                 hoy = date.today().isoformat()
                 hora = datetime.now(timezone.utc).strftime("%H:%M")
+
+                marca_label = BRAND_LABELS.get(desvio.marca, desvio.marca) if desvio.marca else None
+                area = f"Perfumeria - {bloque_label}" + (f" ({marca_label})" if marca_label else "")
 
                 reporte = Reporte(
                     id="",  # Will be generated
@@ -84,12 +99,13 @@ async def save_audit_to_database(
                     auditor=session.auditor_nombre or "Auditor",
                     id_sucursal=session.sucursal_id,
                     sucursal=sucursal.nombre if sucursal else session.sucursal_id,
-                    area=f"Perfumeria - {bloque_label}",
+                    area=area,
                     subitem="",
                     descripcion=desvio.descripcion,
                     severidad=severity,
                     foto_url=foto_url,
                     creado_por_audio=False,
+                    marca=desvio.marca,
                 )
 
                 reporte_id = db.create_reporte(reporte)
@@ -102,7 +118,7 @@ async def save_audit_to_database(
                     id_reporte=reporte_id,
                     id_sucursal=session.sucursal_id,
                     sucursal=sucursal.nombre if sucursal else session.sucursal_id,
-                    desvio=f"{bloque_label}: {desvio.descripcion}",
+                    desvio=f"{bloque_label}" + (f" ({marca_label})" if marca_label else "") + f": {desvio.descripcion}",
                     severidad=severity,
                     responsable=sucursal.responsable if sucursal else "",
                     tel_responsable=sucursal.tel_responsable if sucursal else "",
@@ -110,6 +126,7 @@ async def save_audit_to_database(
                     plan_accion="[Por definir por el responsable]",
                     estado=GestionState.ABIERTA,
                     bloque=bloque,
+                    marca=desvio.marca,
                 )
 
                 gestion_id = db.create_gestion(gestion)
@@ -127,6 +144,7 @@ async def save_audit_to_database(
                         "bloque": bloque,
                         "bloque_score": bloque_score,
                         "fotos_count": len([f for f in session.fotos if f.bloque == bloque]),
+                        "marca": desvio.marca,
                     },
                 )
 

@@ -21,7 +21,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from audit_session import BLOQUE_LABELS, AuditSession
+from audit_session import BLOQUE_LABELS, BRAND_LABELS, AuditSession
 
 logger = logging.getLogger(__name__)
 
@@ -252,9 +252,11 @@ def generate_audit_pdf(
                 item_flowables = []
 
                 # Desvío header bar
+                marca_suffix = f" · {BRAND_LABELS.get(desvio.marca, desvio.marca)}" if desvio.marca else ""
+
                 hdr_data = [[
                     Paragraph(
-                        f'<font color="white"><b>#{idx} — {bloque_label}</b>  '
+                        f'<font color="white"><b>#{idx} — {bloque_label}{marca_suffix}</b>  '
                         f'Puntaje: {score}/5 — {_score_label(score)}</font>',
                         ParagraphStyle("DH", parent=styles["Normal"], fontSize=9,
                                        fontName="Helvetica-Bold", textColor=colors.white),

@@ -42,11 +42,16 @@ function GestionCard({
         )}
       </div>
       <div className="flex flex-1 flex-col gap-2 p-3">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className={`rounded px-2 py-0.5 text-xs font-semibold ${severidadColor(gestion.severidad)}`}>
             {gestion.severidad}
           </span>
           <span className="text-xs text-gray-500">{gestionStateLabel(gestion.estado)}</span>
+          {gestion.marca && (
+            <span className="rounded bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
+              {gestion.marca}
+            </span>
+          )}
         </div>
         <p className="line-clamp-3 text-sm text-gray-800">{gestion.desvio}</p>
         {footer && <p className="mt-auto text-xs text-gray-400">{footer}</p>}

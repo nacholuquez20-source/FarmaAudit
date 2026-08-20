@@ -265,6 +265,7 @@ class Reporte:
     foto_url: Optional[str] = None
     creado_por_audio: bool = False
     timestamp: Optional[datetime] = None
+    marca: Optional[str] = None  # Marca reportada, si aplica (OFERTAS, perfumería v2)
 
 
 @dataclass
@@ -285,6 +286,7 @@ class Gestion:
     fecha_cierre: Optional[datetime] = None
     cerrado_por: Optional[str] = None
     bloque: Optional[str] = None  # LIMPIEZA/STOCK/OFERTAS/BURBUJAS (perfumería v2)
+    marca: Optional[str] = None  # Marca reportada, si aplica (OFERTAS, perfumería v2)
     plazo_fecha_original: Optional[datetime] = None
     veces_rechazado: int = 0
     en_revision_desde: Optional[datetime] = None

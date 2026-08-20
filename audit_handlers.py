@@ -11,7 +11,7 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 from audit_session import (
     AuditSession, AuditState, create_session, get_session, save_session,
-    delete_session, BloqueType, BrandType, BLOQUE_ORDER, BRAND_ORDER,
+    delete_session, BloqueType, BLOQUE_ORDER, BRAND_ORDER,
     BLOQUE_LABELS, BRAND_LABELS, BLOQUE_DESCRIPTIONS, FotoEvidence,
 )
 from models import WhatsAppPayload
@@ -410,6 +410,8 @@ class AuditConversationHandler:
         estados_sin_cancelar = {
             AuditState.SCORING,
             AuditState.SCORING_BRANDS,
+            AuditState.SCORING_BRANDS_TAG,
+            AuditState.SCORING_BRANDS_COMMENT,
             AuditState.BLOQUE_EVIDENCE_COLLECTION,
             AuditState.SUMMARY,
         }
@@ -468,7 +470,13 @@ class AuditConversationHandler:
             return await AuditConversationHandler.handle_bloque_evidence(payload, meta_client, session)
 
         elif session.estado == AuditState.SCORING_BRANDS:
-            return await AuditConversationHandler.handle_brand_score(payload, meta_client, session)
+            return await AuditConversationHandler.handle_ofertas_marca_evidence(payload, meta_client, session)
+
+        elif session.estado == AuditState.SCORING_BRANDS_TAG:
+            return await AuditConversationHandler.handle_ofertas_marca_tag(payload, meta_client, session)
+
+        elif session.estado == AuditState.SCORING_BRANDS_COMMENT:
+            return await AuditConversationHandler.handle_ofertas_marca_comment(payload, meta_client, session)
 
         elif session.estado == AuditState.SUMMARY:
             return await AuditConversationHandler.handle_confirmation(payload, meta_client, session)
@@ -1564,33 +1572,30 @@ class AuditConversationHandler:
         # Save score
         session.set_bloque_score(current_bloque, score)
 
-        # Check if it's OFERTAS → move to SCORING_BRANDS
+        # Check if it's OFERTAS → move to SCORING_BRANDS (evidencia por marca)
         if current_bloque == BloqueType.OFERTAS.value:
             session.estado = AuditState.SCORING_BRANDS
-            session.current_brand_index = 0
+            session.current_foto_id = None
+            session.pending_marca = None
             save_session(session)
 
-            primer_brand = BRAND_ORDER[0]
-            brand_label = BRAND_LABELS.get(primer_brand, primer_brand)
-
-            score_options = [
-                {"id": "1", "title": "Muy malo", "description": "Crítico"},
-                {"id": "2", "title": "Malo", "description": "Problemas"},
-                {"id": "3", "title": "Regular", "description": "Mejora necesaria"},
-                {"id": "4", "title": "Bueno", "description": "Bien"},
-                {"id": "5", "title": "Excelente", "description": "Perfecto"},
-            ]
-
-            await meta_client.send_list_message(
-                payload.telefono,
-                header="Marca 1/4: " + brand_label,
-                body=f"✓ Ofertas: {score}/5\n\nDesglose por marca\n(Exhibición, disponibilidad, precios)\n\n¿Cuál es tu puntuación?",
-                footer="Marca: " + brand_label,
-                button_text="Selecciona una opción",
-                options=score_options
+            marcas_sugeridas = ", ".join(
+                BRAND_LABELS.get(b, b) for b in BRAND_ORDER
             )
 
-            return "moved_to_brands"
+            await meta_client.send_text(
+                payload.telefono,
+                f"✓ Ofertas: {score}/5\n\n"
+                f"📸 Ahora registremos Ofertas y Exhibición por marca.\n\n"
+                f"Marcas de referencia: {marcas_sugeridas} — pero podés reportar "
+                f"cualquier otra marca que veas.\n\n"
+                f"Mandá una foto de la marca que quieras reportar. Te voy a preguntar "
+                f"cuál es y después contame cómo está (texto o audio). Repetí para "
+                f"tantas marcas como quieras.\n\n"
+                f"Escribí 'SIGUIENTE' cuando termines con Ofertas."
+            )
+
+            return "moved_to_brand_evidence"
 
         # For non-OFERTAS bloques: move to evidence collection for this bloque
         session.estado = AuditState.BLOQUE_EVIDENCE_COLLECTION
@@ -1689,6 +1694,51 @@ class AuditConversationHandler:
         )
 
     @staticmethod
+    async def _finish_bloque_evidence(
+        meta_client: MetaClient,
+        session: AuditSession,
+        telefono: str,
+        current_bloque: str,
+        bloque_label: str,
+    ) -> str:
+        """Cierra el bloque actual con 'SIGUIENTE': exige al menos una foto y
+        avanza al proximo bloque (o a SUMMARY si era el ultimo). Compartido
+        entre la evidencia generica por bloque y la evidencia por marca de
+        OFERTAS — ambas usan la misma regla de cierre."""
+        bloque_fotos = len([f for f in session.fotos if f.bloque == current_bloque])
+        bloque_audios = len([a for a in session.desvios if a.bloque == current_bloque and "[AUDIO]" in a.descripcion])
+        bloque_notas = len([d for d in session.desvios if d.bloque == current_bloque and "[AUDIO]" not in d.descripcion])
+
+        # Photo is mandatory for every controlled point, good or bad
+        if bloque_fotos == 0:
+            await meta_client.send_text(
+                telefono,
+                f"📸 Falta la foto de {bloque_label}.\n\n"
+                f"Enviá al menos una foto de este punto (esté bien o mal) "
+                f"para poder continuar."
+            )
+            return "photo_required"
+
+        summary_msg = f"✓ {bloque_label} completado!\n📸 {bloque_fotos} foto(s) · 🎙️ {bloque_audios} audio(s) · 📝 {bloque_notas} nota(s)\n\n"
+
+        # Check if there are more bloques to score
+        if session.move_to_next_bloque():
+            save_session(session)
+
+            # Enter next bloque: verify pending desvíos, then scoring
+            await AuditConversationHandler.enter_bloque(
+                meta_client, session, intro_msg=summary_msg.strip()
+            )
+
+            return "next_bloque"
+
+        # All bloques completed → move to SUMMARY
+        session.estado = AuditState.SUMMARY
+        save_session(session)
+
+        return await AuditConversationHandler.send_summary(telefono, meta_client, session)
+
+    @staticmethod
     async def handle_bloque_evidence(payload: WhatsAppPayload, meta_client: MetaClient, session: AuditSession) -> str:
         """Handle evidence collection for current bloque (fotos, audios, textos)."""
 
@@ -1700,39 +1750,9 @@ class AuditConversationHandler:
             texto = payload.contenido.upper().strip()
 
             if "SIGUIENTE" in texto or "NEXT" in texto:
-                # Count evidence collected
-                bloque_fotos = len([f for f in session.fotos if f.bloque == current_bloque])
-                bloque_audios = len([a for a in session.desvios if a.bloque == current_bloque and "[AUDIO]" in a.descripcion])
-                bloque_notas = len([d for d in session.desvios if d.bloque == current_bloque and "[AUDIO]" not in d.descripcion])
-
-                # Photo is mandatory for every controlled point, good or bad
-                if bloque_fotos == 0:
-                    await meta_client.send_text(
-                        payload.telefono,
-                        f"📸 Falta la foto de {bloque_label}.\n\n"
-                        f"Enviá al menos una foto de este punto (esté bien o mal) "
-                        f"para poder continuar."
-                    )
-                    return "photo_required"
-
-                summary_msg = f"✓ {bloque_label} completado!\n📸 {bloque_fotos} foto(s) · 🎙️ {bloque_audios} audio(s) · 📝 {bloque_notas} nota(s)\n\n"
-
-                # Check if there are more bloques to score
-                if session.move_to_next_bloque():
-                    save_session(session)
-
-                    # Enter next bloque: verify pending desvíos, then scoring
-                    await AuditConversationHandler.enter_bloque(
-                        meta_client, session, intro_msg=summary_msg.strip()
-                    )
-
-                    return "next_bloque"
-
-                # All bloques completed → move to SUMMARY
-                session.estado = AuditState.SUMMARY
-                save_session(session)
-
-                return await AuditConversationHandler.send_summary(payload.telefono, meta_client, session)
+                return await AuditConversationHandler._finish_bloque_evidence(
+                    meta_client, session, payload.telefono, current_bloque, bloque_label
+                )
 
             # Texto sin "SIGUIENTE" — flujo libre: se guarda directo como nota,
             # ligada a la ultima foto recibida en este bloque (si hay una).
@@ -1881,75 +1901,235 @@ class AuditConversationHandler:
         return "unsupported_media"
 
     @staticmethod
-    async def handle_brand_score(payload: WhatsAppPayload, meta_client: MetaClient, session: AuditSession) -> str:
-        """Handle brand score input for OFERTAS."""
+    async def handle_ofertas_marca_evidence(payload: WhatsAppPayload, meta_client: MetaClient, session: AuditSession) -> str:
+        """Loop principal de evidencia por marca de OFERTAS: espera una foto
+        para arrancar el registro de una marca, o 'SIGUIENTE' para cerrar el
+        bloque. A diferencia de los demas bloques, texto/audio sueltos no se
+        guardan como nota — acá se fuerza el orden foto → marca → comentario,
+        que es lo que pidió la auditora (cada marca queda con su propia foto
+        y su propio comentario, no una bolsa de evidencia genérica)."""
+        current_bloque = BloqueType.OFERTAS.value
+        bloque_label = BLOQUE_LABELS.get(current_bloque, current_bloque)
 
-        if payload.tipo != "text":
+        if payload.tipo == "text":
+            texto = payload.contenido.upper().strip()
+
+            if "SIGUIENTE" in texto or "NEXT" in texto:
+                return await AuditConversationHandler._finish_bloque_evidence(
+                    meta_client, session, payload.telefono, current_bloque, bloque_label
+                )
+
+            raw_text = payload.contenido.strip()
+            texto_comando = raw_text.lower()
+
+            if texto_comando in {"resumen", "estado", "status"}:
+                await AuditConversationHandler._send_estado_parcial(meta_client, session, payload.telefono)
+                return "estado_parcial_sent"
+
+            if texto_comando in {"deshacer", "undo", "borrar"}:
+                await AuditConversationHandler._deshacer_ultimo_hallazgo(
+                    meta_client, session, current_bloque, bloque_label, payload.telefono
+                )
+                return "undo_processed"
+
+            if _es_asentimiento(raw_text):
+                await meta_client.send_text(
+                    payload.telefono,
+                    "👍 Anotado. Mandame una foto para reportar una marca, o escribí 'SIGUIENTE'."
+                )
+                return "acknowledgement_ignored"
+
             await meta_client.send_text(
                 payload.telefono,
-                "Por favor, responde con un número del 1 al 5"
+                "Para reportar una marca, mandame primero una *foto*. "
+                "Cuando termines con Ofertas, escribí 'SIGUIENTE'."
             )
-            return "invalid_input"
+            return "photo_expected"
 
-        texto = payload.contenido.strip()
+        if payload.tipo == "image":
+            if not payload.media_id:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "❌ No puedo procesar esa imagen. Por favor intenta de nuevo."
+                )
+                return "no_media_id"
 
-        # Validate input is 1-5
-        if not texto.isdigit() or not (1 <= int(texto) <= 5):
-            await meta_client.send_text(
-                payload.telefono,
-                "❌ Por favor responde 1, 2, 3, 4 o 5"
-            )
-            return "invalid_score"
+            try:
+                media_bytes, mime_type = await meta_client.download_media_with_metadata(
+                    payload.media_id
+                )
 
-        score = int(texto)
-        current_brand = session.get_current_brand()
+                validation = PhotoValidator.validate_media_bytes(media_bytes, mime_type)
 
-        # Save score
-        session.set_brand_score(current_brand, score)
+                if not validation.is_valid:
+                    await meta_client.send_text(
+                        payload.telefono,
+                        validation.message + "\n\nIntenta de nuevo — necesito una foto válida de la marca."
+                    )
+                    return "photo_invalid"
 
-        # Move to next brand or back to SCORING
-        if session.move_to_next_brand():
-            next_brand = session.get_current_brand()
-            next_label = BRAND_LABELS.get(next_brand, next_brand)
-            brand_num = session.current_brand_index + 1
+                foto = FotoEvidence(
+                    id=f"foto_{int(datetime.now(timezone.utc).timestamp())}",
+                    media_id=payload.media_id,
+                    media_url=payload.media_url,
+                    bloque=current_bloque,
+                    descripcion=payload.contenido or "",
+                    validated=True,
+                )
 
-            save_session(session)
+                session.add_foto(foto)
+                session.current_foto_id = foto.id
+                session.pending_marca = None
+                session.estado = AuditState.SCORING_BRANDS_TAG
+                save_session(session)
 
-            score_options = [
-                {"id": "1", "title": "Muy malo", "description": "Crítico"},
-                {"id": "2", "title": "Malo", "description": "Problemas"},
-                {"id": "3", "title": "Regular", "description": "Mejora necesaria"},
-                {"id": "4", "title": "Bueno", "description": "Bien"},
-                {"id": "5", "title": "Excelente", "description": "Perfecto"},
-            ]
+                marca_options = [
+                    {"id": brand_id, "title": BRAND_LABELS.get(brand_id, brand_id)}
+                    for brand_id in BRAND_ORDER
+                ]
 
-            await meta_client.send_list_message(
-                payload.telefono,
-                header=f"Marca {brand_num}/4: {next_label}",
-                body=f"✓ {BRAND_LABELS.get(current_brand, current_brand)}: {score}/5\n\n¿Cuál es tu puntuación?",
-                footer=f"Marca: {next_label}",
-                button_text="Selecciona una opción",
-                options=score_options
-            )
+                await meta_client.send_list_message(
+                    payload.telefono,
+                    header="¿Qué marca es?",
+                    body="Elegí una marca de la lista. Si es otra, escribí directamente su nombre.",
+                    footer="",
+                    button_text="Selecciona una opción",
+                    options=marca_options,
+                )
 
-            return "next_brand"
+                return "photo_received_awaiting_marca"
 
-        # All brands scored → move to evidence collection for OFERTAS
-        session.estado = AuditState.BLOQUE_EVIDENCE_COLLECTION
-        save_session(session)
-
-        bloque_desc = BLOQUE_DESCRIPTIONS.get(BloqueType.OFERTAS.value, "")
+            except Exception as e:
+                logger.error(f"Error downloading/validating photo: {e}")
+                await meta_client.send_text(
+                    payload.telefono,
+                    "❌ Error procesando la foto. Por favor intenta de nuevo."
+                )
+                return "photo_download_error"
 
         await meta_client.send_text(
             payload.telefono,
-            f"✓ {BRAND_LABELS.get(current_brand, current_brand)}: {score}/5\n\n"
-            f"📸 Enviá al menos UNA foto de Ofertas (esté bien o mal — la foto es obligatoria).\n"
-            f"También podés sumar audios y notas 🎙️📝\n\n"
-            f"{bloque_desc}\n\n"
-            f"Escribe 'SIGUIENTE' cuando termines este bloque"
+            "Para reportar una marca, mandame una *foto*. "
+            "Cuando termines con Ofertas, escribí 'SIGUIENTE'."
+        )
+        return "unsupported_media"
+
+    @staticmethod
+    async def handle_ofertas_marca_tag(payload: WhatsAppPayload, meta_client: MetaClient, session: AuditSession) -> str:
+        """Espera qué marca es la foto recién recibida: un tap de la lista
+        (llega como texto con el id de BRAND_ORDER) o el nombre escrito a
+        mano para una marca no contemplada — ambos casos se aceptan por
+        igual, sin un paso extra de "otra marca"."""
+        if payload.tipo != "text" or not payload.contenido.strip():
+            await meta_client.send_text(
+                payload.telefono,
+                "Decime qué marca es: elegí una de la lista, o escribí el nombre."
+            )
+            return "invalid_input"
+
+        raw_text = payload.contenido.strip()
+        marca_id = raw_text.lower()
+
+        if marca_id in BRAND_ORDER:
+            marca_label = BRAND_LABELS.get(marca_id, marca_id)
+        else:
+            marca_label = raw_text[:60]
+            marca_id = marca_label
+
+        session.pending_marca = marca_id
+
+        foto = next((f for f in session.fotos if f.id == session.current_foto_id), None)
+        if foto:
+            foto.marca = marca_id
+
+        session.estado = AuditState.SCORING_BRANDS_COMMENT
+        save_session(session)
+
+        await meta_client.send_text(
+            payload.telefono,
+            f"📝 {marca_label}\n\nContame cómo está esta marca — mandá un audio o escribí un comentario."
         )
 
-        return "ofertas_evidence_collection_started"
+        return "marca_tagged"
+
+    @staticmethod
+    async def handle_ofertas_marca_comment(payload: WhatsAppPayload, meta_client: MetaClient, session: AuditSession) -> str:
+        """Espera el comentario/audio que cierra el hallazgo de la marca
+        recién etiquetada. Si en cambio llega una foto nueva, la auditora está
+        arrancando el registro de otra marca — se re-enruta al branch de foto
+        de handle_ofertas_marca_evidence, y la marca anterior queda con foto
+        pero sin comentario (mismo comportamiento que ya existe hoy cuando una
+        foto nueva reemplaza el ancla de un hallazgo sin cerrar)."""
+        current_bloque = BloqueType.OFERTAS.value
+        marca_label = BRAND_LABELS.get(session.pending_marca, session.pending_marca or "la marca")
+
+        if payload.tipo == "image":
+            return await AuditConversationHandler.handle_ofertas_marca_evidence(payload, meta_client, session)
+
+        if payload.tipo == "text":
+            raw_text = payload.contenido.strip()
+
+            if _es_asentimiento(raw_text):
+                await meta_client.send_text(
+                    payload.telefono,
+                    f"Contame algo sobre cómo está {marca_label} (texto o audio) para guardar el hallazgo."
+                )
+                return "acknowledgement_ignored"
+
+            session.add_desvio(
+                bloque=current_bloque,
+                descripcion=raw_text,
+                fotos=[session.current_foto_id] if session.current_foto_id else None,
+                marca=session.pending_marca,
+            )
+            session.pending_marca = None
+            session.current_foto_id = None
+            session.estado = AuditState.SCORING_BRANDS
+            save_session(session)
+
+            await meta_client.send_quick_reply(
+                payload.telefono,
+                f"✓ {marca_label} registrada con foto y comentario\n\n"
+                f"¿Otra marca? Mandá otra foto, o escribí 'SIGUIENTE'.",
+                [SIGUIENTE_BUTTON],
+            )
+
+            return "marca_comment_saved"
+
+        if payload.tipo == "audio" and payload.media_id:
+            transcript = ""
+            try:
+                media_bytes, mime_type = await meta_client.download_media_with_metadata(payload.media_id)
+                transcript = await AudioTranscriber().transcribe_bytes(media_bytes, mime_type)
+            except Exception as e:
+                logger.warning(f"No se pudo transcribir audio {payload.media_id}: {e}")
+
+            audio_description = f"[AUDIO] {transcript.strip() if transcript else 'Sin transcripción'}"
+            session.add_desvio(
+                bloque=current_bloque,
+                descripcion=audio_description,
+                fotos=[session.current_foto_id] if session.current_foto_id else None,
+                marca=session.pending_marca,
+            )
+            session.pending_marca = None
+            session.current_foto_id = None
+            session.estado = AuditState.SCORING_BRANDS
+            save_session(session)
+
+            await meta_client.send_quick_reply(
+                payload.telefono,
+                f"✓ {marca_label} registrada con foto y audio\n\n"
+                f"¿Otra marca? Mandá otra foto, o escribí 'SIGUIENTE'.",
+                [SIGUIENTE_BUTTON],
+            )
+
+            return "marca_comment_saved"
+
+        await meta_client.send_text(
+            payload.telefono,
+            f"Contame cómo está {marca_label}: mandá un audio o escribí un comentario."
+        )
+        return "unsupported_media"
 
     @staticmethod
     async def handle_evidence(payload: WhatsAppPayload, meta_client: MetaClient, session: AuditSession) -> str:
@@ -2144,26 +2324,21 @@ class AuditConversationHandler:
         for bloque in BLOQUE_ORDER:
             score = session.bloques.get(bloque)
             label = BLOQUE_LABELS.get(bloque, bloque)
+            summary += f"  {label}: {score}/5\n"
 
-            if bloque == BloqueType.OFERTAS.value and BloqueType.OFERTAS.value in session.brands:
-                brand_scores = session.brands[BloqueType.OFERTAS.value]
-                if brand_scores:
-                    summary += f"  {label}: {score}/5\n"
-                    for brand_id in BRAND_ORDER:
-                        if brand_id in brand_scores:
-                            brand_label = BRAND_LABELS.get(brand_id, brand_id)
-                            brand_score = brand_scores[brand_id]
-                            summary += f"    • {brand_label}: {brand_score}/5\n"
-                else:
-                    summary += f"  {label}: {score}/5\n"
-            else:
-                summary += f"  {label}: {score}/5\n"
+            if bloque == BloqueType.OFERTAS.value:
+                marcas_reportadas = [d for d in session.desvios if d.bloque == bloque and d.marca]
+                for desvio in marcas_reportadas:
+                    marca_label = BRAND_LABELS.get(desvio.marca, desvio.marca)
+                    preview = desvio.descripcion[:60] + ("…" if len(desvio.descripcion) > 60 else "")
+                    summary += f"    • {marca_label}: {preview}\n"
 
         # Desvios
         if session.desvios:
             summary += f"\n⚠️ DESVÍOS ENCONTRADOS ({len(session.desvios)}):\n"
             for desvio in session.desvios:
-                summary += f"  • {desvio.descripcion}\n"
+                marca_prefix = f"[{BRAND_LABELS.get(desvio.marca, desvio.marca)}] " if desvio.marca else ""
+                summary += f"  • {marca_prefix}{desvio.descripcion}\n"
 
         # Fotos
         if session.fotos:

@@ -20,7 +20,9 @@ class AuditState(Enum):
     VERIFY_PREVIOUS = "verify_previous"        # Verifying open desvíos from previous audits
     SCORING = "scoring"                        # Collecting area scores (1-5)
     BLOQUE_EVIDENCE_COLLECTION = "bloque_evidence"  # Collecting evidence for current bloque
-    SCORING_BRANDS = "scoring_brands"         # Collecting brand scores for OFERTAS
+    SCORING_BRANDS = "scoring_brands"          # Collecting per-brand evidence for OFERTAS (foto)
+    SCORING_BRANDS_TAG = "scoring_brands_tag"      # Waiting for which brand the just-sent foto is about
+    SCORING_BRANDS_COMMENT = "scoring_brands_comment"  # Waiting for comment/audio about the tagged brand
     SUMMARY = "summary"                        # Showing summary, waiting confirmation
     DONE = "done"                              # Audit completed and saved
     REVISION_BANDEJA = "revision_bandeja"      # Aprobar/rechazar correcciones del encargado, standalone
@@ -88,6 +90,7 @@ class FotoEvidence:
     bloque: Optional[str] = None     # LIMPIEZA, STOCK, OFERTAS, BURBUJAS
     descripcion: Optional[str] = None
     validated: bool = False          # Quality check passed
+    marca: Optional[str] = None      # Brand this foto is about (OFERTAS only)
 
     def to_dict(self):
         return asdict(self)
@@ -101,6 +104,7 @@ class Desvio:
     descripcion: str                 # Problem description
     fotos: List[str] = field(default_factory=list)  # foto_XXX IDs
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    marca: Optional[str] = None      # Brand this desvío is about (OFERTAS only)
 
     def to_dict(self):
         return asdict(self)
@@ -123,11 +127,9 @@ class AuditSession:
     bloques: Dict[str, int] = field(default_factory=dict)  # {LIMPIEZA: 4, STOCK: 3}
     current_bloque_index: int = 0   # Index in BLOQUE_ORDER
 
-    # Brands (for OFERTAS)
-    brands: Dict[str, Dict[str, int]] = field(
-        default_factory=lambda: {BloqueType.OFERTAS.value: {}}
-    )
-    current_brand_index: int = 0    # Index in BRAND_ORDER for OFERTAS
+    # Marca elegida para la foto de OFERTAS que está a mitad de camino: ya
+    # tiene foto, todavía no tiene el comentario/audio que cierra el hallazgo.
+    pending_marca: Optional[str] = None
 
     # Evidence
     fotos: List[FotoEvidence] = field(default_factory=list)
@@ -179,11 +181,6 @@ class AuditSession:
     # repetir el aviso en cada corrida del job.
     inactivity_notice_at: Optional[str] = None
 
-    def __post_init__(self):
-        """Ensure brands dict has OFERTAS key."""
-        if BloqueType.OFERTAS.value not in self.brands:
-            self.brands[BloqueType.OFERTAS.value] = {}
-
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dict for serialization."""
         return {
@@ -194,8 +191,7 @@ class AuditSession:
             'estado': self.estado.value,
             'bloques': self.bloques,
             'current_bloque_index': self.current_bloque_index,
-            'brands': self.brands,
-            'current_brand_index': self.current_brand_index,
+            'pending_marca': self.pending_marca,
             'fotos': [f.to_dict() for f in self.fotos],
             'desvios': [d.to_dict() for d in self.desvios],
             'current_foto_id': self.current_foto_id,
@@ -254,37 +250,13 @@ class AuditSession:
             return BLOQUE_ORDER[self.current_bloque_index]
         return BLOQUE_ORDER[-1]
 
-    def get_current_brand(self) -> Optional[str]:
-        """Get current brand being scored."""
-        if self.estado != AuditState.SCORING_BRANDS:
-            return None
-        if self.current_brand_index < len(BRAND_ORDER):
-            return BRAND_ORDER[self.current_brand_index]
-        return None
-
     def is_all_bloques_scored(self) -> bool:
         """Check if all bloques have been scored."""
         return len(self.bloques) == len(BLOQUE_ORDER)
 
-    def is_ofertas_completed(self) -> bool:
-        """Check if all brands in OFERTAS have been scored."""
-        if BloqueType.OFERTAS.value not in self.bloques:
-            return False
-        if BloqueType.OFERTAS.value not in self.brands:
-            return False
-        ofertas_brands = self.brands[BloqueType.OFERTAS.value]
-        return len(ofertas_brands) == len(BRAND_ORDER)
-
     def set_bloque_score(self, bloque: str, score: int) -> None:
         """Set score for bloque."""
         self.bloques[bloque] = score
-        self.last_message_at = datetime.now(timezone.utc).isoformat()
-
-    def set_brand_score(self, brand: str, score: int) -> None:
-        """Set score for brand in OFERTAS."""
-        if BloqueType.OFERTAS.value not in self.brands:
-            self.brands[BloqueType.OFERTAS.value] = {}
-        self.brands[BloqueType.OFERTAS.value][brand] = score
         self.last_message_at = datetime.now(timezone.utc).isoformat()
 
     def add_foto(self, foto: FotoEvidence) -> None:
@@ -292,13 +264,21 @@ class AuditSession:
         self.fotos.append(foto)
         self.last_message_at = datetime.now(timezone.utc).isoformat()
 
-    def add_desvio(self, bloque: str, descripcion: str, fotos: Optional[List[str]] = None) -> Desvio:
-        """Add deviation/problem, optionally linked to one or more FotoEvidence ids."""
+    def add_desvio(
+        self,
+        bloque: str,
+        descripcion: str,
+        fotos: Optional[List[str]] = None,
+        marca: Optional[str] = None,
+    ) -> Desvio:
+        """Add deviation/problem, optionally linked to one or more FotoEvidence ids
+        and/or a brand (OFERTAS evidence)."""
         desvio = Desvio(
             id=f"desvio_{uuid.uuid4().hex[:8]}",
             bloque=bloque,
             descripcion=descripcion,
             fotos=fotos or [],
+            marca=marca,
         )
         self.desvios.append(desvio)
         self.last_message_at = datetime.now(timezone.utc).isoformat()
@@ -321,13 +301,6 @@ class AuditSession:
         """Move to next bloque in scoring."""
         if self.current_bloque_index < len(BLOQUE_ORDER) - 1:
             self.current_bloque_index += 1
-            return True
-        return False
-
-    def move_to_next_brand(self) -> bool:
-        """Move to next brand in OFERTAS scoring."""
-        if self.current_brand_index < len(BRAND_ORDER) - 1:
-            self.current_brand_index += 1
             return True
         return False
 

@@ -58,6 +58,12 @@ export function DesvioInfoCard({ gestion, reporte, ficha, dueState, reporteFotoU
           <div className="text-sm text-gray-500">Área</div>
           <div className="font-medium">{reporte?.area || '-'}</div>
         </div>
+        {(reporte?.marca || gestion.marca) && (
+          <div>
+            <div className="text-sm text-gray-500">Marca</div>
+            <div className="font-medium">{reporte?.marca || gestion.marca}</div>
+          </div>
+        )}
         <div>
           <div className="text-sm text-gray-500">Vencimiento</div>
           <div className="font-medium">{formatDate(gestion.plazo_fecha)}</div>

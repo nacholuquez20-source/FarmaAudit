@@ -9,7 +9,7 @@ if sys.platform == 'win32':
 
 from audit_session import (
     create_session, get_session, save_session, delete_session,
-    AuditState, BloqueType, BrandType,
+    AuditState, BloqueType,
     BLOQUE_ORDER, BRAND_ORDER, BLOQUE_LABELS, BRAND_LABELS,
     FotoEvidence
 )
@@ -75,29 +75,83 @@ def test_scoring_flow(session):
     return session
 
 
-def test_brand_scoring(session):
-    """Test brand scoring for OFERTAS."""
-    print("\n[TEST 3] Testing brand scoring...")
+def test_ofertas_marca_evidence(session):
+    """Test per-brand evidence collection for OFERTAS: foto → marca → comentario,
+    incluyendo una marca no contemplada en BRAND_ORDER."""
+    print("\n[TEST 3] Testing per-brand OFERTAS evidence...")
 
-    # Move to SCORING_BRANDS
+    # Move to SCORING_BRANDS (loop principal de evidencia por marca)
     session.estado = AuditState.SCORING_BRANDS
-    session.current_brand_index = 0
+    session.current_foto_id = None
+    session.pending_marca = None
     save_session(session)
 
-    # Score each brand
-    for brand in BRAND_ORDER:
-        score = 3 if brand == BrandType.COLGATE.value else 4
-        session.set_brand_score(brand, score)
-        label = BRAND_LABELS.get(brand, brand)
-        print(f"  ✓ {label}: {score}/5")
+    # Marca conocida: foto → tag → comentario
+    foto_unilever = FotoEvidence(
+        id="foto_marca_001",
+        media_id="m1",
+        media_url="https://example.com/unilever.jpg",
+        bloque=BloqueType.OFERTAS.value,
+    )
+    session.add_foto(foto_unilever)
+    session.current_foto_id = foto_unilever.id
 
-    # Verify all brands scored
-    brands = session.brands.get(BloqueType.OFERTAS.value, {})
-    assert len(brands) == len(BRAND_ORDER)
-    print(f"  All {len(brands)}/4 brands scored")
+    session.estado = AuditState.SCORING_BRANDS_TAG
+    marca_id = BRAND_ORDER[0]
+    foto_unilever.marca = marca_id
+    session.pending_marca = marca_id
+    print(f"  ✓ Foto etiquetada: {BRAND_LABELS.get(marca_id, marca_id)}")
+
+    session.estado = AuditState.SCORING_BRANDS_COMMENT
+    session.add_desvio(
+        bloque=BloqueType.OFERTAS.value,
+        descripcion="Buena exhibición, falta cartelería de precio.",
+        fotos=[session.current_foto_id],
+        marca=session.pending_marca,
+    )
+    session.pending_marca = None
+    session.current_foto_id = None
+    session.estado = AuditState.SCORING_BRANDS
+    print("  ✓ Comentario guardado para marca conocida")
+
+    # Marca no contemplada: mismo flujo, nombre libre en vez de BRAND_ORDER
+    foto_otra = FotoEvidence(
+        id="foto_marca_002",
+        media_id="m2",
+        media_url="https://example.com/otra.jpg",
+        bloque=BloqueType.OFERTAS.value,
+    )
+    session.add_foto(foto_otra)
+    session.current_foto_id = foto_otra.id
+
+    session.estado = AuditState.SCORING_BRANDS_TAG
+    marca_custom = "L'Oréal"
+    assert marca_custom.lower() not in BRAND_ORDER
+    foto_otra.marca = marca_custom
+    session.pending_marca = marca_custom
+
+    session.estado = AuditState.SCORING_BRANDS_COMMENT
+    session.add_desvio(
+        bloque=BloqueType.OFERTAS.value,
+        descripcion="[AUDIO] Sin stock hace una semana.",
+        fotos=[session.current_foto_id],
+        marca=session.pending_marca,
+    )
+    session.pending_marca = None
+    session.current_foto_id = None
+    session.estado = AuditState.SCORING_BRANDS
+    print(f"  ✓ Comentario guardado para marca no contemplada: {marca_custom}")
+
+    # Verify
+    marcas_reportadas = {
+        d.marca for d in session.desvios if d.bloque == BloqueType.OFERTAS.value and d.marca
+    }
+    assert marcas_reportadas == {marca_id, marca_custom}
+    assert all(f.marca for f in session.fotos if f.bloque == BloqueType.OFERTAS.value)
+    print(f"  {len(marcas_reportadas)} marca(s) reportada(s) libremente, sin límite a las 4 sugeridas")
 
     save_session(session)
-    print("✅ Brand scoring works correctly")
+    print("✅ Per-brand OFERTAS evidence works correctly")
     return session
 
 
@@ -108,6 +162,11 @@ def test_evidence(session):
     # Move to EVIDENCE
     session.estado = AuditState.BLOQUE_EVIDENCE_COLLECTION
     save_session(session)
+
+    # La sesion ya trae fotos/desvios de OFERTAS (TEST 3) — se verifica el
+    # incremento relativo, no un total absoluto.
+    fotos_antes = len(session.fotos)
+    desvios_antes = len(session.desvios)
 
     # Add fotos
     foto1 = FotoEvidence(
@@ -128,8 +187,8 @@ def test_evidence(session):
     print(f"  ✓ Added desvio: {desvio.descripcion}")
 
     # Verify
-    assert len(session.fotos) == 1
-    assert len(session.desvios) == 1
+    assert len(session.fotos) == fotos_antes + 1
+    assert len(session.desvios) == desvios_antes + 1
 
     save_session(session)
     print("✅ Evidence collection works correctly")
@@ -155,10 +214,10 @@ def test_summary(session):
         print(f"    • {label}: {score}/5")
 
         if bloque == BloqueType.OFERTAS.value:
-            brands = session.brands.get(BloqueType.OFERTAS.value, {})
-            for brand_id, brand_score in brands.items():
-                brand_label = BRAND_LABELS.get(brand_id, brand_id)
-                print(f"      - {brand_label}: {brand_score}/5")
+            for desvio in session.desvios:
+                if desvio.bloque == bloque and desvio.marca:
+                    brand_label = BRAND_LABELS.get(desvio.marca, desvio.marca)
+                    print(f"      - {brand_label}: {desvio.descripcion[:50]}")
 
     print(f"\n  ⚠️ DESVÍOS ({len(session.desvios)}):")
     for desvio in session.desvios:
@@ -226,7 +285,7 @@ def main():
     try:
         session = test_session_creation()
         session = test_scoring_flow(session)
-        session = test_brand_scoring(session)
+        session = test_ofertas_marca_evidence(session)
         session = test_evidence(session)
         test_summary(session)
         test_serialization(session)

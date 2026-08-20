@@ -99,17 +99,6 @@ def test_audit_completion_workflow():
     }
     print("  ✓ Scores recorded")
 
-    # Add brands for OFERTAS
-    session.brands = {
-        BloqueType.OFERTAS.value: {
-            "unilever": 3,
-            "colgate": 2,
-            "haleon": 3,
-            "genomma": 4,
-        }
-    }
-    print("  ✓ Brand scores recorded")
-
     # Move to evidence
     session.estado = AuditState.BLOQUE_EVIDENCE_COLLECTION
 
@@ -132,6 +121,7 @@ def test_audit_completion_workflow():
         bloque=BloqueType.OFERTAS.value,
         descripcion="Exhibición desordenada",
         validated=True,
+        marca="colgate",
     )
     session.add_foto(foto2)
     print("  ✓ Photo 2 added")
@@ -146,8 +136,10 @@ def test_audit_completion_workflow():
     desvio2 = session.add_desvio(
         bloque=BloqueType.OFERTAS.value,
         descripcion="Colgate sin stock, necesita reorden",
+        fotos=[foto2.id],
+        marca="colgate",
     )
-    print(f"  ✓ Desvio 2 added: {desvio2.descripcion}")
+    print(f"  ✓ Desvio 2 added: {desvio2.descripcion} (marca: {desvio2.marca})")
 
     # Calculate records to create
     total_records = len(session.desvios)
@@ -166,7 +158,7 @@ def test_audit_completion_workflow():
     # Verify summary data
     assert session.estado == AuditState.SUMMARY
     assert len(session.bloques) == 4
-    assert len(session.brands.get(BloqueType.OFERTAS.value, {})) == 4
+    assert desvio2.marca == "colgate"
     assert len(session.fotos) == 2
     assert len(session.desvios) == 2
 
