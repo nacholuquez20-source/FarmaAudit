@@ -736,6 +736,7 @@ class AuditConversationHandler:
             respuesta = _consolidar_respuesta(eventos) if eventos else {"comentario": None, "foto_path": None}
             cola.append({
                 "id_gestion": g["id_gestion"],
+                "id_sucursal": g.get("id_sucursal"),
                 "desvio": g.get("desvio") or "",
                 "sucursal": g.get("sucursal") or g.get("id_sucursal") or "",
                 "severidad": g.get("severidad") or "Media",

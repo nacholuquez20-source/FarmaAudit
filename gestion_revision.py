@@ -16,6 +16,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
+from identity import resolve_responsable_by_sucursal
 from meta_client import MetaClient
 from supabase_manager import SupabaseManager
 
@@ -102,7 +103,12 @@ async def aplicar_revision_gestion(
     except Exception as exc:
         logger.warning(f"Failed to mark notifications read for {id_gestion}: {exc}")
 
-    telefono = "".join(ch for ch in str(gestion.get("tel_responsable") or "") if ch.isdigit())
+    # gestion.tel_responsable es una foto congelada al momento de crear la
+    # gestion (queda vacía en la mayoría de las filas históricas) — se
+    # resuelve en vivo, mismo criterio que el resto de los avisos al
+    # encargado desde Bloque 3 del circuito de vuelta.
+    responsable = resolve_responsable_by_sucursal(gestion.get("id_sucursal"))
+    telefono = responsable.telefono if responsable else ""
     if telefono and accion in {"aprobar", "rechazar"}:
         try:
             if accion == "aprobar":
