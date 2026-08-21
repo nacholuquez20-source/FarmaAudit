@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { whatsappAuditLink } from '../lib/utils';
+import { whatsappAuditLink } from '../../lib/utils';
 import { ClipboardCheck } from 'lucide-react';
-import { AppLayout } from '../components/AppLayout';
-import { FeedbackState } from '../components/FeedbackState';
-import { useSucursales } from '../hooks/useSucursales';
-import { useAuth } from '../hooks/useAuth';
-import { updateSucursal } from '../lib/api';
-import type { AutosaveStatus, Sucursal, SucursalEditableField, SucursalUpdate } from '../types';
+import { FeedbackState } from '../FeedbackState';
+import { useSucursales } from '../../hooks/useSucursales';
+import { updateSucursal } from '../../lib/api';
+import type { AutosaveStatus, Sucursal, SucursalEditableField, SucursalUpdate } from '../../types';
 
 interface EditableColumn {
   field: SucursalEditableField;
@@ -56,8 +54,10 @@ function getStatusClasses(status: AutosaveStatus | undefined): string {
   return 'border-transparent bg-transparent text-transparent';
 }
 
-export default function Sucursales() {
-  const { role, profile } = useAuth();
+// Solo entra un admin (montado dentro de la pestaña "Sucursales" de
+// Gestión) — a diferencia de la vieja pagina Sucursales.tsx, no hace falta
+// soportar el rol sucursal acá (ese rol nunca navegó a esto desde el menú).
+export function SucursalesEditorTab() {
   const { sucursales, loading, error } = useSucursales();
   const [rows, setRows] = useState<Sucursal[]>([]);
   const [searchText, setSearchText] = useState('');
@@ -66,8 +66,6 @@ export default function Sucursales() {
   const [saveErrors, setSaveErrors] = useState<Record<string, string>>({});
   const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const navigate = useNavigate();
-  const canEdit = role === 'admin';
-  const canAudit = role === 'admin' || role === 'auditor';
 
   useEffect(() => {
     setRows(sucursales.map(normalizeSucursal));
@@ -82,14 +80,9 @@ export default function Sucursales() {
 
   const filteredSucursales = useMemo(() => {
     const normalizedSearch = searchText.trim().toLowerCase();
-    const visibleRows =
-      role === 'sucursal' && profile?.id_sucursal
-        ? rows.filter((sucursal) => sucursal.id === profile.id_sucursal)
-        : rows;
+    if (!normalizedSearch) return rows;
 
-    if (!normalizedSearch) return visibleRows;
-
-    return visibleRows.filter((sucursal) =>
+    return rows.filter((sucursal) =>
       [
         sucursal.id,
         sucursal.nombre,
@@ -102,7 +95,7 @@ export default function Sucursales() {
         .toLowerCase()
         .includes(normalizedSearch),
     );
-  }, [profile?.id_sucursal, role, rows, searchText]);
+  }, [rows, searchText]);
 
   const persistField = async (id: string, field: SucursalEditableField, value: string) => {
     const cellKey = getCellKey(id, field);
@@ -152,24 +145,11 @@ export default function Sucursales() {
   };
 
   if (loading) {
-    return (
-      <AppLayout title="Sucursales">
-        <FeedbackState title="Cargando sucursales..." tone="loading" />
-      </AppLayout>
-    );
+    return <FeedbackState title="Cargando sucursales..." tone="loading" />;
   }
 
   return (
-    <AppLayout title={role === 'sucursal' ? 'Mi sucursal' : 'Sucursales'}>
-      {role === 'sucursal' && !profile?.id_sucursal && (
-        <div className="mb-4">
-          <FeedbackState
-            title="Tu usuario no tiene sucursal asignada."
-            description="Pedi al administrador que vincule tu perfil en Administracion."
-            tone="error"
-          />
-        </div>
-      )}
+    <div>
       {error && (
         <div className="mb-4">
           <FeedbackState title={error} tone="error" />
@@ -179,13 +159,13 @@ export default function Sucursales() {
       <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <input
           type="text"
-          placeholder={role === 'sucursal' ? 'Buscar en tu sucursal...' : 'Buscar por nombre, zona, telefono o direccion...'}
+          placeholder="Buscar por nombre, zona, telefono o direccion..."
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
           className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500 lg:max-w-xl"
         />
         <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-2 text-sm text-blue-800">
-          {canEdit ? 'Edicion activa: los cambios se guardan automaticamente.' : 'Solo lectura.'}
+          Edicion activa: los cambios se guardan automaticamente.
         </div>
       </div>
 
@@ -223,7 +203,6 @@ export default function Sucursales() {
                             type="text"
                             value={sucursal[column.field]}
                             onChange={(event) => handleFieldChange(sucursal.id, column.field, event.target.value)}
-                            disabled={!canEdit}
                             title={saveErrors[cellKey] || column.label}
                             className={`w-full rounded-md border px-3 py-2 text-sm transition focus:border-transparent focus:ring-2 disabled:bg-gray-50 disabled:text-gray-600 ${
                               hasError
@@ -250,17 +229,15 @@ export default function Sucursales() {
                     </td>
                     <td className="px-4 py-3 text-right align-top">
                       <div className="flex items-center justify-end gap-2">
-                        {canAudit && (
-                          <a
-                            href={whatsappAuditLink()}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center gap-1.5 rounded-md bg-primary-navy px-3 py-2 text-sm font-medium text-white transition hover:bg-primary-navy/90"
-                          >
-                            <ClipboardCheck className="h-3.5 w-3.5" />
-                            Auditar
-                          </a>
-                        )}
+                        <a
+                          href={whatsappAuditLink()}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1.5 rounded-md bg-primary-navy px-3 py-2 text-sm font-medium text-white transition hover:bg-primary-navy/90"
+                        >
+                          <ClipboardCheck className="h-3.5 w-3.5" />
+                          Auditar
+                        </a>
                         <button
                           type="button"
                           onClick={() => navigate(`/sucursales/${sucursal.id}`)}
@@ -316,7 +293,6 @@ export default function Sucursales() {
                         type="text"
                         value={sucursal[column.field]}
                         onChange={(event) => handleFieldChange(sucursal.id, column.field, event.target.value)}
-                        disabled={!canEdit}
                         title={saveErrors[cellKey] || column.label}
                         className={`w-full rounded-md border px-3 py-2 text-sm transition focus:border-transparent focus:ring-2 disabled:bg-gray-50 disabled:text-gray-600 ${
                           hasError
@@ -335,17 +311,15 @@ export default function Sucursales() {
               </div>
 
               <div className="mt-4 flex justify-end gap-2">
-                {canAudit && (
-                  <a
-                    href={whatsappAuditLink()}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 rounded-md bg-primary-navy px-3 py-2 text-sm font-medium text-white transition hover:bg-primary-navy/90"
-                  >
-                    <ClipboardCheck className="h-3.5 w-3.5" />
-                    Auditar
-                  </a>
-                )}
+                <a
+                  href={whatsappAuditLink()}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 rounded-md bg-primary-navy px-3 py-2 text-sm font-medium text-white transition hover:bg-primary-navy/90"
+                >
+                  <ClipboardCheck className="h-3.5 w-3.5" />
+                  Auditar
+                </a>
                 <button
                   type="button"
                   onClick={() => navigate(`/sucursales/${sucursal.id}`)}
@@ -364,6 +338,6 @@ export default function Sucursales() {
           <FeedbackState title="No se encontraron farmacias" />
         </div>
       )}
-    </AppLayout>
+    </div>
   );
 }

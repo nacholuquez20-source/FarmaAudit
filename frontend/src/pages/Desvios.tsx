@@ -13,7 +13,7 @@ import type { DesvioBandeja } from '../types';
 const BANDEJAS: { key: DesvioBandeja; label: string; hint: string }[] = [
   { key: 'decidir', label: 'Requiere tu decision', hint: 'Borradores por aprobar y correcciones por revisar' },
   { key: 'esperando', label: 'Esperando al responsable', hint: 'Abiertos, en proceso y vencidos' },
-  { key: 'cerrado', label: 'Cerrado / terceros', hint: 'Resueltos, cerrados y en gestion de terceros' },
+  { key: 'cerrado', label: 'Resueltos / no corresponde', hint: 'Resueltos, cerrados y en gestion de terceros' },
 ];
 
 function isBandeja(value: string | null): value is DesvioBandeja {

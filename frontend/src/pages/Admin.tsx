@@ -1,7 +1,14 @@
 import { useSearchParams } from 'react-router-dom';
 import { useMountedTabs } from '../hooks/useMountedTabs';
 import { AppLayout } from '../components/AppLayout';
-import { MarcasTab, SistemaTab, SucursalesTab, UsuariosPanelTab, UsuariosWhatsappTab } from '../components/admin';
+import {
+  MarcasTab,
+  SistemaTab,
+  SucursalesEditorTab,
+  SucursalesTab,
+  UsuariosPanelTab,
+  UsuariosWhatsappTab,
+} from '../components/admin';
 import type { AdminTabKey } from '../types';
 
 const TABS: { key: AdminTabKey; label: string }[] = [
@@ -29,7 +36,7 @@ export default function Admin() {
   };
 
   return (
-    <AppLayout title="Administración">
+    <AppLayout title="Gestión">
       <div className="mb-6 inline-flex flex-wrap rounded-lg border border-gray-200 bg-white p-1 shadow-sm">
         {TABS.map((tab) => (
           <button
@@ -46,7 +53,12 @@ export default function Admin() {
       </div>
 
       <div style={{ display: activeTab === 'sucursales' ? 'block' : 'none' }}>
-        {isMounted('sucursales') && <SucursalesTab />}
+        {isMounted('sucursales') && (
+          <div className="space-y-8">
+            <SucursalesTab />
+            <SucursalesEditorTab />
+          </div>
+        )}
       </div>
       <div style={{ display: activeTab === 'whatsapp' ? 'block' : 'none' }}>
         {isMounted('whatsapp') && <UsuariosWhatsappTab />}

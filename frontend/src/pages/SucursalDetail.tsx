@@ -480,7 +480,7 @@ export default function SucursalDetail() {
           resolvió y qué sigue pendiente, auditoría por auditoría. */}
       <div className="rounded-lg bg-white shadow">
         <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
-          <h2 className="text-sm font-semibold text-gray-800">Auditorías</h2>
+          <h2 className="text-sm font-semibold text-gray-800">Historial de auditorías</h2>
           <button
             type="button"
             onClick={() => navigate(`/auditorias?sucursal_id=${id}`)}

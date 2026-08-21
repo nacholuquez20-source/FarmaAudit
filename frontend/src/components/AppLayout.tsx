@@ -58,7 +58,7 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
   if (role === 'admin') {
     navItems.push({ to: '/hoy', label: 'Hoy', icon: Sun });
     if (hasModuleAccess(profile, 'dashboard'))
-      navItems.push({ to: '/dashboard', label: 'Inicio', icon: Home });
+      navItems.push({ to: '/dashboard', label: 'Panel general', icon: Home });
     if (hasModuleAccess(profile, 'gestion_desvios') || hasModuleAccess(profile, 'revision_desvios'))
       navItems.push({ to: '/desvios', label: 'Desvios', icon: ClipboardCheck });
     navItems.push({ to: '/auditorias', label: 'Auditorias', icon: CalendarDays });
@@ -66,7 +66,7 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
       navItems.push({ to: '/campanias', label: 'Campanias', icon: Megaphone });
     if (hasModuleAccess(profile, 'sucursales'))
       navItems.push({ to: '/sucursales', label: 'Sucursales', icon: Store });
-    if (canAccessAdmin) navItems.push({ to: '/admin', label: 'Admin', icon: Settings });
+    if (canAccessAdmin) navItems.push({ to: '/admin', label: 'Gestión', icon: Settings });
   } else if (role === 'auditor') {
     navItems.push({ to: '/hoy', label: 'Hoy', icon: Sun });
     if (hasModuleAccess(profile, 'gestion_desvios') || hasModuleAccess(profile, 'revision_desvios'))
@@ -80,7 +80,7 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
     if (hasModuleAccess(profile, 'dashboard'))
       navItems.push({ to: '/dashboard', label: 'Resumen', icon: Home });
     if (hasModuleAccess(profile, 'mis_desvios'))
-      navItems.push({ to: '/mis-desvios', label: 'Desvios', icon: AlertTriangle });
+      navItems.push({ to: '/mis-desvios', label: 'Mis pendientes', icon: AlertTriangle });
     if (hasModuleAccess(profile, 'mis_campanias'))
       navItems.push({ to: '/mis-campanias', label: 'Campanias', icon: Megaphone });
     if (hasModuleAccess(profile, 'sucursales'))

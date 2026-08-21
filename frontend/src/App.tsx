@@ -12,7 +12,6 @@ const Hoy = lazy(() => import('./pages/Hoy'));
 const DesvioDetail = lazy(() => import('./pages/DesvioDetail'));
 const Desvios = lazy(() => import('./pages/Desvios'));
 const MisDesvios = lazy(() => import('./pages/MisDesvios'));
-const Sucursales = lazy(() => import('./pages/Sucursales'));
 const SucursalesDashboard = lazy(() => import('./pages/SucursalesDashboard'));
 const SucursalDetail = lazy(() => import('./pages/SucursalDetail'));
 const AuditFichaDetail = lazy(() => import('./pages/AuditFichaDetail'));
@@ -228,14 +227,8 @@ export default function App() {
             }
           />
 
-          <Route
-            path="/sucursales/editar"
-            element={
-              <ProtectedRoute module="sucursales">
-                <Sucursales />
-              </ProtectedRoute>
-            }
-          />
+          {/* Legacy: el editor de sucursales se fusionó dentro de Gestión (Fase 1). */}
+          <Route path="/sucursales/editar" element={<Navigate to="/admin?tab=sucursales" replace />} />
 
           <Route
             path="/sucursales/:id"

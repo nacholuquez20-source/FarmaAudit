@@ -14,7 +14,7 @@ export default function MisDesvios() {
 
   if (!sucursalId) {
     return (
-      <AppLayout title="Mis Desvios">
+      <AppLayout title="Mis pendientes">
         <FeedbackState
           title="Tu usuario no tiene una sucursal asignada."
           description="Asigna id_sucursal al perfil desde Admin o ejecuta la migracion de roles y responsables en Supabase."
