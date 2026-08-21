@@ -51,13 +51,6 @@ app.add_middleware(
 )
 
 
-class EncargadoNotificationRequest(BaseModel):
-    id_gestion: str
-    telefono_encargado: str
-    descripcion_desvio: str
-    sucursal: str | None = None
-
-
 class GestionRevisionRequest(BaseModel):
     accion: str  # 'aprobar' | 'rechazar' | 'en_gestion_terceros' | 'retomar'
     motivo: str | None = None
@@ -471,14 +464,6 @@ async def startup_event():
         id="webhook_health_check",
         max_instances=1,  # Prevent concurrent executions
     )
-    # Disabled: Using Supabase directly, no longer syncing from Google Sheets
-    # scheduler.add_job(
-    #     sync_sheets_to_supabase,
-    #     "interval",
-    #     minutes=5,
-    #     id="sheets_supabase_sync",
-    #     max_instances=1,
-    # )
     scheduler.start()
 
     logger.info("Background jobs started")
@@ -498,35 +483,6 @@ async def health_check():
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
     }
-
-
-@app.post("/api/send-encargado-notification")
-async def send_encargado_notification(payload: EncargadoNotificationRequest, request: Request):
-    """Send a WhatsApp notification to the branch manager for one deviation."""
-    await _require_admin_or_auditor(request)
-    telefono = "".join(ch for ch in payload.telefono_encargado if ch.isdigit())
-    if not telefono:
-        raise HTTPException(status_code=400, detail="telefono_encargado is required")
-
-    gestion = get_sheets().get_gestion_by_id(payload.id_gestion)
-    sucursal = payload.sucursal or (gestion or {}).get("sucursal") or "tu sucursal"
-    descripcion = payload.descripcion_desvio or (gestion or {}).get("desvio") or "desvio pendiente"
-    if len(descripcion) > 420:
-        descripcion = f"{descripcion[:417]}..."
-
-    message = (
-        f"FarmaAudit: tenes un desvio pendiente para corregir en {sucursal}.\n\n"
-        f"ID: {payload.id_gestion}\n"
-        f"Detalle: {descripcion}\n\n"
-        "Responde este WhatsApp para ver tus desvios pendientes, seleccionar uno y enviar la correccion."
-    )
-
-    meta_client = MetaClient()
-    sent = await meta_client.send_text(telefono, message)
-    if not sent:
-        raise HTTPException(status_code=502, detail="No se pudo enviar el WhatsApp")
-
-    return {"status": "ok"}
 
 
 @app.post("/api/gestion/{id_gestion}/mensajes")
@@ -1880,19 +1836,6 @@ async def run_informes_respuesta_endpoint(request: Request):
         raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 
-@app.post("/admin/thumbnails/regenerate")
-async def regenerate_thumbnails_endpoint(request: Request):
-    """Manual endpoint to regenerate missing thumbnails. Requires admin role."""
-    await _require_admin(request)
-    try:
-        supabase_mgr = SupabaseManager()
-        result = supabase_mgr.regenerate_missing_thumbnails()
-        return {"status": "ok", "result": result}
-    except Exception as e:
-        logger.error(f"Error regenerating thumbnails: {e}")
-        raise HTTPException(status_code=500, detail="Error interno del servidor")
-
-
 # ============== AUDIT FICHES ENDPOINTS ==============
 
 from audit_fiches_manager import AuditFichesManager
@@ -1913,46 +1856,6 @@ async def _with_fresh_pdf_url(ficha: dict) -> dict:
         if fresh_url:
             ficha = {**ficha, "url_pdf": fresh_url}
     return ficha
-
-
-@app.get("/api/audit-fiches/list")
-async def get_audit_fiches(
-    request: Request,
-    sucursal_id: Optional[str] = Query(None),
-    fecha_desde: Optional[str] = Query(None),
-    fecha_hasta: Optional[str] = Query(None),
-    auditor_nombre: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=100),
-    offset: int = Query(0, ge=0),
-):
-    """Get audit fiches with optional filters."""
-    await _require_admin_or_auditor(request)
-    try:
-        fiches = await AuditFichesManager.get_fiches(
-            sucursal_id=sucursal_id,
-            fecha_desde=fecha_desde,
-            fecha_hasta=fecha_hasta,
-            auditor_nombre=auditor_nombre,
-            limit=limit,
-            offset=offset,
-        )
-        fiches = [await _with_fresh_pdf_url(f) for f in fiches]
-        return {
-            "status": "ok",
-            "count": len(fiches),
-            "data": fiches,
-            "filters": {
-                "sucursal_id": sucursal_id,
-                "fecha_desde": fecha_desde,
-                "fecha_hasta": fecha_hasta,
-                "auditor_nombre": auditor_nombre,
-            },
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching fiches: {e}")
-        raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 
 @app.get("/api/audit-fiches/export-pdf")
@@ -1996,44 +1899,6 @@ async def export_audit_fiches_pdf(
         raise
     except Exception as e:
         logger.error(f"Error exporting controles PDF: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Error interno del servidor")
-
-
-@app.get("/api/audit-fiches/sucursales")
-async def get_audit_fiches_sucursales(request: Request):
-    """Get list of sucursales with audit fiches."""
-    await _require_admin_or_auditor(request)
-    try:
-        sucursales = await AuditFichesManager.get_sucursales_with_fiches()
-        unique_sucursales = []
-        seen = set()
-        for item in sucursales:
-            sid = item.get("sucursal_id")
-            if sid and sid not in seen:
-                unique_sucursales.append(sid)
-                seen.add(sid)
-        return {"status": "ok", "count": len(unique_sucursales), "data": unique_sucursales}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching sucursales: {e}")
-        raise HTTPException(status_code=500, detail="Error interno del servidor")
-
-
-@app.get("/api/audit-fiches/{ficha_id}")
-async def get_audit_ficha(ficha_id: str, request: Request):
-    """Get details of specific audit ficha."""
-    await _require_admin_or_auditor(request)
-    try:
-        db = SupabaseManager()
-        response = db.client.table("audit_fiches").select("*").eq("id", ficha_id).single().execute()
-        if response.data:
-            return {"status": "ok", "data": await _with_fresh_pdf_url(response.data)}
-        raise HTTPException(status_code=404, detail="Ficha not found")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching ficha: {e}")
         raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 

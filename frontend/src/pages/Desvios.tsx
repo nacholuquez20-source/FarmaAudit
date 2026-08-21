@@ -94,20 +94,20 @@ export default function Desvios() {
               title="Hallazgos propuestos por la IA"
               description="Aprobar convierte el hallazgo en un desvio con responsable y plazo."
             />
-            <RevisionDesviosPanel embedded />
+            <RevisionDesviosPanel />
             <SectionHeading
               title="Correcciones enviadas por responsables"
               description="El responsable ya respondio por WhatsApp; aprobar cierra el desvio."
             />
-            <DesviosGestionPanel embedded bandeja="decidir" />
+            <DesviosGestionPanel bandeja="decidir" />
           </>
         )}
       </div>
       <div style={{ display: activeTab === 'esperando' ? 'block' : 'none' }}>
-        {isMounted('esperando') && <DesviosGestionPanel embedded bandeja="esperando" />}
+        {isMounted('esperando') && <DesviosGestionPanel bandeja="esperando" />}
       </div>
       <div style={{ display: activeTab === 'cerrado' ? 'block' : 'none' }}>
-        {isMounted('cerrado') && <DesviosGestionPanel embedded bandeja="cerrado" />}
+        {isMounted('cerrado') && <DesviosGestionPanel bandeja="cerrado" />}
       </div>
     </AppLayout>
   );

@@ -46,8 +46,8 @@ export function firstAllowedPath(profile: UserProfile | null): string {
   if (profile.role === 'auditor') return '/hoy';
   const modules = normalizeModulePermissions(profile.role, profile.permisos_modulos);
   if (modules.includes('dashboard')) return '/dashboard';
-  if (modules.includes('gestion_desvios')) return '/gestion-desvios';
-  if (modules.includes('revision_desvios')) return '/revision-desvios';
+  if (modules.includes('gestion_desvios')) return '/desvios';
+  if (modules.includes('revision_desvios')) return '/desvios';
   if (modules.includes('mis_desvios')) return '/mis-desvios';
   if (modules.includes('campanias')) return '/campanias';
   if (modules.includes('mis_campanias')) return '/mis-campanias';

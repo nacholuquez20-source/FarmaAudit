@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Check, Search, Trash2, X } from 'lucide-react';
-import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { useDesviosBorrador } from '../hooks/useDesviosBorrador';
 import { resolveEvidenceUrl, resolveEvidenceThumbUrl } from '../lib/api';
@@ -230,7 +229,7 @@ function Drawer({
   );
 }
 
-export function RevisionDesviosPanel({ embedded = false }: { embedded?: boolean }) {
+export function RevisionDesviosPanel() {
   const {
     pendientes,
     loading,
@@ -239,7 +238,6 @@ export function RevisionDesviosPanel({ embedded = false }: { embedded?: boolean 
     selectedIds,
     aprobar,
     descartar,
-    reload,
     aprobarSeleccionados,
     descartarSeleccionados,
     toggleSelect,
@@ -314,24 +312,6 @@ export function RevisionDesviosPanel({ embedded = false }: { embedded?: boolean 
 
   return (
       <div className="min-h-screen bg-slate-100">
-        {!embedded && (
-        <section className="border-b border-slate-200 bg-white px-5 py-4 lg:px-8">
-          <div className="flex items-center gap-4">
-            <div className="flex h-11 w-11 items-center justify-center rounded-lg font-black text-white" style={{ background: tokens.navy }}>RV</div>
-            <div className="min-w-0 flex-1">
-              <div className="text-xs font-bold uppercase tracking-widest text-slate-500">FarmaAudit · WhatsApp</div>
-              <h1 className="truncate text-2xl font-bold text-slate-950">Revision de Desvios</h1>
-            </div>
-            <span className="hidden rounded-full bg-slate-100 px-4 py-2 text-sm font-bold text-slate-600 sm:inline-flex">
-              {pendientes.length} pendientes
-            </span>
-            <button type="button" onClick={() => void reload()} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50">
-              Actualizar
-            </button>
-          </div>
-        </section>
-        )}
-
         <section className="sticky top-0 z-20 border-b border-slate-200 bg-white px-5 py-4 lg:px-8">
           <div className="flex flex-col gap-3">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
@@ -500,10 +480,3 @@ export function RevisionDesviosPanel({ embedded = false }: { embedded?: boolean 
   );
 }
 
-export default function RevisionDesvios() {
-  return (
-    <AppLayout title="Revision de Desvios" contentClassName="max-w-none px-0 py-0">
-      <RevisionDesviosPanel />
-    </AppLayout>
-  );
-}

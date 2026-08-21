@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Check, Clock, MapPin, Paperclip, Search, Send, User, X } from 'lucide-react';
-import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { EvidenciaGaleria } from '../components/EvidenciaGaleria';
 import { DesvioCorrectionReviewPanel } from '../components/desvio-detail';
@@ -571,10 +570,8 @@ function DetailDrawer({
 }
 
 export function DesviosGestionPanel({
-  embedded = false,
   bandeja,
 }: {
-  embedded?: boolean;
   bandeja?: DesvioBandeja;
 }) {
   const { user, profile } = useAuth();
@@ -943,19 +940,6 @@ export function DesviosGestionPanel({
 
   return (
       <div className="min-h-screen bg-slate-100">
-        {!embedded && (
-        <section className="border-b border-slate-200 bg-white px-5 py-4 lg:px-8">
-          <div className="flex items-center gap-4">
-            <div className="flex h-11 w-11 items-center justify-center rounded-lg font-black text-white" style={{ background: tokens.navy }}>FA</div>
-            <div className="min-w-0 flex-1">
-              <div className="text-xs font-bold uppercase tracking-widest text-slate-500">FarmaAudit · Plazoleta</div>
-              <h1 className="truncate text-2xl font-bold text-slate-950">Gestion de Desvios</h1>
-            </div>
-            <span className="hidden rounded-full bg-slate-100 px-4 py-2 text-sm font-bold text-slate-600 sm:inline-flex">{desvios.length} desvios</span>
-          </div>
-        </section>
-        )}
-
         <section className="sticky top-0 z-20 border-b border-slate-200 bg-white px-5 py-4 lg:px-8">
           <div className="flex flex-col gap-3">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
@@ -1161,10 +1145,3 @@ export function DesviosGestionPanel({
   );
 }
 
-export default function DesviosGestion() {
-  return (
-    <AppLayout title="Gestion de Desvios" contentClassName="max-w-none px-0 py-0">
-      <DesviosGestionPanel />
-    </AppLayout>
-  );
-}
