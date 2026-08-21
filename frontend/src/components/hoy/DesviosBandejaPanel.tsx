@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AppLayout } from '../components/AppLayout';
-import { RevisionDesviosPanel } from './RevisionDesvios';
-import { DesviosGestionPanel } from './DesviosGestion';
-import { getDesviosBandejaCounts } from '../lib/api';
-import { useMountedTabs } from '../hooks/useMountedTabs';
-import type { DesvioBandeja } from '../types';
+import { RevisionDesviosPanel } from '../../pages/RevisionDesvios';
+import { DesviosGestionPanel } from '../../pages/DesviosGestion';
+import { getDesviosBandejaCounts } from '../../lib/api';
+import { useMountedTabs } from '../../hooks/useMountedTabs';
+import type { DesvioBandeja } from '../../types';
 
 // Bandejas por turno: la pregunta que ordena el panel es de quien es la
 // pelota, no en que estado esta el desvio. Ver ARQUITECTURA_PANEL_DESVIOS.md
-// seccion 5.
+// seccion 5. Full-bleed (sin <AppLayout> propio) — se monta dentro de la
+// pestaña "pendientes" de Hoy.tsx, que le da el contentClassName sin padding.
 const BANDEJAS: { key: DesvioBandeja; label: string; hint: string }[] = [
   { key: 'decidir', label: 'Requiere tu decision', hint: 'Borradores por aprobar y correcciones por revisar' },
   { key: 'esperando', label: 'Esperando al responsable', hint: 'Abiertos, en proceso y vencidos' },
@@ -20,7 +20,7 @@ function isBandeja(value: string | null): value is DesvioBandeja {
   return BANDEJAS.some((bandeja) => bandeja.key === value);
 }
 
-export default function Desvios() {
+export function DesviosBandejaPanel() {
   const [params, setParams] = useSearchParams();
   const raw = params.get('v');
 
@@ -42,11 +42,11 @@ export default function Desvios() {
 
   const setTab = (tab: DesvioBandeja) => {
     markVisited(tab);
-    setParams({ v: tab }, { replace: true });
+    setParams({ s: 'pendientes', v: tab }, { replace: true });
   };
 
   return (
-    <AppLayout title="Desvios" contentClassName="max-w-none px-0 py-0">
+    <div>
       <div className="border-b border-slate-200 bg-white px-5 lg:px-8">
         <div className="flex gap-0 overflow-x-auto">
           {BANDEJAS.map((bandeja) => {
@@ -109,7 +109,7 @@ export default function Desvios() {
       <div style={{ display: activeTab === 'cerrado' ? 'block' : 'none' }}>
         {isMounted('cerrado') && <DesviosGestionPanel bandeja="cerrado" />}
       </div>
-    </AppLayout>
+    </div>
   );
 }
 

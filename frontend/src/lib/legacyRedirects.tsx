@@ -18,3 +18,16 @@ export function RedirectAuditoriasToSucursales() {
   forwarded.set('tab', 'fichas');
   return <Navigate to={`/sucursales?${forwarded.toString()}`} replace />;
 }
+
+// /desvios -> /hoy?s=pendientes, preservando `v` (bandeja activa). El `v`
+// se reenvía tal cual sin resolver acá los alias legacy (?v=revision /
+// ?v=gestion) -- DesviosBandejaPanel ya sabe mapearlos, no hace falta
+// duplicar esa tabla en dos lugares.
+export function RedirectDesviosToHoy() {
+  const [params] = useSearchParams();
+  const forwarded = new URLSearchParams();
+  forwarded.set('s', 'pendientes');
+  const v = params.get('v');
+  if (v) forwarded.set('v', v);
+  return <Navigate to={`/hoy?${forwarded.toString()}`} replace />;
+}

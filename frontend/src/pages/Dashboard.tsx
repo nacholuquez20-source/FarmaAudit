@@ -192,7 +192,7 @@ export function DashboardPanel() {
 
       {(role === 'admin' || role === 'auditor') && (
         <Link
-          to="/desvios?v=revision"
+          to="/hoy?s=pendientes&v=decidir"
           className="mb-6 flex items-center gap-4 rounded-xl border border-primary-navy/20 bg-primary-navy/5 px-5 py-4 transition hover:bg-primary-navy/10"
         >
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-navy text-white">

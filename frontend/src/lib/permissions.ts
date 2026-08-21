@@ -49,8 +49,8 @@ export function firstAllowedPath(profile: UserProfile | null): string {
   // "Sucursales" -> pestaña Analítica); evita un salto doble vía el
   // redirect de admin->/sucursales dentro de Dashboard().
   if (modules.includes('dashboard')) return profile.role === 'admin' ? '/sucursales' : '/dashboard';
-  if (modules.includes('gestion_desvios')) return '/desvios';
-  if (modules.includes('revision_desvios')) return '/desvios';
+  if (modules.includes('gestion_desvios')) return '/hoy?s=pendientes';
+  if (modules.includes('revision_desvios')) return '/hoy?s=pendientes';
   if (modules.includes('mis_desvios')) return '/mis-desvios';
   if (modules.includes('campanias')) return '/campanias';
   if (modules.includes('mis_campanias')) return '/mis-campanias';

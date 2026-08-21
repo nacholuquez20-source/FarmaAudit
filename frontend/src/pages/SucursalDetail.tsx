@@ -335,7 +335,7 @@ export default function SucursalDetail() {
               acciones.push({
                 tone: 'text-amber-700 bg-amber-50 border-amber-100',
                 text: `${resumen.enRevision} desvío${resumen.enRevision === 1 ? '' : 's'} esperando tu revisión`,
-                onClick: () => navigate('/desvios?v=revision'),
+                onClick: () => navigate('/hoy?s=pendientes&v=decidir'),
               });
             if (resumen.dias === null || resumen.dias > 30)
               acciones.push({

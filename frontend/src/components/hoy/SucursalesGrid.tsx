@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -14,13 +14,11 @@ import {
   Triangle,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { AppLayout } from '../components/AppLayout';
-import { FeedbackState } from '../components/FeedbackState';
-import { ReminderButton } from '../components/ReminderButton';
-import { getEstadoContactoSucursales, getSucursalesDashboard } from '../lib/api';
-import { whatsappAuditLink } from '../lib/utils';
-import { useAuth } from '../hooks/useAuth';
-import type { EstadoContactoSucursal, EstadoSalud, SucursalDashboard } from '../types';
+import { FeedbackState } from '../FeedbackState';
+import { ReminderButton } from '../ReminderButton';
+import { whatsappAuditLink } from '../../lib/utils';
+import { useAuth } from '../../hooks/useAuth';
+import type { EstadoContactoSucursal, EstadoSalud, SucursalDashboard } from '../../types';
 
 type Filtro = 'todas' | 'critica' | 'atencion' | 'ok' | 'sin_datos' | 'perfumeria';
 
@@ -94,97 +92,46 @@ function SkeletonCard() {
   );
 }
 
-export default function SucursalesDashboard() {
-  const { role, profile } = useAuth();
-  const navigate = useNavigate();
+interface SucursalesGridProps {
+  data: SucursalDashboard[];
+  loading: boolean;
+  contacto: Record<string, EstadoContactoSucursal>;
+  contactoLoaded: boolean;
+  onReminderSent: () => void;
+}
 
-  const [data, setData] = useState<SucursalDashboard[]>([]);
-  const [contacto, setContacto] = useState<Record<string, EstadoContactoSucursal>>({});
-  // Distingue "todavia no intentamos cargar el contacto" (ReminderButton
-  // muestra "Cargando...") de "ya intentamos y esta sucursal no aparecio o
-  // fallo la llamada" (debe degradar a "Asignar encargado", no quedarse
-  // colgado en "Cargando..." para siempre — contacto[id] es undefined en
-  // ambos casos, por eso hace falta este flag aparte).
-  const [contactoLoaded, setContactoLoaded] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+// Grid filtrable "qué sucursal visitar" — extraído de la vieja
+// SucursalesDashboard.tsx. Sin la rama de rol sucursal (ese rol nunca entra
+// a /hoy, ver ProtectedRoute allowRoles=['admin','auditor']) y sin fetch
+// propio: los datos vienen por props desde useSucursalesPrioridad, montado
+// una sola vez en Hoy.tsx.
+export function SucursalesGrid({ data, loading, contacto, contactoLoaded, onReminderSent }: SucursalesGridProps) {
+  const { role } = useAuth();
+  const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [filtro, setFiltro] = useState<Filtro>('todas');
 
-  const canAudit = role === 'admin' || role === 'auditor';
-
-  const recargarContacto = () => {
-    if (!canAudit) return;
-    getEstadoContactoSucursales()
-      .then((rows) => setContacto(Object.fromEntries(rows.map((r) => [r.id_sucursal, r]))))
-      .catch(() => setContacto({}))
-      .finally(() => setContactoLoaded(true));
-  };
-
-  useEffect(() => {
-    let active = true;
-    getSucursalesDashboard()
-      .then((rows) => {
-        if (active) setData(rows);
-      })
-      .catch((err) => {
-        if (active) setError(err instanceof Error ? err.message : 'No se pudieron cargar las sucursales.');
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    // El estado de contacto es admin/auditor-only (usuarios_whatsapp es RLS
-    // admin-only en el backend) — un fallo acá no debe tapar la lista.
-    if (canAudit) {
-      getEstadoContactoSucursales()
-        .then((rows) => {
-          if (active) setContacto(Object.fromEntries(rows.map((r) => [r.id_sucursal, r])));
-        })
-        .catch(() => {
-          if (active) setContacto({});
-        })
-        .finally(() => {
-          if (active) setContactoLoaded(true);
-        });
-    }
-    return () => {
-      active = false;
-    };
-  }, [canAudit]);
-
-  // La 'sucursal' rara vez cae acá (ve "Mi sucursal"), pero por las dudas la
-  // acotamos a su propia sucursal.
-  // Hoisted: con `profile?.id_sucursal` leido dentro del useMemo, el React
-  // Compiler no puede preservar la memoizacion (react-hooks/preserve-manual-memoization).
-  const idSucursalPropia = profile?.id_sucursal;
-  const scoped = useMemo(() => {
-    if (role === 'sucursal' && idSucursalPropia) {
-      return data.filter((s) => s.id === idSucursalPropia);
-    }
-    return data;
-  }, [data, role, idSucursalPropia]);
-
   const conteos = useMemo(() => {
-    return scoped.reduce(
+    return data.reduce(
       (acc, s) => {
         acc[s.estado_salud] += 1;
         return acc;
       },
       { critica: 0, atencion: 0, ok: 0, sin_datos: 0 } as Record<EstadoSalud, number>,
     );
-  }, [scoped]);
+  }, [data]);
 
   // Cuántas sucursales tienen desvíos abiertos pero nadie a quien reclamarle
   // — la palanca de mayor impacto: sin esto, cualquier botón de recordatorio
   // es lindo y vacío.
   const sinEncargadoBloqueadas = useMemo(
-    () => scoped.filter((s) => s.desvios_abiertos > 0 && !contacto[s.id]?.tiene_telefono),
-    [scoped, contacto],
+    () => data.filter((s) => s.desvios_abiertos > 0 && !contacto[s.id]?.tiene_telefono),
+    [data, contacto],
   );
 
   const visibles = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return scoped
+    return data
       .filter((s) => {
         if (filtro === 'perfumeria') return s.tiene_perfumeria;
         if (filtro !== 'todas') return s.estado_salud === filtro;
@@ -205,10 +152,10 @@ export default function SucursalesDashboard() {
         if (b.desvios_vencidos !== a.desvios_vencidos) return b.desvios_vencidos - a.desvios_vencidos;
         return (b.dias_desde_auditoria ?? 9999) - (a.dias_desde_auditoria ?? 9999);
       });
-  }, [scoped, filtro, search, contacto]);
+  }, [data, filtro, search, contacto]);
 
   const filtros: { key: Filtro; label: string; count?: number; dot?: string }[] = [
-    { key: 'todas', label: 'Todas', count: scoped.length },
+    { key: 'todas', label: 'Todas', count: data.length },
     { key: 'critica', label: 'Críticas', count: conteos.critica, dot: 'bg-red-500' },
     { key: 'atencion', label: 'Atención', count: conteos.atencion, dot: 'bg-amber-500' },
     { key: 'ok', label: 'Al día', count: conteos.ok, dot: 'bg-green-500' },
@@ -217,7 +164,7 @@ export default function SucursalesDashboard() {
   ];
 
   return (
-    <AppLayout title={role === 'sucursal' ? 'Mi sucursal' : 'Sucursales'}>
+    <div>
       {/* Barra de control + búsqueda */}
       <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="relative w-full lg:max-w-md">
@@ -233,7 +180,7 @@ export default function SucursalesDashboard() {
         {role === 'admin' && (
           <button
             type="button"
-            onClick={() => navigate('/sucursales/editar')}
+            onClick={() => navigate('/admin?tab=sucursales')}
             className="inline-flex items-center gap-1.5 self-start rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-100"
           >
             <Pencil className="h-3.5 w-3.5" />
@@ -269,13 +216,7 @@ export default function SucursalesDashboard() {
         })}
       </div>
 
-      {error && (
-        <div className="mb-4">
-          <FeedbackState title={error} tone="error" />
-        </div>
-      )}
-
-      {canAudit && sinEncargadoBloqueadas.length > 0 && (
+      {sinEncargadoBloqueadas.length > 0 && (
         <div className="mb-5 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
@@ -391,29 +332,27 @@ export default function SucursalesDashboard() {
                     👤 {estadoSuc?.encargado_nombre || s.responsable || 'Sin encargado'}
                   </span>
                   <div className="flex items-center gap-1">
-                    {canAudit && s.desvios_abiertos > 0 && (
+                    {s.desvios_abiertos > 0 && (
                       <ReminderButton
                         idSucursal={s.id}
                         sucursalNombre={s.nombre}
                         cantidadDesvios={s.desvios_abiertos}
                         diasSinAccion={s.dias_sin_accion}
                         estadoContacto={contactoLoaded ? (contacto[s.id] ?? null) : undefined}
-                        onSent={recargarContacto}
+                        onSent={onReminderSent}
                         compact
                       />
                     )}
-                    {canAudit && (
-                      <a
-                        href={whatsappAuditLink()}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="rounded-md p-1.5 text-primary-navy transition hover:bg-primary-navy/10"
-                        title="Auditar por WhatsApp"
-                      >
-                        <ClipboardCheck className="h-4 w-4" />
-                      </a>
-                    )}
+                    <a
+                      href={whatsappAuditLink()}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="rounded-md p-1.5 text-primary-navy transition hover:bg-primary-navy/10"
+                      title="Auditar por WhatsApp"
+                    >
+                      <ClipboardCheck className="h-4 w-4" />
+                    </a>
                   </div>
                 </div>
               </div>
@@ -421,6 +360,6 @@ export default function SucursalesDashboard() {
           })}
         </div>
       )}
-    </AppLayout>
+    </div>
   );
 }

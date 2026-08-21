@@ -3,7 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { FeedbackState } from './components/FeedbackState';
 import { useAuth } from './hooks/useAuth';
 import { firstAllowedPath, hasModuleAccess } from './lib/permissions';
-import { RedirectAuditoriasToSucursales } from './lib/legacyRedirects';
+import { RedirectAuditoriasToSucursales, RedirectDesviosToHoy } from './lib/legacyRedirects';
 import type { ModulePermission, Role } from './types';
 
 const Login = lazy(() => import('./pages/Login'));
@@ -11,7 +11,6 @@ const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Hoy = lazy(() => import('./pages/Hoy'));
 const DesvioDetail = lazy(() => import('./pages/DesvioDetail'));
-const Desvios = lazy(() => import('./pages/Desvios'));
 const MisDesvios = lazy(() => import('./pages/MisDesvios'));
 const SucursalesModule = lazy(() => import('./pages/SucursalesModule'));
 const SucursalDetail = lazy(() => import('./pages/SucursalDetail'));
@@ -176,14 +175,8 @@ export default function App() {
             }
           />
 
-          <Route
-            path="/desvios"
-            element={
-              <ProtectedRoute allowRoles={['admin', 'auditor']} module="gestion_desvios">
-                <Desvios />
-              </ProtectedRoute>
-            }
-          />
+          {/* Legacy: la bandeja de desvios se fusiono dentro de "Hoy" (Fase 3). */}
+          <Route path="/desvios" element={<RedirectDesviosToHoy />} />
 
           <Route
             path="/desvios/:id"
@@ -194,11 +187,10 @@ export default function App() {
             }
           />
 
-          {/* Legacy routes — redirect to merged Desvios page.
-              Desvios.tsx igual mapea ?v=gestion / ?v=revision por si quedan
-              enlaces viejos guardados. */}
-          <Route path="/gestion-desvios" element={<Navigate to="/desvios?v=esperando" replace />} />
-          <Route path="/revision-desvios" element={<Navigate to="/desvios?v=decidir" replace />} />
+          {/* Legacy: apuntan directo a /hoy en vez de por RedirectDesviosToHoy,
+              para no encadenar dos redirects. */}
+          <Route path="/gestion-desvios" element={<Navigate to="/hoy?s=pendientes&v=esperando" replace />} />
+          <Route path="/revision-desvios" element={<Navigate to="/hoy?s=pendientes&v=decidir" replace />} />
 
           <Route
             path="/mis-desvios"

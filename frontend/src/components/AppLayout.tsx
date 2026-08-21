@@ -56,8 +56,6 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
   const navItems: NavItem[] = [];
   if (role === 'admin') {
     navItems.push({ to: '/hoy', label: 'Hoy', icon: Sun });
-    if (hasModuleAccess(profile, 'gestion_desvios') || hasModuleAccess(profile, 'revision_desvios'))
-      navItems.push({ to: '/desvios', label: 'Desvios', icon: ClipboardCheck });
     if (hasModuleAccess(profile, 'campanias'))
       navItems.push({ to: '/campanias', label: 'Campanias', icon: Megaphone });
     if (hasModuleAccess(profile, 'sucursales'))
@@ -65,8 +63,6 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
     if (canAccessAdmin) navItems.push({ to: '/admin', label: 'Gestión', icon: Settings });
   } else if (role === 'auditor') {
     navItems.push({ to: '/hoy', label: 'Hoy', icon: Sun });
-    if (hasModuleAccess(profile, 'gestion_desvios') || hasModuleAccess(profile, 'revision_desvios'))
-      navItems.push({ to: '/desvios', label: 'Desvios', icon: ClipboardCheck });
     if (hasModuleAccess(profile, 'campanias'))
       navItems.push({ to: '/campanias', label: 'Campanias', icon: Megaphone });
     if (hasModuleAccess(profile, 'sucursales'))
