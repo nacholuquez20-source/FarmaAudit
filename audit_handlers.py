@@ -119,11 +119,13 @@ async def _notify_responsable_desvios_pendientes(
     (see _send_forward_invitation_text).
     """
     try:
-        db = SupabaseManager()
-        sucursal = db.get_sucursal(session.sucursal_id)
-        tel = sucursal.tel_responsable if sucursal else None
+        # Resuelto en vivo, no sucursal.tel_responsable — ese campo queda
+        # vacío o desactualizado para la mayoría de las sucursales (ver
+        # Bloque 3 del circuito de vuelta y el fix en gestion_revision.py).
+        responsable = resolve_responsable_by_sucursal(session.sucursal_id)
+        tel = responsable.telefono if responsable else None
         if not tel:
-            logger.info(f"No tel_responsable for sucursal {session.sucursal_id} — skipping notice")
+            logger.info(f"No hay responsable resuelto para sucursal {session.sucursal_id} — skipping notice")
             return
 
         cantidad = len(session.desvios)

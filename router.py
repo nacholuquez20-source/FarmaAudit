@@ -32,6 +32,8 @@ from models import (
 
 from supabase_manager import SupabaseManager
 
+from identity import resolve_responsable_by_sucursal
+
 from parser import AuditParser
 
 from audio import AudioTranscriber
@@ -2918,7 +2920,11 @@ EDITAR → Hacer cambios""",
 
                 )
 
-                await meta_client.send_text(sucursal.tel_responsable, msg)
+                # Resuelto en vivo, no sucursal.tel_responsable (foto
+                # congelada, ver Bloque 3 del circuito de vuelta).
+                responsable = resolve_responsable_by_sucursal(sucursal.id)
+                if responsable and responsable.telefono:
+                    await meta_client.send_text(responsable.telefono, msg)
 
 
 
@@ -5180,7 +5186,11 @@ EJEMPLO SI HAY DESVIOS:
 
                     )
 
-                    await meta_client.send_text(sucursal.tel_responsable, msg)
+                    # Resuelto en vivo, no sucursal.tel_responsable (foto
+                    # congelada, ver Bloque 3 del circuito de vuelta).
+                    responsable = resolve_responsable_by_sucursal(sucursal.id)
+                    if responsable and responsable.telefono:
+                        await meta_client.send_text(responsable.telefono, msg)
 
 
 

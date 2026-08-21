@@ -4,6 +4,7 @@ import logging
 from typing import Optional, Dict
 from datetime import datetime, date, timedelta, timezone
 from audit_session import AuditSession, BloqueType, BLOQUE_LABELS, BRAND_LABELS
+from identity import resolve_responsable_by_sucursal
 from models import Reporte, Gestion, Severidad, GestionState
 from supabase_manager import SupabaseManager
 from meta_client import MetaClient
@@ -252,13 +253,18 @@ async def send_manager_notification(
         db = SupabaseManager()
         sucursal = db.get_sucursal(sucursal_id)
 
-        if not sucursal or not sucursal.tel_responsable:
+        # Resuelto en vivo (identity.resolve_responsable_by_sucursal), no
+        # sucursal.tel_responsable — ese campo queda vacío o desactualizado
+        # para la mayoría de las sucursales (ver Bloque 3 del circuito de
+        # vuelta y el fix en gestion_revision.py).
+        responsable = resolve_responsable_by_sucursal(sucursal_id)
+        if not responsable or not responsable.telefono:
             logger.warning(f"No manager phone for sucursal {sucursal_id}")
             return False
 
         message = f"""📋 Auditoría de Perfumería Completada
 
-Sucursal: {sucursal.nombre}
+Sucursal: {sucursal.nombre if sucursal else sucursal_id}
 Auditor: {telefono}
 Fecha: {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M')}
 
@@ -267,7 +273,7 @@ Fecha: {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M')}
 Por favor revisar los detalles en el sistema.
 """
 
-        return await meta_client.send_text(sucursal.tel_responsable, message)
+        return await meta_client.send_text(responsable.telefono, message)
 
     except Exception as e:
         logger.error(f"Error sending manager notification: {e}")
