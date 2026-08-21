@@ -111,9 +111,3 @@ export function getSeverityStyles(severity: string) {
   return DESIGN_TOKENS.colors.severity[key as keyof typeof DESIGN_TOKENS.colors.severity] ||
     DESIGN_TOKENS.colors.severity.baja;
 }
-
-export function getRoleColor(role: string) {
-  const key = role.toLowerCase();
-  return DESIGN_TOKENS.colors.roles[key as keyof typeof DESIGN_TOKENS.colors.roles] ||
-    DESIGN_TOKENS.colors.primary.navy;
-}

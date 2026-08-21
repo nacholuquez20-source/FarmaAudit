@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Button, FeedbackState, Input } from '../index';
+import { Button } from '../Button';
+import { FeedbackState } from '../FeedbackState';
+import { Input } from '../Input';
 import { createMarca, getMarcas, updateMarca } from '../../lib/api';
 import type { Marca } from '../../types';
 

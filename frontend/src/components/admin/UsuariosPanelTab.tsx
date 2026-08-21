@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Button, FeedbackState } from '../index';
+import { Button } from '../Button';
+import { FeedbackState } from '../FeedbackState';
 import { createPanelUser, listPanelProfiles, updatePanelProfile } from '../../lib/api';
 import { MODULE_OPTIONS, normalizeModulePermissions } from '../../lib/permissions';
 import { useSucursales } from '../../hooks/useSucursales';

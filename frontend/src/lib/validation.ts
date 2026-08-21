@@ -25,47 +25,6 @@ export const ResolutionFormSchema = z.object({
     .or(z.literal('')),
 });
 
-export type ResolutionFormData = z.infer<typeof ResolutionFormSchema>;
-
-export const LoginFormSchema = z.object({
-  email: z
-    .string()
-    .email('Por favor ingresa un email válido.')
-    .min(1, 'El email es requerido.'),
-  password: z
-    .string()
-    .min(1, 'La contraseña es requerida.')
-    .min(6, 'La contraseña debe tener al menos 6 caracteres.'),
-});
-
-export type LoginFormData = z.infer<typeof LoginFormSchema>;
-
-export const PasswordResetSchema = z.object({
-  email: z
-    .string()
-    .email('Por favor ingresa un email válido.')
-    .min(1, 'El email es requerido.'),
-});
-
-export type PasswordResetData = z.infer<typeof PasswordResetSchema>;
-
-export const NewPasswordSchema = z
-  .object({
-    password: z
-      .string()
-      .min(6, 'La contraseña debe tener al menos 6 caracteres.')
-      .min(1, 'La contraseña es requerida.'),
-    confirmPassword: z
-      .string()
-      .min(1, 'Confirma tu contraseña.'),
-  })
-  .refine((data) => data.password === data.confirmPassword, {
-    message: 'Las contraseñas no coinciden.',
-    path: ['confirmPassword'],
-  });
-
-export type NewPasswordData = z.infer<typeof NewPasswordSchema>;
-
 export function validateResolutionForm(data: unknown) {
   try {
     return ResolutionFormSchema.parse(data);
@@ -75,14 +34,4 @@ export function validateResolutionForm(data: unknown) {
     }
     return { error: 'Error validando el formulario.' };
   }
-}
-
-export function getValidationError(error: unknown): string | null {
-  if (error instanceof z.ZodError) {
-    return error.issues[0]?.message || 'Validation failed';
-  }
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return null;
 }

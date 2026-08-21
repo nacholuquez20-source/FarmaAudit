@@ -6,7 +6,6 @@ import type {
   SucursalUpdate,
   Reporte,
   Gestion,
-  Auditor,
   AuditFicha,
   ResponsableActivo,
   EstadoContactoSucursal,
@@ -671,38 +670,6 @@ export async function crearNotificacionesDesvio(input: {
   }
 }
 
-export async function getAuditores(): Promise<Auditor[]> {
-  const { data, error } = await supabase
-    .from('auditores')
-    .select('*')
-    .order('nombre');
-  if (error) throw new Error(handleApiError(error));
-  return data || [];
-}
-
-export async function createAuditor(auditor: Auditor): Promise<Auditor> {
-  const { data, error } = await supabase
-    .from('auditores')
-    .insert([auditor])
-    .select()
-    .single();
-
-  if (error) throw new Error(handleApiError(error));
-  return data;
-}
-
-export async function updateAuditor(telefono: string, data: Partial<Auditor>): Promise<Auditor> {
-  const { data: result, error } = await supabase
-    .from('auditores')
-    .update(data)
-    .eq('telefono', telefono)
-    .select()
-    .single();
-
-  if (error) throw new Error(handleApiError(error));
-  return result;
-}
-
 // ============ Identidad de WhatsApp (etapa-21) ============
 
 export async function getTiposAuditoria(): Promise<TipoAuditoria[]> {
@@ -1233,16 +1200,6 @@ export async function createCampaniaAcciones(
   return data || [];
 }
 
-export async function getCampaniaAcciones(campaniaId: string): Promise<CampaniaAccion[]> {
-  const { data, error } = await supabase
-    .from('campania_acciones')
-    .select('*')
-    .eq('campania_id', campaniaId)
-    .order('created_at');
-  if (error) throw new Error(handleApiError(error));
-  return data || [];
-}
-
 export async function activarCampania(campaniaId: string, sucursalIds: string[]): Promise<{ status: string; tareas_creadas: number }> {
   const apiUrl = getBotApiUrl();
   if (!apiUrl) {
@@ -1290,16 +1247,6 @@ export async function updateCampaniaTarea(tareaId: string, patch: Partial<Pick<C
     .single();
   if (error) throw new Error(handleApiError(error));
   return data;
-}
-
-export async function getCampaniaEventos(tareaId: string): Promise<CampaniaEvento[]> {
-  const { data, error } = await supabase
-    .from('campania_eventos')
-    .select('*')
-    .eq('tarea_id', tareaId)
-    .order('created_at');
-  if (error) throw new Error(handleApiError(error));
-  return data || [];
 }
 
 export async function createCampaniaEvento(input: {

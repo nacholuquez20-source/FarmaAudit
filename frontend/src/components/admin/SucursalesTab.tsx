@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { Button, ConfirmDialog, FeedbackState, Input } from '../index';
+import { Button } from '../Button';
+import { ConfirmDialog } from '../ConfirmDialog';
+import { FeedbackState } from '../FeedbackState';
+import { Input } from '../Input';
 import { createSucursal, setSucursalActiva } from '../../lib/api';
 import { useSucursales } from '../../hooks/useSucursales';
 import type { Sucursal, SucursalCreate } from '../../types';

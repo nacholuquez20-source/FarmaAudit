@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { Button } from '../index';
+import { Button } from '../Button';
 import { runInformesRespuesta } from '../../lib/api';
 
 export function SistemaTab() {

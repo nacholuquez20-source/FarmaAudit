@@ -24,10 +24,3 @@ export const supabase = createClient(supabaseUrl || '', supabaseKey || '', {
     lock: processLock,
   },
 });
-
-// Expose config status for debugging
-export const supabaseConfig = {
-  url: supabaseUrl,
-  hasUrl: !!supabaseUrl,
-  hasKey: !!supabaseKey,
-};

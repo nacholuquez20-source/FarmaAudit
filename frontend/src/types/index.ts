@@ -153,19 +153,6 @@ export interface GestionUpdate {
   fecha_cierre?: string;
 }
 
-export interface Desvio extends Gestion {
-  area: string;
-}
-
-export interface DesvioFilters {
-  sucursal: string;
-  severidad: '' | Severidad;
-  estado: '' | GestionState;
-  fechaDesde: string;
-  fechaHasta: string;
-  search: string;
-}
-
 export interface DesvioEvento {
   id: string;
   id_gestion: string;
@@ -244,13 +231,6 @@ export interface Notificacion {
   tipo: NotificacionTipo;
   leida: boolean;
   created_at: string;
-}
-
-export interface Auditor {
-  telefono: string;
-  nombre: string;
-  cuadrilla: string;
-  activo: boolean;
 }
 
 // Ficha PDF de una auditoria WhatsApp v2 (perfumeria). Los score_* no tienen

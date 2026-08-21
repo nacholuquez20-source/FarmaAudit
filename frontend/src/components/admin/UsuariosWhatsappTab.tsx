@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Button, FeedbackState, Input, Select } from '../index';
+import { Button } from '../Button';
+import { FeedbackState } from '../FeedbackState';
+import { Input } from '../Input';
+import { Select } from '../Select';
 import {
   createUsuarioWhatsapp,
   getTiposAuditoria,
