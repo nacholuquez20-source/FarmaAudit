@@ -202,8 +202,11 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
             </div>
           </div>
 
-          {/* Nav (mobile) */}
-          <nav className="-mx-1 flex items-center gap-1 overflow-x-auto pb-2 md:hidden">
+          {/* Nav (mobile) — wrap en vez de scroll horizontal: con 4 items por
+              rol como mucho, envolver a una segunda linea es mas robusto que
+              un overflow-x-auto sin ninguna pista visual de que se puede
+              deslizar (el ultimo item quedaba "cortado" sin aviso). */}
+          <nav className="-mx-1 flex flex-wrap items-center gap-1 pb-2 md:hidden">
             {navItems.map((item) => (
               <NavLink key={item.to} to={item.to} className={navLinkClasses}>
                 <item.icon className="h-4 w-4" />
