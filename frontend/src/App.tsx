@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { FeedbackState } from './components/FeedbackState';
 import { useAuth } from './hooks/useAuth';
 import { firstAllowedPath, hasModuleAccess } from './lib/permissions';
+import { RedirectAuditoriasToSucursales } from './lib/legacyRedirects';
 import type { ModulePermission, Role } from './types';
 
 const Login = lazy(() => import('./pages/Login'));
@@ -12,10 +13,9 @@ const Hoy = lazy(() => import('./pages/Hoy'));
 const DesvioDetail = lazy(() => import('./pages/DesvioDetail'));
 const Desvios = lazy(() => import('./pages/Desvios'));
 const MisDesvios = lazy(() => import('./pages/MisDesvios'));
-const SucursalesDashboard = lazy(() => import('./pages/SucursalesDashboard'));
+const SucursalesModule = lazy(() => import('./pages/SucursalesModule'));
 const SucursalDetail = lazy(() => import('./pages/SucursalDetail'));
 const AuditFichaDetail = lazy(() => import('./pages/AuditFichaDetail'));
-const AuditFichesGallery = lazy(() => import('./pages/AuditFichesGallery'));
 const Admin = lazy(() => import('./pages/Admin'));
 const Campanias = lazy(() => import('./pages/Campanias'));
 const CampaniaWizard = lazy(() => import('./pages/CampaniaWizard'));
@@ -222,7 +222,7 @@ export default function App() {
             path="/sucursales"
             element={
               <ProtectedRoute module="sucursales">
-                <SucursalesDashboard />
+                <SucursalesModule />
               </ProtectedRoute>
             }
           />
@@ -248,14 +248,8 @@ export default function App() {
             }
           />
 
-          <Route
-            path="/auditorias"
-            element={
-              <ProtectedRoute allowRoles={['admin', 'auditor']}>
-                <AuditFichesGallery />
-              </ProtectedRoute>
-            }
-          />
+          {/* Legacy: la galería de fichas se fusionó dentro de "Sucursales" (Fase 2). */}
+          <Route path="/auditorias" element={<RedirectAuditoriasToSucursales />} />
 
           <Route
             path="/campanias"

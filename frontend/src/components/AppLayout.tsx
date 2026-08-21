@@ -4,7 +4,6 @@ import { Toaster } from 'sonner';
 import {
   AlertTriangle,
   Bell,
-  CalendarDays,
   ClipboardCheck,
   Home,
   LogOut,
@@ -57,11 +56,8 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
   const navItems: NavItem[] = [];
   if (role === 'admin') {
     navItems.push({ to: '/hoy', label: 'Hoy', icon: Sun });
-    if (hasModuleAccess(profile, 'dashboard'))
-      navItems.push({ to: '/dashboard', label: 'Panel general', icon: Home });
     if (hasModuleAccess(profile, 'gestion_desvios') || hasModuleAccess(profile, 'revision_desvios'))
       navItems.push({ to: '/desvios', label: 'Desvios', icon: ClipboardCheck });
-    navItems.push({ to: '/auditorias', label: 'Auditorias', icon: CalendarDays });
     if (hasModuleAccess(profile, 'campanias'))
       navItems.push({ to: '/campanias', label: 'Campanias', icon: Megaphone });
     if (hasModuleAccess(profile, 'sucursales'))
@@ -71,7 +67,6 @@ export function AppLayout({ children, title, showAdmin = true, contentClassName 
     navItems.push({ to: '/hoy', label: 'Hoy', icon: Sun });
     if (hasModuleAccess(profile, 'gestion_desvios') || hasModuleAccess(profile, 'revision_desvios'))
       navItems.push({ to: '/desvios', label: 'Desvios', icon: ClipboardCheck });
-    navItems.push({ to: '/auditorias', label: 'Auditorias', icon: CalendarDays });
     if (hasModuleAccess(profile, 'campanias'))
       navItems.push({ to: '/campanias', label: 'Campanias', icon: Megaphone });
     if (hasModuleAccess(profile, 'sucursales'))

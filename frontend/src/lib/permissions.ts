@@ -45,7 +45,10 @@ export function firstAllowedPath(profile: UserProfile | null): string {
   // El auditor arranca en el Panel "Hoy" (su centro de trabajo diario).
   if (profile.role === 'auditor') return '/hoy';
   const modules = normalizeModulePermissions(profile.role, profile.permisos_modulos);
-  if (modules.includes('dashboard')) return '/dashboard';
+  // El admin ya no tiene "Panel general" en el nav (absorbido por
+  // "Sucursales" -> pestaña Analítica); evita un salto doble vía el
+  // redirect de admin->/sucursales dentro de Dashboard().
+  if (modules.includes('dashboard')) return profile.role === 'admin' ? '/sucursales' : '/dashboard';
   if (modules.includes('gestion_desvios')) return '/desvios';
   if (modules.includes('revision_desvios')) return '/desvios';
   if (modules.includes('mis_desvios')) return '/mis-desvios';

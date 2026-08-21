@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, Brain, Calendar, Camera, CheckCircle2, Download, FileText, FilterX, Loader2, TrendingDown, TrendingUp, X } from 'lucide-react';
-import { AppLayout } from '../components/AppLayout';
 import { Button } from '../components/Button';
 import { FeedbackState } from '../components/FeedbackState';
 import { Input } from '../components/Input';
@@ -77,7 +76,9 @@ function dayLabel(key: string): string {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
-export default function AuditFichesGallery() {
+// Galería de fichas de perfumería — sin <AppLayout> propio, se monta dentro
+// de la pestaña "Fichas" de /sucursales (ver SucursalesModule.tsx).
+export function AuditFichesGalleryPanel() {
   const [searchParams] = useSearchParams();
 
   const [fichas, setFichas] = useState<Ficha[]>([]);
@@ -244,7 +245,7 @@ export default function AuditFichesGallery() {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
-    <AppLayout title="Auditorías">
+    <>
       {/* Filtros */}
       <div className="mb-6 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
@@ -630,6 +631,6 @@ export default function AuditFichesGallery() {
           </div>
         </div>
       )}
-    </AppLayout>
+    </>
   );
 }

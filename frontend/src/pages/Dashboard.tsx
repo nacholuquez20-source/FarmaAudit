@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { CalendarDays, ClipboardCheck } from 'lucide-react';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
@@ -110,7 +110,11 @@ function formatTime(date: Date | null): string {
 
 const ZONES_PER_PAGE = 10;
 
-export default function Dashboard() {
+// Contenido de la analítica de calidad — se usa en dos lugares: el propio
+// /dashboard (rol sucursal) y la pestaña "Analítica" de /sucursales (rol
+// admin/auditor, ver SucursalesModule.tsx). Sin <AppLayout> propio: cada
+// caller decide el envoltorio.
+export function DashboardPanel() {
   const [refreshSeconds, setRefreshSeconds] = useState(0);
   const [vista, setVista] = useState<DashboardView>('general');
   const [zonePageIndex, setZonePageIndex] = useState(0);
@@ -120,7 +124,7 @@ export default function Dashboard() {
     refreshSeconds * 1000,
     scopedSucursal,
   );
-  const mostrarVistaZona = role === 'admin';
+  const mostrarVistaZona = role === 'admin' || role === 'auditor';
   const auditKpis = useAuditKPIs(scopedSucursal);
 
   const gestionStateData = stats
@@ -141,29 +145,21 @@ export default function Dashboard() {
     : [];
 
   if (loading) {
-    return (
-      <AppLayout title={role === 'sucursal' ? 'Resumen' : 'Dashboard'}>
-        <FeedbackState title="Cargando supervision..." tone="loading" />
-      </AppLayout>
-    );
+    return <FeedbackState title="Cargando supervision..." tone="loading" />;
   }
 
   if (role === 'sucursal' && !scopedSucursal) {
     return (
-      <AppLayout title="Resumen">
-        <FeedbackState
-          title="No hay sucursal asignada a tu usuario."
-          description="Pedí al administrador que cargue tu sucursal y rol Responsable en la sección Administración."
-          tone="error"
-        />
-      </AppLayout>
+      <FeedbackState
+        title="No hay sucursal asignada a tu usuario."
+        description="Pedí al administrador que cargue tu sucursal y rol Responsable en la sección Administración."
+        tone="error"
+      />
     );
   }
 
-  const layoutTitle = role === 'sucursal' ? 'Resumen de mi sucursal' : 'Dashboard de calidad';
-
   return (
-    <AppLayout title={layoutTitle}>
+    <>
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-sm text-gray-600">Ultima actualizacion: {formatTime(lastUpdated)}</p>
@@ -487,14 +483,14 @@ export default function Dashboard() {
             </ResponsiveContainer>
           </section>
 
-          {auditKpis && (
+          {auditKpis && role !== 'sucursal' && (
             <section className="mt-8 rounded-lg bg-white p-6 shadow">
               <div className="mb-4 flex items-center justify-between">
                 <h2 className="flex items-center gap-2 text-lg font-semibold">
                   <CalendarDays className="h-5 w-5 text-primary-navy" />
                   Auditorías de Perfumería
                 </h2>
-                <Link to="/auditorias" className="text-sm font-medium text-blue-600 hover:text-blue-800">
+                <Link to="/sucursales?tab=fichas" className="text-sm font-medium text-blue-600 hover:text-blue-800">
                   Ver todas →
                 </Link>
               </div>
@@ -566,6 +562,21 @@ export default function Dashboard() {
           )}
         </>
       )}
+    </>
+  );
+}
+
+// Wrapper de página completa — hoy solo lo usa la ruta /dashboard, que a su
+// vez solo es alcanzable para el rol sucursal (el admin fue absorbido por
+// /sucursales, ver App.tsx). El redirect es por si queda algun bookmark
+// viejo apuntando a /dashboard como admin.
+export default function Dashboard() {
+  const { role } = useAuth();
+  if (role === 'admin') return <Navigate to="/sucursales" replace />;
+
+  return (
+    <AppLayout title={role === 'sucursal' ? 'Resumen de mi sucursal' : 'Dashboard de calidad'}>
+      <DashboardPanel />
     </AppLayout>
   );
 }
