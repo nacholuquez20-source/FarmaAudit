@@ -4,16 +4,22 @@ import { supabase } from '../lib/supabase';
 import type { EstadoContactoSucursal, SucursalDashboard } from '../types';
 
 /**
- * Centraliza en un solo Promise.all lo que antes pedían por separado Hoy.tsx
- * (getSucursalesDashboard + conteo En_revision) y SucursalesDashboard.tsx
- * (getEstadoContactoSucursales) — ambos ahora conviven dentro del módulo
- * "Hoy" (buckets de prioridad + grid filtrable) y compartían exactamente los
- * mismos datos pedidos con fetches independientes, con el riesgo real de
- * mostrar snapshots distintos por carreras de red separadas.
+ * Centraliza lo que antes pedían por separado Hoy.tsx (getSucursalesDashboard
+ * + conteo En_revision) y SucursalesDashboard.tsx (getEstadoContactoSucursales)
+ * — ambos ahora conviven dentro del módulo "Hoy" (buckets de prioridad + grid
+ * filtrable) y pedían exactamente los mismos datos con fetches
+ * independientes, con el riesgo real de mostrar snapshots distintos por
+ * carreras de red separadas.
+ *
+ * El contacto se pide aparte de sucursales/en_revision (no en el mismo
+ * Promise.all) a propósito: es un dato secundario (admin/auditor-only, RLS
+ * en el backend) y un fallo ahí no debe tapar ni buckets ni grid, que
+ * siguen siendo útiles sin él — mismo criterio de resiliencia que ya usaba
+ * SucursalesDashboard.tsx.
  *
  * `cargarContacto` existe porque el estado de contacto es admin/auditor-only
- * (usuarios_whatsapp es RLS admin-only en el backend) — quien monte este
- * hook para un rol sin ese acceso debe pasar `false` para no pedirlo.
+ * — quien monte este hook para un rol sin ese acceso debe pasar `false`
+ * para no pedirlo.
  */
 export function useSucursalesPrioridad(cargarContacto: boolean) {
   const [rows, setRows] = useState<SucursalDashboard[]>([]);
@@ -41,9 +47,8 @@ export function useSucursalesPrioridad(cargarContacto: boolean) {
     Promise.all([
       getSucursalesDashboard(),
       supabase.from('gestion').select('id_sucursal').eq('estado', 'En_revision'),
-      cargarContacto ? getEstadoContactoSucursales() : Promise.resolve(null),
     ])
-      .then(([dashboard, revisionRes, contactoRows]) => {
+      .then(([dashboard, revisionRes]) => {
         if (!active) return;
         setRows(dashboard);
 
@@ -53,18 +58,35 @@ export function useSucursalesPrioridad(cargarContacto: boolean) {
           map.set(key, (map.get(key) ?? 0) + 1);
         }
         setEnRevision(map);
-
-        if (contactoRows) {
-          setContacto(Object.fromEntries(contactoRows.map((r) => [r.id_sucursal, r])));
-        }
       })
       .catch((err) => {
         if (active) setError(err instanceof Error ? err.message : 'No se pudo cargar el panel.');
       })
       .finally(() => {
-        if (!active) return;
-        setLoading(false);
-        if (cargarContacto) setContactoLoaded(true);
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // El estado de contacto es admin/auditor-only (RLS en el backend) y se
+  // pide en paralelo, no encadenado al fetch de arriba: un fallo acá
+  // (backend caído, ventana lenta) no debe tapar buckets ni grid.
+  useEffect(() => {
+    let active = true;
+    if (!cargarContacto) return;
+
+    getEstadoContactoSucursales()
+      .then((r) => {
+        if (active) setContacto(Object.fromEntries(r.map((x) => [x.id_sucursal, x])));
+      })
+      .catch(() => {
+        if (active) setContacto({});
+      })
+      .finally(() => {
+        if (active) setContactoLoaded(true);
       });
 
     return () => {
