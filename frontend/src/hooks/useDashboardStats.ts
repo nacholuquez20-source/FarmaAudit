@@ -21,7 +21,7 @@ export function useDashboardStats(refreshMs = 0, sucursalId?: string | null) {
       setStats(data);
       setLastUpdated(new Date());
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load dashboard stats');
+      setError(err instanceof Error ? err.message : 'No se pudieron cargar los datos del dashboard.');
     } finally {
       setLoading(false);
       setRefreshing(false);

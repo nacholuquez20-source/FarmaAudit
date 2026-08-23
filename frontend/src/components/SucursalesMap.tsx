@@ -6,26 +6,16 @@ import 'leaflet/dist/leaflet.css';
 import { AlertTriangle, MapPin } from 'lucide-react';
 import { FeedbackState } from './FeedbackState';
 import { getSucursalesDashboard } from '../lib/api';
+import { SALUD_HEX, SALUD_META } from '../lib/salud';
 import type { EstadoSalud, SucursalDashboard } from '../types';
 
 const DEFAULT_CENTER: [number, number] = [-34.6037, -58.3816];
 const DEFAULT_ZOOM = 11;
 
-// Misma paleta que SucursalesGrid.tsx (SALUD_META) — el color de salud se
-// comunica igual en todo el panel, del grid semaforo al mapa.
-const SALUD_COLOR: Record<EstadoSalud, string> = {
-  critica: '#ef4444',
-  atencion: '#f59e0b',
-  ok: '#22c55e',
-  sin_datos: '#9ca3af',
-};
-
-const SALUD_LABEL: Record<EstadoSalud, string> = {
-  critica: 'Crítica',
-  atencion: 'Atención',
-  ok: 'Al día',
-  sin_datos: 'Sin datos',
-};
+// Misma fuente de color/label que el resto del panel (lib/salud.ts) — el
+// mapa no puede usar clases de Tailwind acá porque el marker de Leaflet se
+// arma como HTML crudo, por eso usa SALUD_HEX en vez de SALUD_META directo.
+const SALUD_COLOR = SALUD_HEX;
 
 function makeIcon(color: string): L.DivIcon {
   return L.divIcon({
@@ -181,7 +171,7 @@ export function SucursalesMap() {
                         className="rounded-full px-2 py-0.5 text-xs font-semibold text-white"
                         style={{ backgroundColor: SALUD_COLOR[s.estado_salud] }}
                       >
-                        {SALUD_LABEL[s.estado_salud]}
+                        {SALUD_META[s.estado_salud].label}
                       </span>
                     </div>
                     <p className="mb-2 text-xs text-gray-500">{s.zona || 'Sin zona'}</p>

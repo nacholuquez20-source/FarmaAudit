@@ -1050,6 +1050,50 @@ class SupabaseManager:
             logger.error(f"Failed to get ultimo recordatorio for sucursal {id_sucursal}: {e}")
             return None
 
+    def get_historial_recordatorios(self, id_sucursal: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Últimos N intentos de recordatorio (cualquier resultado, no solo
+        'enviado') para la línea de tiempo de la ficha de sucursal — a
+        diferencia de get_ultimo_recordatorio_enviado, que solo mira los
+        exitosos porque existe para calcular el cooldown del botón manual."""
+        try:
+            response = (
+                self.client.table("recordatorios_sucursal")
+                .select("enviado_at, canal, resultado, detalle, cantidad_desvios")
+                .eq("id_sucursal", id_sucursal)
+                .order("enviado_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+            return response.data or []
+        except Exception as e:
+            logger.error(f"Failed to get historial recordatorios for {id_sucursal}: {e}")
+            return []
+
+    def get_informes_respuesta(self, id_sucursal: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Informes PDF de respuestas del encargado ya generados para esta
+        sucursal (Storage bucket desvio-evidencias, prefijo informes/), con
+        signed URL lista para abrir. Hoy se generan (informes_respuesta.py)
+        pero no hay ningún listado en el panel web."""
+        try:
+            files = self.client.storage.from_("desvio-evidencias").list(f"informes/{id_sucursal}")
+        except Exception as e:
+            logger.error(f"Failed to list informes for {id_sucursal}: {e}")
+            return []
+
+        files = sorted(files or [], key=lambda f: f.get("created_at") or "", reverse=True)[:limit]
+        result = []
+        for f in files:
+            name = f.get("name")
+            if not name:
+                continue
+            path = f"informes/{id_sucursal}/{name}"
+            result.append({
+                "path": path,
+                "created_at": f.get("created_at"),
+                "url": self.create_signed_informe_url(path),
+            })
+        return result
+
     def update_gestion_fields(self, id_gestion: str, fields: Dict[str, Any]) -> bool:
         """Update arbitrary fields of a gestion record."""
         try:

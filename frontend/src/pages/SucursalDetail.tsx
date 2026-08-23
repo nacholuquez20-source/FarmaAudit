@@ -15,14 +15,19 @@ import {
   Star,
 } from 'lucide-react';
 import { AppLayout } from '../components/AppLayout';
+import { AsistenteSucursal } from '../components/AsistenteSucursal';
+import { Breadcrumbs } from '../components/Breadcrumbs';
 import { FeedbackState } from '../components/FeedbackState';
 import { ReminderButton } from '../components/ReminderButton';
+import { SaludLegend } from '../components/SaludLegend';
+import { SucursalResumenIntegral } from '../components/SucursalResumenIntegral';
 import { useAuth } from '../hooks/useAuth';
 import { useControlStock } from '../hooks/useControlStock';
 import { useGestion } from '../hooks/useGestion';
 import { useReportes } from '../hooks/useReportes';
 import { getEstadoContactoSucursales, getFichaPdfUrl, getSucursal } from '../lib/api';
 import { supabase } from '../lib/supabase';
+import { SALUD_META } from '../lib/salud';
 import {
   diasDesde,
   esMesActual,
@@ -36,13 +41,6 @@ import {
 import type { AuditFicha, EstadoContactoSucursal, EstadoSalud, Gestion, Sucursal } from '../types';
 
 type AuditFiche = AuditFicha;
-
-const SALUD_META: Record<EstadoSalud, { dot: string; pill: string; label: string }> = {
-  critica: { dot: 'bg-red-500', pill: 'bg-red-50 text-red-700', label: 'Crítica' },
-  atencion: { dot: 'bg-amber-500', pill: 'bg-amber-50 text-amber-700', label: 'Atención' },
-  ok: { dot: 'bg-green-500', pill: 'bg-green-50 text-green-700', label: 'Al día' },
-  sin_datos: { dot: 'bg-gray-300', pill: 'bg-gray-100 text-gray-600', label: 'Sin datos' },
-};
 
 // Mismo criterio que la vista sucursales_dashboard (4 estados). "sin_datos"
 // (nunca auditada y sin desvíos pendientes) se distingue de una crítica real.
@@ -74,6 +72,7 @@ export default function SucursalDetail() {
   const [fichasLoading, setFichasLoading] = useState(true);
   const [showHallazgos, setShowHallazgos] = useState(false);
   const [showStock, setShowStock] = useState(false);
+  const [showResumenIntegral, setShowResumenIntegral] = useState(false);
   const [showOrfanas, setShowOrfanas] = useState(false);
   // undefined = todavia no se intento cargar (ReminderButton muestra
   // "Cargando..."); null = ya se intento y no hay dato (falla la llamada o
@@ -225,14 +224,13 @@ export default function SucursalDetail() {
 
   return (
     <AppLayout title={sucursal.nombre}>
-      <div className="mb-4">
-        <button
-          onClick={() => navigate('/sucursales')}
-          className="text-sm font-medium text-blue-600 hover:text-blue-800"
-        >
-          ← Volver a Sucursales
-        </button>
-      </div>
+      <Breadcrumbs
+        items={[
+          { label: 'Sucursales', to: '/sucursales' },
+          { label: sucursal.zona || 'Sin zona' },
+          { label: sucursal.nombre },
+        ]}
+      />
 
       {error && <div className="mb-4"><FeedbackState title={error} tone="error" /></div>}
 
@@ -242,7 +240,8 @@ export default function SucursalDetail() {
           <div>
             <div className="flex items-center gap-2">
               <span className={`h-3 w-3 rounded-full ${salud.dot}`} />
-              <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${salud.pill}`}>
+              <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-bold ${salud.pill}`}>
+                <salud.icon className="h-3 w-3" />
                 {salud.label}
               </span>
               <span className="text-sm text-gray-500">{sucursal.zona || 'Sin zona'}</span>
@@ -252,6 +251,7 @@ export default function SucursalDetail() {
                   Perfumería
                 </span>
               )}
+              <SaludLegend />
             </div>
             <p className="mt-2 text-sm text-gray-600">
               👤 {sucursal.responsable || 'Sin encargado'}
@@ -374,6 +374,11 @@ export default function SucursalDetail() {
             ));
           })()}
         </div>
+        {canAudit && (
+          <div className="mt-2">
+            <AsistenteSucursal idSucursal={sucursal.id} />
+          </div>
+        )}
       </div>
 
       {/* Acceso a la última ficha + datos secundarios (hallazgos, stock) */}
@@ -402,12 +407,32 @@ export default function SucursalDetail() {
         >
           {showStock ? 'Ocultar' : 'Ver'} stock ({stockItems.length})
         </button>
+        {canAudit && (
+          <button
+            type="button"
+            onClick={() => setShowResumenIntegral((v) => !v)}
+            className="font-medium text-gray-500 underline decoration-dotted hover:text-gray-700"
+          >
+            {showResumenIntegral ? 'Ocultar' : 'Ver'} más de esta sucursal
+          </button>
+        )}
       </div>
+
+      {showResumenIntegral && (
+        <div className="mb-6">
+          <SucursalResumenIntegral idSucursal={sucursal.id} />
+        </div>
+      )}
 
       {showHallazgos && (
         <div className="mb-6 overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
           {reportes.length === 0 ? (
-            <div className="p-4"><FeedbackState title="Sin hallazgos registrados" /></div>
+            <div className="p-4">
+              <FeedbackState
+                title="Sin hallazgos registrados"
+                description="Los hallazgos que se cargan por WhatsApp fuera de una auditoría de perfumería aparecerán acá."
+              />
+            </div>
           ) : (
             <table className="w-full">
               <thead className="border-b bg-gray-100">
@@ -442,7 +467,12 @@ export default function SucursalDetail() {
       {showStock && (
         <div className="mb-6 overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
           {stockItems.length === 0 ? (
-            <div className="p-4"><FeedbackState title="Sin controles de stock registrados" /></div>
+            <div className="p-4">
+              <FeedbackState
+                title="Sin controles de stock registrados"
+                description="Los controles de stock cargados por WhatsApp aparecerán acá."
+              />
+            </div>
           ) : (
             <table className="w-full">
               <thead className="border-b bg-gray-100">
@@ -483,7 +513,7 @@ export default function SucursalDetail() {
           <h2 className="text-sm font-semibold text-gray-800">Historial de auditorías</h2>
           <button
             type="button"
-            onClick={() => navigate(`/auditorias?sucursal_id=${id}`)}
+            onClick={() => navigate(`/sucursales?tab=fichas&sucursal_id=${id}`)}
             className="inline-flex items-center gap-1.5 text-xs font-medium text-primary-navy hover:text-primary-navy/80"
           >
             <ExternalLink className="h-3.5 w-3.5" />

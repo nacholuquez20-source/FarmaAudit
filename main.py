@@ -694,6 +694,58 @@ async def post_recordatorio_sucursal(id_sucursal: str, request: Request):
     return resultado
 
 
+@app.get("/api/sucursales/{id_sucursal}/resumen-integral")
+async def get_resumen_integral_sucursal(id_sucursal: str, request: Request):
+    """Todo lo que el backend ya sabe de una sucursal y hoy vive repartido
+    entre el bot y el PDF del dueño, sin ningún lugar en el panel web que lo
+    junte: campañas pendientes, historial de recordatorios, desglose de
+    desvíos por bloque x severidad, e informes de respuesta ya generados.
+    Ninguno de estos datos es nuevo — este endpoint solo los expone."""
+    await _require_admin_or_auditor(request)
+    try:
+        db = SupabaseManager()
+        campanias = db.get_campania_tareas_pendientes_sucursal(id_sucursal)
+        recordatorios = db.get_historial_recordatorios(id_sucursal)
+        informes = db.get_informes_respuesta(id_sucursal)
+
+        resumen = db.get_resumen_sucursales()
+        categorias = next((r.get("categorias", {}) for r in resumen if r.get("id") == id_sucursal), {})
+
+        return {
+            "campanias_pendientes": campanias,
+            "recordatorios": recordatorios,
+            "informes_respuesta": informes,
+            "categorias": categorias,
+        }
+    except Exception as e:
+        logger.error(f"Error building resumen integral for {id_sucursal}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error al cargar el resumen de la sucursal")
+
+
+@app.post("/api/sucursales/{id_sucursal}/asistente")
+async def explicar_sucursal(id_sucursal: str, request: Request):
+    """Asistente contextual por sucursal: explica en lenguaje simple el
+    estado de la sucursal y sugiere próximas acciones, usando solo los datos
+    que ya se muestran en su ficha (SucursalDetail). Sin chat libre, sin
+    memoria entre sesiones, sin poder ejecutar acciones — solo explica y
+    sugiere. Cacheado 24h por sucursal (ver SucursalAssistant) para no
+    repagar el call de Claude en cada render."""
+    await _require_admin_or_auditor(request)
+    try:
+        from sucursal_assistant import SucursalAssistant
+        result = await SucursalAssistant().explicar(id_sucursal)
+        if "error" in result:
+            if result["error"] == "sucursal_no_encontrada":
+                raise HTTPException(status_code=404, detail="Sucursal no encontrada")
+            raise HTTPException(status_code=502, detail="No se pudo generar la explicación")
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error running sucursal assistant for {id_sucursal}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error al ejecutar el asistente")
+
+
 @app.post("/api/gestion/{id_gestion}/revision")
 async def revisar_gestion(id_gestion: str, payload: GestionRevisionRequest, request: Request):
     """Approve/reject a branch manager's correction, or flag/unblock a deviation that

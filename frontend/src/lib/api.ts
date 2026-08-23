@@ -41,6 +41,8 @@ import type {
   SolicitudInsumoProveedor,
   SolicitudInsumoTipo,
   CampaniaResultado,
+  ResumenIntegralSucursal,
+  ExplicacionSucursal,
 } from '../types';
 
 const VALID_STORAGE_BUCKETS = ['auditoria-respuestas', 'desvio-evidencias'] as const;
@@ -325,6 +327,35 @@ export async function postRecordatorioSucursal(idSucursal: string): Promise<Reco
     throw new Error('No se pudo enviar el recordatorio.');
   }
   return body;
+}
+
+export async function getExplicacionSucursal(idSucursal: string): Promise<ExplicacionSucursal> {
+  const apiUrl = getBotApiUrl();
+  if (!apiUrl) {
+    throw new Error('Falta configurar VITE_API_URL con la URL del bot.');
+  }
+  const response = await fetch(`${apiUrl}/api/sucursales/${idSucursal}/asistente`, {
+    method: 'POST',
+    headers: await getAuthHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error('No se pudo generar la explicación.');
+  }
+  return response.json();
+}
+
+export async function getResumenIntegralSucursal(idSucursal: string): Promise<ResumenIntegralSucursal> {
+  const apiUrl = getBotApiUrl();
+  if (!apiUrl) {
+    throw new Error('Falta configurar VITE_API_URL con la URL del bot.');
+  }
+  const response = await fetch(`${apiUrl}/api/sucursales/${idSucursal}/resumen-integral`, {
+    headers: await getAuthHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error('No se pudo cargar el resumen integral de la sucursal.');
+  }
+  return response.json();
 }
 
 export async function getResponsableActivo(idGestion: string): Promise<ResponsableActivo> {
@@ -897,17 +928,6 @@ function computeBranchScore(row: {
   return Math.max(0, Math.round(score));
 }
 
-function resolveSemaforo(row: {
-  vencidos: number;
-  criticos_activos: number;
-  abiertos: number;
-  altas: number;
-}): 'verde' | 'amarillo' | 'rojo' {
-  if (row.vencidos > 0 || row.criticos_activos > 0) return 'rojo';
-  if (row.abiertos > 0 || row.altas > 0) return 'amarillo';
-  return 'verde';
-}
-
 export async function getDashboardStats(sucursalId?: string | null): Promise<DashboardStats> {
   try {
     let reportesQuery = supabase.from('reportes').select('*');
@@ -990,14 +1010,10 @@ export async function getDashboardStats(sucursalId?: string | null): Promise<Das
     });
 
     const sucursales_estado = Array.from(sucursalesMap.values())
-      .map((sucursal) => {
-        const puntaje = computeBranchScore(sucursal);
-        return {
-          ...sucursal,
-          puntaje,
-          semaforo: resolveSemaforo(sucursal),
-        };
-      })
+      .map((sucursal) => ({
+        ...sucursal,
+        puntaje: computeBranchScore(sucursal),
+      }))
       .sort(
         (a, b) =>
           b.vencidos - a.vencidos ||

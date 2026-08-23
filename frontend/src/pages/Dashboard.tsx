@@ -4,11 +4,14 @@ import { CalendarDays, ClipboardCheck } from 'lucide-react';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { KPICard } from '../components/KPICard';
+import { SaludLegend } from '../components/SaludLegend';
 import { SucursalesMap } from '../components/SucursalesMap';
 import { useDashboardStats } from '../hooks/useDashboardStats';
 import { useAuth } from '../hooks/useAuth';
+import { getSucursalesDashboard } from '../lib/api';
 import { supabase } from '../lib/supabase';
-import type { DashboardView, SucursalSupervision } from '../types';
+import { SALUD_META } from '../lib/salud';
+import type { DashboardView, EstadoSalud } from '../types';
 
 interface AuditKPIs {
   hoy: number;
@@ -92,16 +95,32 @@ import {
 
 const COLORS = ['#2563eb', '#059669', '#f59e0b', '#dc2626', '#7c3aed'];
 
-function getSemaforoStyles(semaforo: SucursalSupervision['semaforo']): string {
-  if (semaforo === 'rojo') return 'bg-red-100 text-red-800 border-red-200';
-  if (semaforo === 'amarillo') return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-  return 'bg-green-100 text-green-800 border-green-200';
-}
+// Único lugar de la app que todavía necesitaba mapear id_sucursal -> salud
+// por fuera de sucursales_dashboard: la tabla de abajo agrupa por gestión
+// (useDashboardStats, cliente) pero el COLOR tiene que salir de la misma
+// fuente que el resto del panel (grid, mapa, ficha), nunca recalculado acá
+// — antes este archivo tenía su propio "semáforo" Rojo/Amarillo/Verde
+// calculado a mano, que podía mostrar un color distinto al de /hoy para la
+// misma sucursal el mismo día.
+function useEstadoSaludPorSucursal() {
+  const [mapa, setMapa] = useState<Map<string, EstadoSalud>>(new Map());
 
-function getSemaforoLabel(semaforo: SucursalSupervision['semaforo']): string {
-  if (semaforo === 'rojo') return 'Rojo';
-  if (semaforo === 'amarillo') return 'Amarillo';
-  return 'Verde';
+  useEffect(() => {
+    let cancelled = false;
+    getSucursalesDashboard()
+      .then((rows) => {
+        if (cancelled) return;
+        setMapa(new Map(rows.map((r) => [r.id, r.estado_salud])));
+      })
+      .catch(() => {
+        // No crítico: si falla, la columna "Estado" degrada a "Sin datos".
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return mapa;
 }
 
 function formatTime(date: Date | null): string {
@@ -127,6 +146,7 @@ export function DashboardPanel() {
   );
   const mostrarVistaZona = role === 'admin' || role === 'auditor';
   const auditKpis = useAuditKPIs(scopedSucursal);
+  const estadoSaludPorSucursal = useEstadoSaludPorSucursal();
 
   const gestionStateData = stats
     ? [
@@ -263,7 +283,10 @@ export function DashboardPanel() {
               <section className="rounded-lg bg-white p-6 shadow">
                 <h2 className="mb-4 text-lg font-semibold">Desempeño por zona</h2>
                 {stats.por_zona.length === 0 ? (
-                  <FeedbackState title="Sin datos por zona." />
+                  <FeedbackState
+                    title="Sin datos por zona."
+                    description="Las sucursales necesitan tener 'Zona' cargada en Administración → Sucursales para agruparse acá."
+                  />
                 ) : (
                   <ResponsiveContainer width="100%" height={320}>
                     <BarChart data={stats.por_zona}>
@@ -280,7 +303,10 @@ export function DashboardPanel() {
               <section className="rounded-lg bg-white p-6 shadow">
                 <h2 className="mb-4 text-lg font-semibold">Urgencia por zona</h2>
                 {stats.por_zona.length === 0 ? (
-                  <FeedbackState title="Sin datos por zona." />
+                  <FeedbackState
+                    title="Sin datos por zona."
+                    description="Las sucursales necesitan tener 'Zona' cargada en Administración → Sucursales para agruparse acá."
+                  />
                 ) : (
                   <ResponsiveContainer width="100%" height={320}>
                     <BarChart data={stats.por_zona}>
@@ -366,14 +392,20 @@ export function DashboardPanel() {
           <>
           <div className="mb-8 grid grid-cols-1 gap-6 xl:grid-cols-3">
             <section className="rounded-lg bg-white p-6 shadow xl:col-span-2">
-              <div className="mb-4 flex items-center justify-between">
-                <h2 className="text-lg font-semibold">Semaforo por Sucursal</h2>
-                <Link to="/gestion-desvios" className="text-sm font-medium text-blue-600 hover:text-blue-800">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-3">
+                  <h2 className="text-lg font-semibold">Semáforo por Sucursal</h2>
+                  <SaludLegend />
+                </div>
+                <Link to="/hoy?s=pendientes&v=decidir" className="text-sm font-medium text-blue-600 hover:text-blue-800">
                   Ver gestion
                 </Link>
               </div>
               {stats.sucursales_estado.length === 0 ? (
-                <FeedbackState title="No hay sucursales con desvios." />
+                <FeedbackState
+                  title="No hay sucursales con desvíos."
+                  description="Esta tabla lista sucursales que tienen (o tuvieron) al menos un desvío cargado por WhatsApp."
+                />
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[760px]">
@@ -393,7 +425,9 @@ export function DashboardPanel() {
                       </tr>
                     </thead>
                     <tbody>
-                      {stats.sucursales_estado.map((sucursal) => (
+                      {stats.sucursales_estado.map((sucursal) => {
+                        const salud = SALUD_META[estadoSaludPorSucursal.get(sucursal.id_sucursal) ?? 'sin_datos'];
+                        return (
                         <tr key={sucursal.id_sucursal || sucursal.sucursal} className="border-b hover:bg-gray-50">
                           <td className="px-4 py-4 text-sm font-medium text-gray-900">
                             <Link to={`/sucursales/${sucursal.id_sucursal}`} className="hover:text-blue-700">
@@ -404,8 +438,9 @@ export function DashboardPanel() {
                             <td className="px-4 py-4 text-sm text-gray-600">{sucursal.zona}</td>
                           )}
                           <td className="px-4 py-4 text-sm">
-                            <span className={`rounded border px-3 py-1 text-xs font-semibold ${getSemaforoStyles(sucursal.semaforo)}`}>
-                              {getSemaforoLabel(sucursal.semaforo)}
+                            <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold ${salud.pill}`}>
+                              <salud.icon className="h-3 w-3" />
+                              {salud.label}
                             </span>
                           </td>
                           <td className="px-4 py-4 text-right text-sm font-semibold text-emerald-800">{sucursal.puntaje}</td>
@@ -415,7 +450,8 @@ export function DashboardPanel() {
                           <td className="px-4 py-4 text-right text-sm">{sucursal.altas}</td>
                           <td className="px-4 py-4 text-right text-sm">{sucursal.total}</td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -425,7 +461,10 @@ export function DashboardPanel() {
             <section className="rounded-lg bg-white p-6 shadow">
               <h2 className="mb-4 text-lg font-semibold">Ranking Critico</h2>
               {stats.ranking_sucursales.length === 0 ? (
-                <FeedbackState title="Sin desvios abiertos." />
+                <FeedbackState
+                  title="Sin desvíos abiertos."
+                  description="Ninguna sucursal tiene desvíos abiertos en este momento — no hay nada urgente para priorizar."
+                />
               ) : (
                 <div className="space-y-3">
                   {stats.ranking_sucursales.map((sucursal, index) => (
@@ -467,7 +506,10 @@ export function DashboardPanel() {
                   </PieChart>
                 </ResponsiveContainer>
               ) : (
-                <FeedbackState title="No hay datos disponibles" />
+                <FeedbackState
+                  title="No hay gestiones registradas todavía."
+                  description="Las gestiones se crean automáticamente cuando una auditoría por WhatsApp detecta un desvío."
+                />
               )}
             </section>
 

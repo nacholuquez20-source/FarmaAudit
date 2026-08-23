@@ -3,36 +3,24 @@ import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
   Calendar,
-  Check,
-  CircleDot,
   ClipboardCheck,
-  Minus,
   Pencil,
   Search,
   SprayCan,
   Star,
-  Triangle,
 } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
 import { FeedbackState } from '../FeedbackState';
 import { ReminderButton } from '../ReminderButton';
+import { SaludLegend } from '../SaludLegend';
 import { whatsappAuditLink } from '../../lib/utils';
 import { useAuth } from '../../hooks/useAuth';
+import { SALUD_META } from '../../lib/salud';
 import type { EstadoContactoSucursal, EstadoSalud, SucursalDashboard } from '../../types';
 
 type Filtro = 'todas' | 'critica' | 'atencion' | 'ok' | 'sin_datos' | 'perfumeria';
 
 // Orden por urgencia: las críticas primero, "sin datos" al final (no arde).
 const RANK: Record<EstadoSalud, number> = { critica: 0, atencion: 1, ok: 2, sin_datos: 3 };
-
-// El estado se comunica por COLOR + FORMA (ícono), no solo color, para que sea
-// legible con daltonismo. El borde izquierdo es el ancla visual de la tarjeta.
-const SALUD_META: Record<EstadoSalud, { dot: string; border: string; icon: LucideIcon; label: string }> = {
-  critica:   { dot: 'bg-red-500',   border: 'border-l-red-500',   icon: Triangle,   label: 'Crítica' },
-  atencion:  { dot: 'bg-amber-500', border: 'border-l-amber-500', icon: CircleDot,  label: 'Atención' },
-  ok:        { dot: 'bg-green-500', border: 'border-l-green-500', icon: Check,      label: 'Al día' },
-  sin_datos: { dot: 'bg-gray-300',  border: 'border-l-gray-300',  icon: Minus,      label: 'Sin datos' },
-};
 
 function scoreClasses(score: number | null): string {
   if (score === null) return 'text-gray-400';
@@ -190,7 +178,8 @@ export function SucursalesGrid({ data, loading, contacto, contactoLoaded, onRemi
       </div>
 
       {/* Filtros rápidos / tablero de estado */}
-      <div className="mb-6 flex flex-wrap gap-2">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-2">
         {filtros.map((f) => {
           const activo = filtro === f.key;
           return (
@@ -214,6 +203,8 @@ export function SucursalesGrid({ data, loading, contacto, contactoLoaded, onRemi
             </button>
           );
         })}
+        </div>
+        <SaludLegend />
       </div>
 
       {sinEncargadoBloqueadas.length > 0 && (

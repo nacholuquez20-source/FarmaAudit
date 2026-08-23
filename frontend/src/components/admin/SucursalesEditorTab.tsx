@@ -366,7 +366,10 @@ export function SucursalesEditorTab() {
 
       {filteredSucursales.length === 0 && (
         <div className="mt-4">
-          <FeedbackState title="No se encontraron farmacias" />
+          <FeedbackState
+            title="No se encontraron farmacias"
+            description="Probá con otro nombre, zona, teléfono o dirección — o limpiá la búsqueda para ver todas."
+          />
         </div>
       )}
 

@@ -91,6 +91,55 @@ export interface EstadoContactoSucursal {
   proximo_disponible_at: string | null;
 }
 
+// ============ Asistente contextual por sucursal ============
+
+export interface ExplicacionAccion {
+  texto: string;
+  prioridad: 'alta' | 'media' | 'baja';
+}
+
+export interface ExplicacionSucursal {
+  resumen: string;
+  por_que: string;
+  acciones: ExplicacionAccion[];
+}
+
+// ============ Resumen integral de sucursal (mejora del módulo Sucursales) ==
+
+export interface CampaniaTareaPendiente {
+  id: string;
+  estado: string;
+  campania_acciones: { descripcion?: string } | null;
+  campanias: { nombre: string; estado: string } | null;
+}
+
+export interface RecordatorioHistorial {
+  enviado_at: string;
+  canal: string;
+  resultado: string;
+  detalle: string | null;
+  cantidad_desvios: number | null;
+}
+
+export interface InformeRespuesta {
+  path: string;
+  created_at: string | null;
+  url: string;
+}
+
+export interface CategoriaSeveridad {
+  Alta?: number;
+  Media?: number;
+  Baja?: number;
+}
+
+export interface ResumenIntegralSucursal {
+  campanias_pendientes: CampaniaTareaPendiente[];
+  recordatorios: RecordatorioHistorial[];
+  informes_respuesta: InformeRespuesta[];
+  categorias: Record<string, CategoriaSeveridad>;
+}
+
 export type RecordatorioResultado = 'enviado' | 'fallido' | 'sin_ventana' | 'sin_encargado' | 'cooldown';
 
 export interface RecordatorioSucursalResponse {
@@ -433,7 +482,6 @@ export interface SucursalSupervision {
   total: number;
   /** 0–100, mayor es mejor cumplimiento frente a desvíos/vencidos. */
   puntaje: number;
-  semaforo: 'verde' | 'amarillo' | 'rojo';
 }
 
 export interface SucursalRanking {

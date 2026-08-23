@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Camera, FileText } from 'lucide-react';
 import { AppLayout } from '../components/AppLayout';
+import { Breadcrumbs } from '../components/Breadcrumbs';
 import { FeedbackState } from '../components/FeedbackState';
 import { ReminderButton } from '../components/ReminderButton';
 import { useAuth } from '../hooks/useAuth';
@@ -210,14 +211,13 @@ export default function AuditFichaDetail() {
 
   return (
     <AppLayout title={`Auditoría · ${sucursal.nombre}`}>
-      <div className="mb-4">
-        <button
-          onClick={() => navigate(`/sucursales/${sucursalId}`)}
-          className="text-sm font-medium text-blue-600 hover:text-blue-800"
-        >
-          ← Volver a {sucursal.nombre}
-        </button>
-      </div>
+      <Breadcrumbs
+        items={[
+          { label: 'Sucursales', to: '/sucursales' },
+          { label: sucursal.nombre, to: `/sucursales/${sucursalId}` },
+          { label: formatDate(ficha.fecha_auditoria || ficha.created_at) },
+        ]}
+      />
 
       <div className="mb-6 rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-4">
