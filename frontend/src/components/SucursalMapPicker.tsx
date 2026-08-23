@@ -1,32 +1,17 @@
 import { useState } from 'react';
-import { MapContainer, Marker, TileLayer, useMapEvents } from 'react-leaflet';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+import { APIProvider, AdvancedMarker, Map as GoogleMap, Pin } from '@vis.gl/react-google-maps';
 import { Button } from './Button';
 import { updateSucursal } from '../lib/api';
 import type { Sucursal } from '../types';
 
+const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
+const GOOGLE_MAP_ID = (import.meta.env.VITE_GOOGLE_MAP_ID as string | undefined) || 'DEMO_MAP_ID';
+
 // Fallback si la sucursal nunca fue pineada: CABA, centro geografico
 // razonable para arrancar a ubicar sucursales de una cadena argentina.
-const DEFAULT_CENTER: [number, number] = [-34.6037, -58.3816];
+const DEFAULT_CENTER = { lat: -34.6037, lng: -58.3816 };
 const DEFAULT_ZOOM = 12;
 const PINNED_ZOOM = 16;
-
-const pinIcon = L.divIcon({
-  className: '',
-  html: '<div style="width:24px;height:24px;border-radius:50% 50% 50% 0;background:#1e3a6d;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.4);transform:rotate(-45deg);"></div>',
-  iconSize: [24, 24],
-  iconAnchor: [12, 24],
-});
-
-function ClickToPlace({ onPlace }: { onPlace: (lat: number, lng: number) => void }) {
-  useMapEvents({
-    click(event) {
-      onPlace(event.latlng.lat, event.latlng.lng);
-    },
-  });
-  return null;
-}
 
 interface SucursalMapPickerProps {
   sucursal: Sucursal;
@@ -40,8 +25,8 @@ interface SucursalMapPickerProps {
 // una tarea de una sola vez por sucursal (~25 en total).
 export function SucursalMapPicker({ sucursal, onClose, onSaved }: SucursalMapPickerProps) {
   const hasPin = sucursal.lat != null && sucursal.lng != null;
-  const [position, setPosition] = useState<[number, number] | null>(
-    hasPin ? [sucursal.lat as number, sucursal.lng as number] : null,
+  const [position, setPosition] = useState<google.maps.LatLngLiteral | null>(
+    hasPin ? { lat: sucursal.lat as number, lng: sucursal.lng as number } : null,
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +36,7 @@ export function SucursalMapPicker({ sucursal, onClose, onSaved }: SucursalMapPic
     setSaving(true);
     setError(null);
     try {
-      const updated = await updateSucursal(sucursal.id, { lat: position[0], lng: position[1] });
+      const updated = await updateSucursal(sucursal.id, { lat: position.lat, lng: position.lng });
       onSaved(updated);
       onClose();
     } catch (err) {
@@ -79,38 +64,46 @@ export function SucursalMapPicker({ sucursal, onClose, onSaved }: SucursalMapPic
           </div>
 
           <div className="h-96 w-full overflow-hidden rounded-lg border border-gray-300">
-            <MapContainer
-              center={position ?? DEFAULT_CENTER}
-              zoom={position ? PINNED_ZOOM : DEFAULT_ZOOM}
-              style={{ height: '100%', width: '100%' }}
-            >
-              <TileLayer
-                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              />
-              <ClickToPlace onPlace={(lat, lng) => setPosition([lat, lng])} />
-              {position && (
-                <Marker
-                  position={position}
-                  icon={pinIcon}
-                  draggable
-                  eventHandlers={{
-                    dragend: (event) => {
-                      const marker = event.target as L.Marker;
-                      const latLng = marker.getLatLng();
-                      setPosition([latLng.lat, latLng.lng]);
-                    },
+            {GOOGLE_MAPS_API_KEY ? (
+              <APIProvider apiKey={GOOGLE_MAPS_API_KEY}>
+                <GoogleMap
+                  mapId={GOOGLE_MAP_ID}
+                  defaultCenter={position ?? DEFAULT_CENTER}
+                  defaultZoom={position ? PINNED_ZOOM : DEFAULT_ZOOM}
+                  gestureHandling="greedy"
+                  streetViewControl={false}
+                  mapTypeControl={false}
+                  onClick={(event) => {
+                    const latLng = event.detail.latLng;
+                    if (latLng) setPosition({ lat: latLng.lat, lng: latLng.lng });
                   }}
-                />
-              )}
-            </MapContainer>
+                >
+                  {position && (
+                    <AdvancedMarker
+                      position={position}
+                      draggable
+                      onDragEnd={(event) => {
+                        const latLng = event.latLng;
+                        if (latLng) setPosition({ lat: latLng.lat(), lng: latLng.lng() });
+                      }}
+                    >
+                      <Pin background="#1e3a6d" borderColor="white" glyphColor="white" />
+                    </AdvancedMarker>
+                  )}
+                </GoogleMap>
+              </APIProvider>
+            ) : (
+              <div className="flex h-full items-center justify-center bg-gray-50 px-6 text-center text-sm text-gray-500">
+                Falta configurar VITE_GOOGLE_MAPS_API_KEY para mostrar el mapa.
+              </div>
+            )}
           </div>
 
           {error && <p className="text-sm text-red-700">{error}</p>}
 
           <div className="flex items-center justify-between">
             <span className="text-xs text-gray-500">
-              {position ? `${position[0].toFixed(5)}, ${position[1].toFixed(5)}` : 'Sin ubicar todavia'}
+              {position ? `${position.lat.toFixed(5)}, ${position.lng.toFixed(5)}` : 'Sin ubicar todavia'}
             </span>
             <div className="flex gap-2">
               <Button type="button" variant="outline" onClick={onClose} disabled={saving}>

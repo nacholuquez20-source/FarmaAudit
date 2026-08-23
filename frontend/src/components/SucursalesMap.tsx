@@ -1,53 +1,80 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { MapContainer, Marker, Popup, TileLayer, useMap } from 'react-leaflet';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+import { APIProvider, AdvancedMarker, InfoWindow, Map as GoogleMap, Pin, useMap } from '@vis.gl/react-google-maps';
 import { AlertTriangle, MapPin } from 'lucide-react';
 import { FeedbackState } from './FeedbackState';
 import { getSucursalesDashboard } from '../lib/api';
 import { SALUD_HEX, SALUD_META } from '../lib/salud';
-import type { EstadoSalud, SucursalDashboard } from '../types';
+import type { SucursalDashboard } from '../types';
 
-const DEFAULT_CENTER: [number, number] = [-34.6037, -58.3816];
+const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
+// Map ID de prueba de Google, habilita AdvancedMarker sin crear uno propio.
+// Para produccion, crear un Map ID en Google Cloud Console > Map Management
+// y configurarlo en VITE_GOOGLE_MAP_ID.
+const GOOGLE_MAP_ID = (import.meta.env.VITE_GOOGLE_MAP_ID as string | undefined) || 'DEMO_MAP_ID';
+
+const DEFAULT_CENTER = { lat: -34.6037, lng: -58.3816 };
 const DEFAULT_ZOOM = 11;
 
-// Misma fuente de color/label que el resto del panel (lib/salud.ts) — el
-// mapa no puede usar clases de Tailwind acá porque el marker de Leaflet se
-// arma como HTML crudo, por eso usa SALUD_HEX en vez de SALUD_META directo.
 const SALUD_COLOR = SALUD_HEX;
-
-function makeIcon(color: string): L.DivIcon {
-  return L.divIcon({
-    className: '',
-    html: `<div style="width:18px;height:18px;border-radius:50%;background:${color};border:2px solid white;box-shadow:0 1px 3px rgba(0,0,0,0.5);"></div>`,
-    iconSize: [18, 18],
-    iconAnchor: [9, 9],
-    popupAnchor: [0, -9],
-  });
-}
-
-const ICONS: Record<EstadoSalud, L.DivIcon> = {
-  critica: makeIcon(SALUD_COLOR.critica),
-  atencion: makeIcon(SALUD_COLOR.atencion),
-  ok: makeIcon(SALUD_COLOR.ok),
-  sin_datos: makeIcon(SALUD_COLOR.sin_datos),
-};
 
 // Ajusta el encuadre a los pines visibles cada vez que cambia el set (carga
 // inicial o filtro de zona) — no hay un centro/zoom fijo porque no sabemos
 // de antemano donde va a pinear el admin cada sucursal.
-function FitToMarkers({ points }: { points: [number, number][] }) {
+function FitToMarkers({ points }: { points: google.maps.LatLngLiteral[] }) {
   const map = useMap();
   useEffect(() => {
-    if (points.length === 0) return;
+    if (!map || points.length === 0) return;
     if (points.length === 1) {
-      map.setView(points[0], 15);
+      map.setCenter(points[0]);
+      map.setZoom(15);
       return;
     }
-    map.fitBounds(L.latLngBounds(points), { padding: [32, 32] });
+    const bounds = new google.maps.LatLngBounds();
+    points.forEach((point) => bounds.extend(point));
+    map.fitBounds(bounds, 32);
   }, [map, points]);
   return null;
+}
+
+function SucursalPin({ sucursal }: { sucursal: SucursalDashboard }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <AdvancedMarker
+      position={{ lat: sucursal.lat as number, lng: sucursal.lng as number }}
+      onClick={() => setOpen(true)}
+    >
+      <Pin
+        background={SALUD_COLOR[sucursal.estado_salud]}
+        borderColor="white"
+        glyphColor="white"
+      />
+      {open && (
+        <InfoWindow onCloseClick={() => setOpen(false)}>
+          <div className="min-w-[200px]">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="font-semibold text-gray-900">{sucursal.nombre}</span>
+              <span
+                className="rounded-full px-2 py-0.5 text-xs font-semibold text-white"
+                style={{ backgroundColor: SALUD_COLOR[sucursal.estado_salud] }}
+              >
+                {SALUD_META[sucursal.estado_salud].label}
+              </span>
+            </div>
+            <p className="mb-2 text-xs text-gray-500">{sucursal.zona || 'Sin zona'}</p>
+            <div className="mb-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-gray-700">
+              <span>Puntaje: <strong>{sucursal.ultimo_score != null ? sucursal.ultimo_score.toFixed(1) : '—'}</strong></span>
+              <span>Abiertos: <strong>{sucursal.desvios_abiertos}</strong></span>
+              <span>Vencidos: <strong className="text-red-700">{sucursal.desvios_vencidos}</strong></span>
+            </div>
+            <Link to={`/sucursales/${sucursal.id}`} className="text-xs font-medium text-blue-600 hover:text-blue-800">
+              Ver ficha →
+            </Link>
+          </div>
+        </InfoWindow>
+      )}
+    </AdvancedMarker>
+  );
 }
 
 export function SucursalesMap() {
@@ -93,8 +120,8 @@ export function SucursalesMap() {
     [ubicadas, zonasActivas],
   );
 
-  const puntos = useMemo<[number, number][]>(
-    () => visibles.map((s) => [s.lat as number, s.lng as number]),
+  const puntos = useMemo<google.maps.LatLngLiteral[]>(
+    () => visibles.map((s) => ({ lat: s.lat as number, lng: s.lng as number })),
     [visibles],
   );
 
@@ -109,6 +136,15 @@ export function SucursalesMap() {
 
   if (error) return <FeedbackState title={error} tone="error" />;
   if (!data) return <FeedbackState title="Cargando mapa..." tone="loading" />;
+  if (!GOOGLE_MAPS_API_KEY) {
+    return (
+      <FeedbackState
+        title="Falta configurar Google Maps"
+        description="Definí VITE_GOOGLE_MAPS_API_KEY en el .env del frontend para mostrar el mapa."
+        tone="error"
+      />
+    );
+  }
 
   return (
     <div className="rounded-lg bg-white p-6 shadow">
@@ -155,39 +191,22 @@ export function SucursalesMap() {
         />
       ) : (
         <div className="h-[520px] w-full overflow-hidden rounded-lg border border-gray-200">
-          <MapContainer center={DEFAULT_CENTER} zoom={DEFAULT_ZOOM} style={{ height: '100%', width: '100%' }}>
-            <TileLayer
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            />
-            <FitToMarkers points={puntos} />
-            {visibles.map((s) => (
-              <Marker key={s.id} position={[s.lat as number, s.lng as number]} icon={ICONS[s.estado_salud]}>
-                <Popup>
-                  <div className="min-w-[200px]">
-                    <div className="mb-1 flex items-center justify-between gap-2">
-                      <span className="font-semibold text-gray-900">{s.nombre}</span>
-                      <span
-                        className="rounded-full px-2 py-0.5 text-xs font-semibold text-white"
-                        style={{ backgroundColor: SALUD_COLOR[s.estado_salud] }}
-                      >
-                        {SALUD_META[s.estado_salud].label}
-                      </span>
-                    </div>
-                    <p className="mb-2 text-xs text-gray-500">{s.zona || 'Sin zona'}</p>
-                    <div className="mb-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-gray-700">
-                      <span>Puntaje: <strong>{s.ultimo_score != null ? s.ultimo_score.toFixed(1) : '—'}</strong></span>
-                      <span>Abiertos: <strong>{s.desvios_abiertos}</strong></span>
-                      <span>Vencidos: <strong className="text-red-700">{s.desvios_vencidos}</strong></span>
-                    </div>
-                    <Link to={`/sucursales/${s.id}`} className="text-xs font-medium text-blue-600 hover:text-blue-800">
-                      Ver ficha →
-                    </Link>
-                  </div>
-                </Popup>
-              </Marker>
-            ))}
-          </MapContainer>
+          <APIProvider apiKey={GOOGLE_MAPS_API_KEY}>
+            <GoogleMap
+              mapId={GOOGLE_MAP_ID}
+              defaultCenter={DEFAULT_CENTER}
+              defaultZoom={DEFAULT_ZOOM}
+              gestureHandling="greedy"
+              disableDefaultUI={false}
+              streetViewControl={false}
+              mapTypeControl={false}
+            >
+              <FitToMarkers points={puntos} />
+              {visibles.map((s) => (
+                <SucursalPin key={s.id} sucursal={s} />
+              ))}
+            </GoogleMap>
+          </APIProvider>
         </div>
       )}
 

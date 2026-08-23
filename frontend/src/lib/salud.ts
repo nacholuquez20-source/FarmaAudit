@@ -52,8 +52,8 @@ export const SALUD_META: Record<EstadoSalud, SaludMeta> = {
   },
 };
 
-// Mismo color, en hex — Leaflet (SucursalesMap) no puede consumir clases de
-// Tailwind porque arma el marker como HTML crudo fuera del árbol de React.
+// Mismo color, en hex — los pines de Google Maps (SucursalesMap) usan estilos
+// inline en vez de clases de Tailwind (Pin/AdvancedMarker de @vis.gl).
 export const SALUD_HEX: Record<EstadoSalud, string> = {
   critica: '#ef4444',
   atencion: '#f59e0b',
