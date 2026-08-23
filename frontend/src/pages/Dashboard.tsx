@@ -4,6 +4,7 @@ import { CalendarDays, ClipboardCheck } from 'lucide-react';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { KPICard } from '../components/KPICard';
+import { SucursalesMap } from '../components/SucursalesMap';
 import { useDashboardStats } from '../hooks/useDashboardStats';
 import { useAuth } from '../hooks/useAuth';
 import { supabase } from '../lib/supabase';
@@ -234,6 +235,15 @@ export function DashboardPanel() {
               >
                 Por zona
               </button>
+              <button
+                type="button"
+                onClick={() => setVista('mapa')}
+                className={`rounded-md px-4 py-2 text-sm font-semibold transition ${
+                  vista === 'mapa' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                Mapa
+              </button>
             </div>
           )}
 
@@ -343,6 +353,12 @@ export function DashboardPanel() {
                   </div>
                 )}
               </section>
+            </div>
+          )}
+
+          {vista === 'mapa' && mostrarVistaZona && (
+            <div className="mb-8">
+              <SucursalesMap />
             </div>
           )}
 

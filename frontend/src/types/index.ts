@@ -17,7 +17,7 @@ export type DesvioOrigen = 'auditor' | 'sucursal';
 export type NotificacionTipo = 'mensaje_nuevo' | 'encargado_respondio' | 'estado_cambio' | 'vencimiento_proximo' | 'sla_revision_vencido';
 export type GestionRevisionAccion = 'aprobar' | 'rechazar' | 'en_gestion_terceros' | 'retomar';
 export type AdminTabKey = 'sucursales' | 'whatsapp' | 'usuarios' | 'marcas' | 'sistema';
-export type DashboardView = 'general' | 'zona';
+export type DashboardView = 'general' | 'zona' | 'mapa';
 /**
  * Bandejas del panel de desvios. El eje es de quien es el turno, no en que
  * estado esta el desvio (ver ARQUITECTURA_PANEL_DESVIOS.md seccion 5).
@@ -36,6 +36,8 @@ export interface Sucursal {
   categoria?: string | null;
   tiene_perfumeria?: boolean;
   activo: boolean;
+  lat: number | null;
+  lng: number | null;
 }
 
 export interface SucursalCreate {
@@ -72,6 +74,9 @@ export interface SucursalDashboard {
   /** null = el encargado nunca actuó (distinto de "hace mucho"). */
   dias_sin_accion: number | null;
   estado_salud: EstadoSalud;
+  /** Pineado a mano por el admin (etapa-30) — null hasta que se ubique. */
+  lat: number | null;
+  lng: number | null;
 }
 
 // ============ Seguimiento del encargado + recordatorios (etapa-24) ============
@@ -101,6 +106,8 @@ export interface SucursalUpdate {
   tel_responsable?: string;
   zona?: string;
   activo?: boolean;
+  lat?: number | null;
+  lng?: number | null;
 }
 
 export interface Reporte {

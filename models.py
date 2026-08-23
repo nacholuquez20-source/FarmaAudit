@@ -96,6 +96,8 @@ class Sucursal:
     responsable: str
     tel_responsable: str
     zona: str
+    lat: Optional[float] = None
+    lng: Optional[float] = None
 
 
 @dataclass

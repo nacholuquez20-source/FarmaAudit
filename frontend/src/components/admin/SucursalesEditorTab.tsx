@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { whatsappAuditLink } from '../../lib/utils';
-import { ClipboardCheck } from 'lucide-react';
+import { ClipboardCheck, MapPin } from 'lucide-react';
 import { FeedbackState } from '../FeedbackState';
+import { SucursalMapPicker } from '../SucursalMapPicker';
 import { useSucursales } from '../../hooks/useSucursales';
 import { updateSucursal } from '../../lib/api';
 import type { AutosaveStatus, Sucursal, SucursalEditableField, SucursalUpdate } from '../../types';
@@ -66,6 +67,7 @@ export function SucursalesEditorTab() {
   const [saveErrors, setSaveErrors] = useState<Record<string, string>>({});
   const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const navigate = useNavigate();
+  const [ubicando, setUbicando] = useState<Sucursal | null>(null);
 
   useEffect(() => {
     setRows(sucursales.map(normalizeSucursal));
@@ -142,6 +144,14 @@ export function SucursalesEditorTab() {
   const getRowActiveStatus = (sucursal: Sucursal): AutosaveStatus | undefined => {
     const rowStatuses = EDITABLE_COLUMNS.map((column) => saveStatus[getCellKey(sucursal.id, column.field)]);
     return rowStatuses.find((status) => status && status !== 'idle');
+  };
+
+  const handleUbicacionSaved = (updated: Sucursal) => {
+    setRows((current) => current.map((row) => (row.id === updated.id ? normalizeSucursal(updated) : row)));
+    setRowFlash((current) => ({ ...current, [updated.id]: true }));
+    window.setTimeout(() => {
+      setRowFlash((current) => ({ ...current, [updated.id]: false }));
+    }, 900);
   };
 
   if (loading) {
@@ -240,6 +250,17 @@ export function SucursalesEditorTab() {
                         </a>
                         <button
                           type="button"
+                          onClick={() => setUbicando(sucursal)}
+                          title={sucursal.lat != null ? 'Ya ubicada — click para reubicar' : 'Sin ubicar en el mapa'}
+                          className={`flex items-center gap-1.5 rounded-md border px-3 py-2 text-sm font-medium transition hover:bg-gray-100 ${
+                            sucursal.lat != null ? 'border-emerald-300 text-emerald-700' : 'border-amber-300 text-amber-700'
+                          }`}
+                        >
+                          <MapPin className="h-3.5 w-3.5" />
+                          Ubicar
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => navigate(`/sucursales/${sucursal.id}`)}
                           className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-100"
                         >
@@ -310,7 +331,7 @@ export function SucursalesEditorTab() {
                 })}
               </div>
 
-              <div className="mt-4 flex justify-end gap-2">
+              <div className="mt-4 flex flex-wrap justify-end gap-2">
                 <a
                   href={whatsappAuditLink()}
                   target="_blank"
@@ -320,6 +341,16 @@ export function SucursalesEditorTab() {
                   <ClipboardCheck className="h-3.5 w-3.5" />
                   Auditar
                 </a>
+                <button
+                  type="button"
+                  onClick={() => setUbicando(sucursal)}
+                  className={`flex items-center gap-1.5 rounded-md border px-3 py-2 text-sm font-medium transition hover:bg-gray-100 ${
+                    sucursal.lat != null ? 'border-emerald-300 text-emerald-700' : 'border-amber-300 text-amber-700'
+                  }`}
+                >
+                  <MapPin className="h-3.5 w-3.5" />
+                  Ubicar
+                </button>
                 <button
                   type="button"
                   onClick={() => navigate(`/sucursales/${sucursal.id}`)}
@@ -337,6 +368,14 @@ export function SucursalesEditorTab() {
         <div className="mt-4">
           <FeedbackState title="No se encontraron farmacias" />
         </div>
+      )}
+
+      {ubicando && (
+        <SucursalMapPicker
+          sucursal={ubicando}
+          onClose={() => setUbicando(null)}
+          onSaved={handleUbicacionSaved}
+        />
       )}
     </div>
   );
