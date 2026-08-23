@@ -365,6 +365,7 @@ export interface CreateUsuarioWhatsappInput {
 
 export interface UpdateUsuarioWhatsappInput {
   nombre?: string;
+  telefono?: string;
   activo?: boolean;
   id_sucursal?: string | null;
   notas?: string | null;

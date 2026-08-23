@@ -13,7 +13,13 @@ import {
 } from '../../lib/api';
 import { useSucursales } from '../../hooks/useSucursales';
 import { normalizePhoneDigits } from '../../lib/utils';
-import type { CreateUsuarioWhatsappInput, RolWhatsapp, TipoAuditoria, UsuarioWhatsapp } from '../../types';
+import type {
+  CreateUsuarioWhatsappInput,
+  RolWhatsapp,
+  TipoAuditoria,
+  UpdateUsuarioWhatsappInput,
+  UsuarioWhatsapp,
+} from '../../types';
 
 const EMPTY_FORM: CreateUsuarioWhatsappInput = {
   telefono: '',
@@ -59,15 +65,21 @@ export function UsuariosWhatsappTab() {
   const [formError, setFormError] = useState('');
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
-  // Cobertura (sucursal o tipos de auditoría) se define al crear el usuario,
-  // pero cambia con el tiempo — sobre todo la razón de ser de este módulo:
-  // cuando se sume el próximo tipo de auditoría, los auditores existentes
-  // necesitan poder sumarlo sin recrearse. editingId habilita ese ajuste
-  // fila por fila, sin reabrir el formulario de alta completo.
+  // Edición fila por fila, sin reabrir el formulario de alta completo: nombre
+  // y teléfono se pueden escribir mal o cambiar (la persona cambia de chip),
+  // y la cobertura (sucursal o tipos de auditoría) también se ajusta con el
+  // tiempo — sobre todo la razón de ser de este módulo: cuando se sume el
+  // próximo tipo de auditoría, los auditores existentes necesitan poder
+  // sumarlo sin recrearse.
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editNombre, setEditNombre] = useState('');
+  const [editTelefono, setEditTelefono] = useState('');
   const [editSucursal, setEditSucursal] = useState<string>('');
   const [editTipos, setEditTipos] = useState<string[]>([]);
+  const [editError, setEditError] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
+
+  const [search, setSearch] = useState('');
 
   const { sucursales } = useSucursales();
   const sucursalesActivas = sucursales.filter((s) => s.activo);
@@ -112,6 +124,36 @@ export function UsuariosWhatsappTab() {
   };
 
   const telefonoNormalizado = normalizePhoneDigits(form.telefono);
+
+  // Responsables ya asignados por sucursal, para que el selector de alta
+  // avise "ya tiene: Fulano" en vez de dejar que un coordinador apurado cree
+  // un segundo responsable_sucursal para la misma sucursal sin darse cuenta
+  // (nada en la DB lo impide — get_encargado_by_phone en el bot solo toma
+  // el primero que encuentra, así que un duplicado silencioso rompe el
+  // ruteo de mensajes).
+  const responsablePorSucursal = new Map<string, string>();
+  for (const u of usuarios) {
+    if (u.rol === 'responsable_sucursal' && u.activo && u.id_sucursal) {
+      responsablePorSucursal.set(u.id_sucursal, u.nombre);
+    }
+  }
+
+  const sucursalOptions = sucursalesActivas.map((s) => {
+    const existente = responsablePorSucursal.get(s.id);
+    return { value: s.id, label: existente ? `${s.nombre} (ya: ${existente})` : s.nombre };
+  });
+
+  const searchNormalized = search.trim().toLowerCase();
+  const usuariosFiltrados = searchNormalized
+    ? usuarios.filter((u) => {
+        const sucursalNombre = u.id_sucursal ? sucursales.find((s) => s.id === u.id_sucursal)?.nombre || '' : '';
+        return (
+          u.nombre.toLowerCase().includes(searchNormalized)
+          || u.telefono.includes(searchNormalized)
+          || sucursalNombre.toLowerCase().includes(searchNormalized)
+        );
+      })
+    : usuarios;
 
   const handleCreate = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -162,43 +204,71 @@ export function UsuariosWhatsappTab() {
 
   const startEdit = (usuario: UsuarioWhatsapp) => {
     setEditingId(usuario.id);
+    setEditNombre(usuario.nombre);
+    setEditTelefono(usuario.telefono);
     setEditSucursal(usuario.id_sucursal || '');
     setEditTipos(usuario.tipos_auditoria || []);
+    setEditError('');
   };
 
-  const cancelEdit = () => setEditingId(null);
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditError('');
+  };
 
   const toggleEditTipo = (tipoId: string) => {
     setEditTipos((current) => (current.includes(tipoId) ? current.filter((t) => t !== tipoId) : [...current, tipoId]));
   };
 
+  const editTelefonoNormalizado = normalizePhoneDigits(editTelefono);
+
   const saveEdit = async (usuario: UsuarioWhatsapp) => {
+    setEditError('');
+    if (!editNombre.trim()) {
+      setEditError('El nombre no puede quedar vacío.');
+      return;
+    }
+    if (editTelefonoNormalizado.length < 10) {
+      setEditError('El teléfono parece incompleto. Copiá el número tal como aparece en WhatsApp.');
+      return;
+    }
     if (usuario.rol === 'responsable_sucursal' && !editSucursal) {
-      toast.error('Asigná una sucursal.');
+      setEditError('Asigná una sucursal.');
       return;
     }
     if (usuario.rol === 'auditor' && editTipos.length === 0) {
-      toast.error('Seleccioná al menos un tipo de auditoría.');
+      setEditError('Seleccioná al menos un tipo de auditoría.');
       return;
     }
 
     setSavingEdit(true);
     try {
-      if (usuario.rol === 'responsable_sucursal') {
-        await updateUsuarioWhatsapp(usuario.id, { id_sucursal: editSucursal });
-        setUsuarios((current) =>
-          current.map((u) => (u.id === usuario.id ? { ...u, id_sucursal: editSucursal } : u)),
-        );
-      } else {
+      const patch: UpdateUsuarioWhatsappInput = {
+        nombre: editNombre.trim(),
+        telefono: editTelefonoNormalizado,
+        ...(usuario.rol === 'responsable_sucursal' ? { id_sucursal: editSucursal } : {}),
+      };
+      await updateUsuarioWhatsapp(usuario.id, patch);
+      if (usuario.rol === 'auditor') {
         await setUsuarioTiposAuditoria(usuario.id, editTipos);
-        setUsuarios((current) =>
-          current.map((u) => (u.id === usuario.id ? { ...u, tipos_auditoria: editTipos } : u)),
-        );
       }
-      toast.success('Cobertura actualizada');
+      setUsuarios((current) =>
+        current.map((u) =>
+          u.id === usuario.id
+            ? {
+                ...u,
+                nombre: editNombre.trim(),
+                telefono: editTelefonoNormalizado,
+                id_sucursal: usuario.rol === 'responsable_sucursal' ? editSucursal : u.id_sucursal,
+                tipos_auditoria: usuario.rol === 'auditor' ? editTipos : u.tipos_auditoria,
+              }
+            : u,
+        ),
+      );
+      toast.success('Usuario actualizado');
       setEditingId(null);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Error al guardar los cambios');
+      setEditError(err instanceof Error ? err.message : 'Error al guardar los cambios');
     } finally {
       setSavingEdit(false);
     }
@@ -266,7 +336,7 @@ export function UsuariosWhatsappTab() {
                 value={form.id_sucursal || ''}
                 onChange={(e) => setForm({ ...form, id_sucursal: e.target.value || null })}
                 placeholder="Elegí una sucursal"
-                options={sucursalesActivas.map((s) => ({ value: s.id, label: s.nombre }))}
+                options={sucursalOptions}
               />
             </div>
           ) : (
@@ -282,6 +352,14 @@ export function UsuariosWhatsappTab() {
           </Button>
         </form>
       )}
+
+      <div className="mb-3 max-w-sm">
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Buscar por nombre, teléfono o sucursal..."
+        />
+      </div>
 
       <div className="overflow-x-auto rounded-lg bg-white shadow">
         <table className="w-full min-w-[960px]">
@@ -302,76 +380,103 @@ export function UsuariosWhatsappTab() {
                   No hay usuarios de WhatsApp registrados.
                 </td>
               </tr>
+            ) : usuariosFiltrados.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-6 py-8 text-center text-gray-500">
+                  Ningún usuario coincide con "{search}".
+                </td>
+              </tr>
             ) : (
-              usuarios.map((u) => (
-                <tr key={u.id} className="border-b align-top hover:bg-gray-50">
-                  <td className="px-4 py-3 font-medium">{u.nombre}</td>
-                  <td className="px-4 py-3 text-gray-600">{u.telefono}</td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`rounded px-2 py-1 text-xs font-semibold ${
-                        u.rol === 'auditor' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'
-                      }`}
-                    >
-                      {rolLabel(u.rol)}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-gray-600">
-                    {editingId === u.id ? (
-                      <div className="max-w-xs">
-                        {u.rol === 'responsable_sucursal' ? (
-                          <Select
-                            selectSize="sm"
-                            value={editSucursal}
-                            onChange={(e) => setEditSucursal(e.target.value)}
-                            placeholder="Elegí una sucursal"
-                            options={sucursalesActivas.map((s) => ({ value: s.id, label: s.nombre }))}
-                          />
-                        ) : (
-                          <TipoChecks tipos={tipos} selected={editTipos} onToggle={toggleEditTipo} />
-                        )}
-                        <div className="mt-2 flex gap-2">
-                          <Button type="button" size="sm" isLoading={savingEdit} onClick={() => saveEdit(u)}>
-                            Guardar
-                          </Button>
-                          <Button type="button" size="sm" variant="outline" disabled={savingEdit} onClick={cancelEdit}>
-                            Cancelar
-                          </Button>
+              usuariosFiltrados.map((u) => {
+                const isEditing = editingId === u.id;
+                return (
+                  <tr key={u.id} className="border-b align-top hover:bg-gray-50">
+                    <td className="px-4 py-3 font-medium">
+                      {isEditing ? (
+                        <Input inputSize="sm" value={editNombre} onChange={(e) => setEditNombre(e.target.value)} />
+                      ) : (
+                        u.nombre
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-gray-600">
+                      {isEditing ? (
+                        <Input
+                          inputSize="sm"
+                          value={editTelefono}
+                          onChange={(e) => setEditTelefono(e.target.value)}
+                          placeholder="+549..."
+                        />
+                      ) : (
+                        u.telefono
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`rounded px-2 py-1 text-xs font-semibold ${
+                          u.rol === 'auditor' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'
+                        }`}
+                      >
+                        {rolLabel(u.rol)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-gray-600">
+                      {isEditing ? (
+                        <div className="max-w-xs">
+                          {u.rol === 'responsable_sucursal' ? (
+                            <Select
+                              selectSize="sm"
+                              value={editSucursal}
+                              onChange={(e) => setEditSucursal(e.target.value)}
+                              placeholder="Elegí una sucursal"
+                              options={sucursalOptions}
+                            />
+                          ) : (
+                            <TipoChecks tipos={tipos} selected={editTipos} onToggle={toggleEditTipo} />
+                          )}
+                          {editError && <p className="mt-2 text-xs font-medium text-red-600">{editError}</p>}
+                          <div className="mt-2 flex gap-2">
+                            <Button type="button" size="sm" isLoading={savingEdit} onClick={() => saveEdit(u)}>
+                              Guardar
+                            </Button>
+                            <Button type="button" size="sm" variant="outline" disabled={savingEdit} onClick={cancelEdit}>
+                              Cancelar
+                            </Button>
+                          </div>
                         </div>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <span>
-                          {u.rol === 'responsable_sucursal'
-                            ? sucursales.find((s) => s.id === u.id_sucursal)?.nombre || u.id_sucursal || '-'
-                            : (u.tipos_auditoria || [])
-                                .map((tipoId) => tipos.find((t) => t.id === tipoId)?.nombre || tipoId)
-                                .join(', ') || 'Sin tipos asignados'}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => startEdit(u)}
-                          className="text-xs font-semibold text-primary-navy hover:underline"
-                        >
-                          Editar
-                        </button>
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      disabled={togglingId === u.id}
-                      onClick={() => handleToggleActive(u)}
-                      className={`rounded px-3 py-1 text-xs font-semibold transition disabled:opacity-50 ${
-                        u.activo ? 'bg-green-100 text-green-800 hover:bg-green-200' : 'bg-red-100 text-red-800 hover:bg-red-200'
-                      }`}
-                    >
-                      {u.activo ? 'Activo' : 'Inactivo'}
-                    </button>
-                  </td>
-                </tr>
-              ))
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <span>
+                            {u.rol === 'responsable_sucursal'
+                              ? sucursales.find((s) => s.id === u.id_sucursal)?.nombre || u.id_sucursal || '-'
+                              : (u.tipos_auditoria || [])
+                                  .map((tipoId) => tipos.find((t) => t.id === tipoId)?.nombre || tipoId)
+                                  .join(', ') || 'Sin tipos asignados'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => startEdit(u)}
+                            className="text-xs font-semibold text-primary-navy hover:underline"
+                          >
+                            Editar
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <button
+                        type="button"
+                        disabled={togglingId === u.id}
+                        onClick={() => handleToggleActive(u)}
+                        className={`rounded px-3 py-1 text-xs font-semibold transition disabled:opacity-50 ${
+                          u.activo ? 'bg-green-100 text-green-800 hover:bg-green-200' : 'bg-red-100 text-red-800 hover:bg-red-200'
+                        }`}
+                      >
+                        {u.activo ? 'Activo' : 'Inactivo'}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>

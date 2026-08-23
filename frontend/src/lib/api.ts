@@ -739,6 +739,14 @@ export async function listUsuariosWhatsapp(): Promise<UsuarioWhatsapp[]> {
   return (data || []).map(mapUsuarioWhatsappRow);
 }
 
+// El telefono tiene un unique constraint en la DB (una persona = un telefono
+// = un rol). Un choque acá casi siempre es "ya di de alta a esta persona" o
+// "le estoy pisando el numero a otro usuario" — vale la pena un mensaje
+// puntual en vez del generico de handleApiError, en DEV y en PROD por igual.
+function isUniquePhoneViolation(error: { code?: string; message?: string }): boolean {
+  return error.code === '23505' && (error.message?.toLowerCase().includes('telefono') ?? true);
+}
+
 export async function createUsuarioWhatsapp(input: CreateUsuarioWhatsappInput): Promise<UsuarioWhatsapp> {
   const { tipos_auditoria, ...usuarioInput } = input;
   const { data, error } = await supabase
@@ -746,7 +754,12 @@ export async function createUsuarioWhatsapp(input: CreateUsuarioWhatsappInput): 
     .insert([usuarioInput])
     .select('*')
     .single();
-  if (error) throw new Error(handleApiError(error));
+  if (error) {
+    if (isUniquePhoneViolation(error)) {
+      throw new Error('Ese teléfono ya está registrado a otro usuario. Buscalo en la tabla y editalo en vez de crear uno nuevo.');
+    }
+    throw new Error(handleApiError(error));
+  }
 
   if (usuarioInput.rol === 'auditor' && tipos_auditoria?.length) {
     await setUsuarioTiposAuditoria(data.id, tipos_auditoria);
@@ -765,7 +778,12 @@ export async function updateUsuarioWhatsapp(
     .eq('id', id)
     .select('*')
     .single();
-  if (error) throw new Error(handleApiError(error));
+  if (error) {
+    if (isUniquePhoneViolation(error)) {
+      throw new Error('Ese teléfono ya está registrado a otro usuario.');
+    }
+    throw new Error(handleApiError(error));
+  }
   return data;
 }
 
