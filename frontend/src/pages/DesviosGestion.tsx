@@ -691,11 +691,24 @@ export function DesviosGestionPanel({
       return 0;
     });
 
+  // Ordenar por plazo_fecha (el fetch de getGestion viene asi) tiene sentido
+  // mientras el desvio sigue activo — deja de tener sentido en "cerrado": el
+  // plazo ya no importa una vez resuelto, lo unico legible ahi es que lo mas
+  // reciente aparezca primero.
+  const sortByRecency = (items: DesvioCard[]) =>
+    [...items].sort((a, b) => {
+      const aFecha = a.fecha_cierre || a.created_at || '';
+      const bFecha = b.fecha_cierre || b.created_at || '';
+      return new Date(bFecha).getTime() - new Date(aFecha).getTime();
+    });
+
+  const sortItems = bandeja === 'cerrado' ? sortByRecency : sortByPendingReview;
+
   const countPendingReview = (items: DesvioCard[]) => items.filter((desvio) => desvio.estado === 'En_revision').length;
 
   const groups = useMemo(() => {
     if (groupBy === 'none') {
-      const items = sortByPendingReview(filtered);
+      const items = sortItems(filtered);
       return [{ key: 'all', label: '', accent: tokens.navy, items, pendingReview: countPendingReview(items) }];
     }
 
@@ -710,7 +723,7 @@ export function DesviosGestionPanel({
           key,
           label: key,
           accent: tokens.navy,
-          items: sortByPendingReview(items),
+          items: sortItems(items),
           pendingReview: countPendingReview(items),
         }));
     }
@@ -725,10 +738,10 @@ export function DesviosGestionPanel({
         key: estado,
         label: gestionStateLabel(estado),
         accent: tokens.state[estado].dot,
-        items: sortByPendingReview(byState.get(estado) || []),
+        items: sortItems(byState.get(estado) || []),
         pendingReview: 0,
       }));
-  }, [filtered, groupBy, estadosVisibles]);
+  }, [filtered, groupBy, estadosVisibles, bandeja]);
 
   const selectedDesvio = openId ? desvios.find((desvio) => desvio.id_gestion === openId) || null : null;
   const visibleIds = filtered.map((desvio) => desvio.id_gestion);
