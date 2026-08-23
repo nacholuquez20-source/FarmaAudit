@@ -952,6 +952,59 @@ class SupabaseManager:
             logger.error(f"Failed to get desvios abiertos for sucursal {id_sucursal}: {e}")
             return None
 
+    _ORDEN_SALUD = {"critica": 0, "atencion": 1, "ok": 2, "sin_datos": 3}
+
+    def get_resumen_sucursales(self) -> List[Dict[str, Any]]:
+        """Estado + desvios categorizados por sucursal, para el reporte que se le
+        manda al dueño (bajo demanda y semanal). Salud/vencidos/score salen de
+        sucursales_dashboard (ya calculada en hora argentina) y NUNCA se
+        recalculan aca, para no heredar el bug de timezone de
+        get_overdue_gestiones (compara en UTC). La categorizacion por bloque x
+        severidad se agrupa en Python desde gestion, con el mismo predicado de
+        "abierto" que ya usa la vista (estado NOT IN Resuelta/Cerrada), para que
+        los totales de la vista y el detalle categorizado nunca se contradigan.
+        """
+        try:
+            dashboard = (
+                self.client.table("sucursales_dashboard").select("*").order("nombre").execute()
+            ).data or []
+        except Exception as e:
+            logger.error(f"Failed to get resumen sucursales (dashboard): {e}")
+            return []
+
+        ids = [r["id"] for r in dashboard if r.get("id")]
+        if not ids:
+            return []
+
+        try:
+            gestion_rows = (
+                self.client.table("gestion")
+                .select("id_sucursal, bloque, severidad, estado")
+                .in_("id_sucursal", ids)
+                .execute()
+            ).data or []
+        except Exception as e:
+            logger.error(f"Failed to get resumen sucursales (gestion): {e}")
+            gestion_rows = []
+
+        categorias: Dict[str, Dict[str, Dict[str, int]]] = {}
+        for row in gestion_rows:
+            if row.get("estado") in ("Resuelta", "Cerrada"):
+                continue
+            sid = row.get("id_sucursal")
+            bloque = row.get("bloque") or "SIN_BLOQUE"
+            severidad = row.get("severidad") or "Media"
+            bucket = categorias.setdefault(sid, {}).setdefault(bloque, {})
+            bucket[severidad] = bucket.get(severidad, 0) + 1
+
+        resumen = [{**row, "categorias": categorias.get(row["id"], {})} for row in dashboard]
+        resumen.sort(key=lambda r: (
+            self._ORDEN_SALUD.get(r.get("estado_salud"), 9),
+            -(r.get("desvios_vencidos") or 0),
+            -(r.get("dias_desde_auditoria") if r.get("dias_desde_auditoria") is not None else -1),
+        ))
+        return resumen
+
     def registrar_recordatorio_sucursal(
         self,
         id_sucursal: str,
@@ -1117,6 +1170,18 @@ class SupabaseManager:
         """Upload a generated 'respuestas del encargado' report PDF to the private
         desvio-evidencias bucket (circuito de vuelta auditor <- encargado)."""
         path = f"informes/{id_sucursal}/{uuid.uuid4().hex}.pdf"
+        self.client.storage.from_("desvio-evidencias").upload(
+            path,
+            content,
+            {"content-type": "application/pdf", "upsert": "false"},
+        )
+        return {"path": path, "bucket": "desvio-evidencias"}
+
+    def upload_resumen_sucursales_pdf(self, content: bytes) -> Dict[str, str]:
+        """Upload the branch-summary report PDF to the same private bucket used
+        for audit reports (same bucket, different path prefix)."""
+        fecha = datetime.now(timezone.utc).strftime("%Y%m%d")
+        path = f"resumenes/{fecha}/{uuid.uuid4().hex}.pdf"
         self.client.storage.from_("desvio-evidencias").upload(
             path,
             content,

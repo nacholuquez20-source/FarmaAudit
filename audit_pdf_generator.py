@@ -21,7 +21,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from audit_session import BLOQUE_LABELS, BRAND_LABELS, AuditSession
+from audit_session import BLOQUE_LABELS, BLOQUE_ORDER, BRAND_LABELS, AuditSession
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,18 @@ def _score_bg(score: int):
 
 def _score_label(score: int) -> str:
     return {1: "Muy malo", 2: "Malo", 3: "Regular", 4: "Bueno", 5: "Excelente"}.get(score, "")
+
+
+def _salud_color(estado: str):
+    return {"critica": RED, "atencion": AMBER, "ok": GREEN}.get(estado, GREY)
+
+
+def _salud_bg(estado: str):
+    return {"critica": LIGHT_RED, "atencion": LIGHT_AMB, "ok": LIGHT_GRN}.get(estado, colors.HexColor("#f3f4f6"))
+
+
+def _salud_label(estado: str) -> str:
+    return {"critica": "Crítica", "atencion": "Atención", "ok": "Al día", "sin_datos": "Sin datos"}.get(estado, estado or "—")
 
 
 def _rl_image(img_bytes: bytes, max_w: float, max_h: float) -> Optional[RLImage]:
@@ -728,6 +740,165 @@ def generate_respuestas_pdf(
 
         story.append(KeepTogether(item_flowables))
         story.append(Spacer(1, 14))
+
+    doc.build(story)
+    result = buf.getvalue()
+    buf.close()
+    return result
+
+
+_SALUD_ORDER = ["critica", "atencion", "ok", "sin_datos"]
+
+
+def generate_resumen_sucursales_pdf(resumen: List[Dict[str, Any]]) -> bytes:
+    """Generate the branch-summary report: health + open deviations by
+    bloque x severidad, one section per branch. No photos — pure aggregate
+    report, stays lightweight regardless of branch count. `resumen` is
+    expected pre-sorted by urgency (SupabaseManager.get_resumen_sucursales)."""
+    buf = BytesIO()
+    page_w, page_h = A4
+    margin = 1.5 * cm
+    usable_w = page_w - 2 * margin
+
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        rightMargin=margin,
+        leftMargin=margin,
+        topMargin=margin,
+        bottomMargin=margin,
+    )
+
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("H1", parent=styles["Normal"],
+                        fontSize=18, fontName="Helvetica-Bold",
+                        textColor=NAVY, alignment=TA_CENTER, spaceAfter=2)
+    sub = ParagraphStyle("Sub", parent=styles["Normal"],
+                         fontSize=10, textColor=GREY, alignment=TA_CENTER, spaceAfter=8)
+    section = ParagraphStyle("Section", parent=styles["Normal"],
+                              fontSize=11, fontName="Helvetica-Bold",
+                              textColor=NAVY, spaceBefore=12, spaceAfter=4)
+    body = ParagraphStyle("Body", parent=styles["Normal"], fontSize=9, leading=13, textColor=colors.black)
+    small = ParagraphStyle("Small", parent=styles["Normal"], fontSize=8, textColor=GREY)
+
+    story = []
+    story.append(Paragraph("FarmaAudit", h1))
+    story.append(Paragraph("Resumen de Sucursales", sub))
+
+    bar = Table([[""]], colWidths=[usable_w], rowHeights=[4])
+    bar.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), NAVY)]))
+    story.append(bar)
+    story.append(Spacer(1, 10))
+
+    conteos = {k: 0 for k in _SALUD_ORDER}
+    for r in resumen:
+        conteos[r.get("estado_salud")] = conteos.get(r.get("estado_salud"), 0) + 1
+
+    story.append(Paragraph(
+        f"Generado el {datetime.now().strftime('%d/%m/%Y %H:%M')} — {len(resumen)} sucursal(es) — "
+        f"{conteos['critica']} crítica(s), {conteos['atencion']} en atención, "
+        f"{conteos['ok']} al día, {conteos['sin_datos']} sin datos",
+        small,
+    ))
+
+    # ── Resumen ejecutivo ─────────────────────────────────────────────────────
+    story.append(Paragraph("Resumen ejecutivo", section))
+    ej_rows = [[Paragraph("<b>Estado</b>", body), Paragraph("<b>Sucursales</b>", body)]]
+    ej_styles = [
+        ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("GRID", (0, 0), (-1, -1), 0.5, LINE),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]
+    for i, estado in enumerate(_SALUD_ORDER, start=1):
+        ej_rows.append([_salud_label(estado), str(conteos[estado])])
+        ej_styles.append(("BACKGROUND", (0, i), (-1, i), _salud_bg(estado)))
+    ej_table = Table(ej_rows, colWidths=[usable_w * 0.6, usable_w * 0.4])
+    ej_table.setStyle(TableStyle(ej_styles))
+    story.append(ej_table)
+
+    # ── Detalle por sucursal ──────────────────────────────────────────────────
+    story.append(PageBreak())
+    story.append(Paragraph(f"Detalle por sucursal ({len(resumen)})", section))
+
+    col1 = 4.5 * cm
+    col2 = usable_w - col1
+
+    for r in resumen:
+        estado = r.get("estado_salud")
+        sc = _salud_color(estado)
+
+        hdr = Table(
+            [[Paragraph(
+                f'<font color="white"><b>{r.get("nombre", r.get("id", "—"))}</b> — {_salud_label(estado)}</font>',
+                ParagraphStyle("RH", parent=styles["Normal"], fontSize=10,
+                               fontName="Helvetica-Bold", textColor=colors.white),
+            )]],
+            colWidths=[usable_w],
+        )
+        hdr.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), sc),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ]))
+        story.append(hdr)
+
+        score = r.get("ultimo_score")
+        info_rows = [
+            ["Última auditoría", _fmt_fecha(r.get("ultima_auditoria"))],
+            ["Puntaje", f"{score:.1f}/5" if score is not None else "—"],
+            ["Días desde auditoría", str(r["dias_desde_auditoria"]) if r.get("dias_desde_auditoria") is not None else "Sin auditar"],
+            ["Desvíos abiertos", str(r.get("desvios_abiertos") or 0)],
+            ["Desvíos vencidos", str(r.get("desvios_vencidos") or 0)],
+            ["Días sin acción del encargado", str(r["dias_sin_accion"]) if r.get("dias_sin_accion") is not None else "—"],
+        ]
+        info_table = Table(info_rows, colWidths=[col1, col2])
+        info_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (0, -1), LIGHT_BLUE),
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("GRID", (0, 0), (-1, -1), 0.5, LINE),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        story.append(info_table)
+
+        categorias = r.get("categorias") or {}
+        if categorias:
+            bloques_ordenados = [b for b in BLOQUE_ORDER if b in categorias]
+            bloques_ordenados += [b for b in categorias if b not in BLOQUE_ORDER]
+
+            cat_rows = [[Paragraph(f"<b>{h}</b>", body) for h in ["Bloque", "Alta", "Media", "Baja", "Total"]]]
+            for bloque in bloques_ordenados:
+                sev = categorias[bloque]
+                alta, media, baja = sev.get("Alta", 0), sev.get("Media", 0), sev.get("Baja", 0)
+                cat_rows.append([
+                    BLOQUE_LABELS.get(bloque, "Sin categorizar"),
+                    str(alta), str(media), str(baja), str(alta + media + baja),
+                ])
+            cat_table = Table(cat_rows, colWidths=[usable_w * 0.4] + [usable_w * 0.15] * 4)
+            cat_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("GRID", (0, 0), (-1, -1), 0.5, LINE),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+            ]))
+            story.append(cat_table)
+        else:
+            story.append(Paragraph("✅ Sin desvíos abiertos.", body))
+
+        story.append(Spacer(1, 12))
 
     doc.build(story)
     result = buf.getvalue()

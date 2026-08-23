@@ -464,6 +464,16 @@ async def startup_event():
         id="webhook_health_check",
         max_instances=1,  # Prevent concurrent executions
     )
+    scheduler.add_job(
+        weekly_resumen_sucursales_job,
+        "cron",
+        day_of_week="mon",
+        hour=11,  # UTC (08:00 ART)
+        minute=0,
+        id="weekly_resumen_sucursales",
+        timezone=pytz.UTC,
+        max_instances=1,  # Prevent concurrent executions
+    )
     scheduler.start()
 
     logger.info("Background jobs started")
@@ -1833,6 +1843,36 @@ async def run_informes_respuesta_endpoint(request: Request):
         return {"status": "ok"}
     except Exception as e:
         logger.error(f"Error running informes_respuesta job manually: {e}")
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
+
+
+# ============== RESUMEN DE SUCURSALES (reporte para el dueño) ==============
+
+from resumen_sucursales_manager import ResumenSucursalesManager
+
+
+async def weekly_resumen_sucursales_job():
+    """Background job: manda el resumen de sucursales al coordinador, lunes a
+    la manana hora Argentina. Mismo flujo que el endpoint bajo demanda de
+    abajo — sin logica duplicada, ambos llaman a generar_y_enviar()."""
+    try:
+        resultado = await ResumenSucursalesManager.generar_y_enviar()
+        logger.info(f"Weekly resumen sucursales: {resultado}")
+    except Exception as e:
+        logger.error(f"Error in weekly resumen sucursales job: {e}", exc_info=True)
+
+
+@app.post("/admin/reportes/resumen-sucursales")
+async def trigger_resumen_sucursales(request: Request):
+    """Genera y envia ya el resumen de sucursales al coordinador (el dueno).
+    Requiere admin (no alcanza con auditor): dispara un WhatsApp real, mas
+    sensible que las lecturas de fichas que usan _require_admin_or_auditor."""
+    await _require_admin(request)
+    try:
+        resultado = await ResumenSucursalesManager.generar_y_enviar()
+        return {"status": "ok", **resultado}
+    except Exception as e:
+        logger.error(f"Error generando resumen de sucursales: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 
