@@ -307,10 +307,10 @@ export interface AuditFicha {
   desvios_count: number;
   fotos_count: number;
   puntuacion_promedio: number | null;
-  score_limpieza: number | null;
-  score_stock: number | null;
-  score_ofertas: number | null;
-  score_burbujas: number | null;
+  /** Puntaje 1-5 por bloque (LIMPIEZA/STOCK/OFERTAS/BURBUJAS), guardado al
+   *  crear la ficha (etapa-28). Null en fichas anteriores a esa etapa —
+   *  no se puede reconstruir retroactivamente. */
+  bloques_json: Record<string, number> | null;
 }
 
 // ============ Identidad de WhatsApp (etapa-21) ============

@@ -8,7 +8,7 @@ import { ReminderButton } from '../components/ReminderButton';
 import { useAuth } from '../hooks/useAuth';
 import { getEstadoContactoSucursales, getFichaById, getFichaPdfUrl, getGestionesByFicha, getSignedUrl, getSucursal } from '../lib/api';
 import { supabase } from '../lib/supabase';
-import { BLOQUES_FICHA, formatDate, formatDateTime, gestionStateLabel, scoreColor, severidadColor } from '../lib/utils';
+import { BLOQUES_FICHA, formatDate, formatDateTime, gestionStateLabel, getBloqueScore, scoreColor, severidadColor } from '../lib/utils';
 import type { AuditFicha, EstadoContactoSucursal, Gestion, Sucursal } from '../types';
 
 function readString(value: unknown): string | null {
@@ -244,7 +244,7 @@ export default function AuditFichaDetail() {
 
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
           {BLOQUES_FICHA.map((bloque) => {
-            const v = ficha[bloque.key];
+            const v = getBloqueScore(ficha, bloque.key);
             return (
               <div key={bloque.key} className="rounded-lg border border-gray-100 bg-gray-50 p-3">
                 <p className="text-xs text-gray-500">{bloque.label}</p>

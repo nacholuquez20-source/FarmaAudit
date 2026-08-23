@@ -29,10 +29,12 @@ import { getEstadoContactoSucursales, getFichaPdfUrl, getSucursal } from '../lib
 import { supabase } from '../lib/supabase';
 import { SALUD_META } from '../lib/salud';
 import {
+  BLOQUES_FICHA,
   diasDesde,
   esMesActual,
   formatDate,
   gestionStateLabel,
+  getBloqueScore,
   scoreColor,
   severidadColor,
   whatsappAuditLink,
@@ -62,6 +64,23 @@ function diasLabel(dias: number | null): string {
   return `Hace ${dias} días`;
 }
 
+// El historial de esta ficha (auditorías, hallazgos, stock) crece mes a mes
+// sin ningún filtro — separar "reciente" de "todo el historial" para que la
+// pantalla no se vuelva una lista infinita a medida que pasan los meses.
+// Nunca borra nada, solo decide qué se ve por defecto.
+type Periodo = '3m' | '6m' | 'todo';
+
+const PERIODO_MESES: Record<Periodo, number | null> = { '3m': 3, '6m': 6, todo: null };
+
+function dentroDelPeriodo(fechaISO: string | null | undefined, periodo: Periodo): boolean {
+  const meses = PERIODO_MESES[periodo];
+  if (meses === null) return true;
+  if (!fechaISO) return true; // sin fecha: no se puede descartar, se muestra igual
+  const corte = new Date();
+  corte.setMonth(corte.getMonth() - meses);
+  return new Date(fechaISO) >= corte;
+}
+
 export default function SucursalDetail() {
   const { id } = useParams<{ id: string }>();
   const { role } = useAuth();
@@ -73,6 +92,7 @@ export default function SucursalDetail() {
   const [showHallazgos, setShowHallazgos] = useState(false);
   const [showStock, setShowStock] = useState(false);
   const [showResumenIntegral, setShowResumenIntegral] = useState(false);
+  const [periodo, setPeriodo] = useState<Periodo>('3m');
   const [showOrfanas, setShowOrfanas] = useState(false);
   // undefined = todavia no se intento cargar (ReminderButton muestra
   // "Cargando..."); null = ya se intento y no hay dato (falla la llamada o
@@ -178,6 +198,27 @@ export default function SucursalDetail() {
 
   const gestionesSinFicha = useMemo(() => gestiones.filter((g) => !g.ficha_id), [gestiones]);
 
+  // Vistas filtradas por período, solo para las TABLAS de historial — el
+  // header de salud y "Acciones sugeridas" siguen usando el estado real y
+  // completo (fichas/gestiones sin filtrar), nunca lo que decide mostrar el
+  // selector de período.
+  const fichasFiltradas = useMemo(
+    () => fichas.filter((f) => dentroDelPeriodo(f.fecha_auditoria || f.created_at, periodo)),
+    [fichas, periodo],
+  );
+  const gestionesSinFichaFiltradas = useMemo(
+    () => gestionesSinFicha.filter((g) => dentroDelPeriodo(g.created_at, periodo)),
+    [gestionesSinFicha, periodo],
+  );
+  const reportesFiltrados = useMemo(
+    () => reportes.filter((r) => dentroDelPeriodo(r.fecha, periodo)),
+    [reportes, periodo],
+  );
+  const stockItemsFiltrados = useMemo(
+    () => stockItems.filter((s) => dentroDelPeriodo(s.fecha, periodo)),
+    [stockItems, periodo],
+  );
+
   // Métricas derivadas para el header (mismo criterio que la vista SQL).
   const resumen = useMemo(() => {
     const isOpen = (estado: string) => estado !== 'Resuelta' && estado !== 'Cerrada';
@@ -221,6 +262,8 @@ export default function SucursalDetail() {
   const salud = SALUD_META[resumen.salud];
   const wa = whatsappLink(sucursal.tel_responsable);
   const sinAuditorias = fichas.length === 0 && gestionesSinFicha.length === 0;
+  const sinResultadosEnPeriodo =
+    !sinAuditorias && fichasFiltradas.length === 0 && gestionesSinFichaFiltradas.length === 0;
 
   return (
     <AppLayout title={sucursal.nombre}>
@@ -382,40 +425,54 @@ export default function SucursalDetail() {
       </div>
 
       {/* Acceso a la última ficha + datos secundarios (hallazgos, stock) */}
-      <div className="mb-3 flex flex-wrap items-center gap-4 text-xs">
-        {resumen.ultima?.url_pdf && (
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-4 text-xs">
+        <div className="flex flex-wrap items-center gap-4">
+          {resumen.ultima?.url_pdf && (
+            <button
+              type="button"
+              onClick={() => void getFichaPdfUrl(resumen.ultima!).then((url) => url && window.open(url, '_blank', 'noopener'))}
+              className="inline-flex items-center gap-1.5 font-medium text-gray-500 hover:text-gray-700"
+            >
+              <FileText className="h-3.5 w-3.5" />
+              Última ficha PDF
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => void getFichaPdfUrl(resumen.ultima!).then((url) => url && window.open(url, '_blank', 'noopener'))}
-            className="inline-flex items-center gap-1.5 font-medium text-gray-500 hover:text-gray-700"
-          >
-            <FileText className="h-3.5 w-3.5" />
-            Última ficha PDF
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={() => setShowHallazgos((v) => !v)}
-          className="font-medium text-gray-500 underline decoration-dotted hover:text-gray-700"
-        >
-          {showHallazgos ? 'Ocultar' : 'Ver'} hallazgos históricos ({reportes.length})
-        </button>
-        <button
-          type="button"
-          onClick={() => setShowStock((v) => !v)}
-          className="font-medium text-gray-500 underline decoration-dotted hover:text-gray-700"
-        >
-          {showStock ? 'Ocultar' : 'Ver'} stock ({stockItems.length})
-        </button>
-        {canAudit && (
-          <button
-            type="button"
-            onClick={() => setShowResumenIntegral((v) => !v)}
+            onClick={() => setShowHallazgos((v) => !v)}
             className="font-medium text-gray-500 underline decoration-dotted hover:text-gray-700"
           >
-            {showResumenIntegral ? 'Ocultar' : 'Ver'} más de esta sucursal
+            {showHallazgos ? 'Ocultar' : 'Ver'} hallazgos históricos ({reportesFiltrados.length})
           </button>
-        )}
+          <button
+            type="button"
+            onClick={() => setShowStock((v) => !v)}
+            className="font-medium text-gray-500 underline decoration-dotted hover:text-gray-700"
+          >
+            {showStock ? 'Ocultar' : 'Ver'} stock ({stockItemsFiltrados.length})
+          </button>
+          {canAudit && (
+            <button
+              type="button"
+              onClick={() => setShowResumenIntegral((v) => !v)}
+              className="font-medium text-gray-500 underline decoration-dotted hover:text-gray-700"
+            >
+              {showResumenIntegral ? 'Ocultar' : 'Ver'} más de esta sucursal
+            </button>
+          )}
+        </div>
+        <label className="flex items-center gap-1.5 font-medium text-gray-500">
+          Período
+          <select
+            value={periodo}
+            onChange={(e) => setPeriodo(e.target.value as Periodo)}
+            className="rounded-md border border-gray-300 px-2 py-1 text-xs focus:border-transparent focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="3m">Últimos 3 meses</option>
+            <option value="6m">Últimos 6 meses</option>
+            <option value="todo">Todo el historial</option>
+          </select>
+        </label>
       </div>
 
       {showResumenIntegral && (
@@ -426,11 +483,15 @@ export default function SucursalDetail() {
 
       {showHallazgos && (
         <div className="mb-6 overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
-          {reportes.length === 0 ? (
+          {reportesFiltrados.length === 0 ? (
             <div className="p-4">
               <FeedbackState
-                title="Sin hallazgos registrados"
-                description="Los hallazgos que se cargan por WhatsApp fuera de una auditoría de perfumería aparecerán acá."
+                title={reportes.length === 0 ? 'Sin hallazgos registrados' : 'Sin hallazgos en este período'}
+                description={
+                  reportes.length === 0
+                    ? 'Los hallazgos que se cargan por WhatsApp fuera de una auditoría de perfumería aparecerán acá.'
+                    : `Hay ${reportes.length} hallazgo(s) fuera del período seleccionado — probá "Todo el historial".`
+                }
               />
             </div>
           ) : (
@@ -445,7 +506,7 @@ export default function SucursalDetail() {
                 </tr>
               </thead>
               <tbody>
-                {reportes.map((reporte) => (
+                {reportesFiltrados.map((reporte) => (
                   <tr key={reporte.id} className="border-b hover:bg-gray-50">
                     <td className="px-6 py-4 text-sm">{formatDate(reporte.fecha)}</td>
                     <td className="px-6 py-4 text-sm">{reporte.auditor}</td>
@@ -466,11 +527,15 @@ export default function SucursalDetail() {
 
       {showStock && (
         <div className="mb-6 overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
-          {stockItems.length === 0 ? (
+          {stockItemsFiltrados.length === 0 ? (
             <div className="p-4">
               <FeedbackState
-                title="Sin controles de stock registrados"
-                description="Los controles de stock cargados por WhatsApp aparecerán acá."
+                title={stockItems.length === 0 ? 'Sin controles de stock registrados' : 'Sin controles de stock en este período'}
+                description={
+                  stockItems.length === 0
+                    ? 'Los controles de stock cargados por WhatsApp aparecerán acá.'
+                    : `Hay ${stockItems.length} control(es) fuera del período seleccionado — probá "Todo el historial".`
+                }
               />
             </div>
           ) : (
@@ -486,7 +551,7 @@ export default function SucursalDetail() {
                 </tr>
               </thead>
               <tbody>
-                {stockItems.map((item) => (
+                {stockItemsFiltrados.map((item) => (
                   <tr key={item.id} className="border-b hover:bg-gray-50">
                     <td className="px-6 py-4 text-sm">{formatDate(item.fecha)}</td>
                     <td className="px-6 py-4 text-sm">{item.nombre_item}</td>
@@ -530,6 +595,14 @@ export default function SucursalDetail() {
               description="Las auditorías de perfumería realizadas por WhatsApp aparecerán aquí."
             />
           </div>
+        ) : sinResultadosEnPeriodo ? (
+          <div className="p-8">
+            <FeedbackState
+              title="Sin auditorías en este período"
+              description='Esta sucursal tiene historial más viejo que el período seleccionado — probá "Todo el historial" arriba.'
+              action={{ label: 'Ver todo el historial', onClick: () => setPeriodo('todo') }}
+            />
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -538,15 +611,21 @@ export default function SucursalDetail() {
                   <th className="px-6 py-3 text-left text-sm font-semibold">Fecha</th>
                   <th className="px-6 py-3 text-left text-sm font-semibold">Auditor</th>
                   <th className="px-6 py-3 text-center text-sm font-semibold">Puntaje</th>
+                  {BLOQUES_FICHA.map((bloque) => (
+                    <th key={bloque.key} className="px-4 py-3 text-center text-sm font-semibold">
+                      {bloque.label}
+                    </th>
+                  ))}
                   <th className="px-6 py-3 text-center text-sm font-semibold">Detectados</th>
                   <th className="px-6 py-3 text-center text-sm font-semibold">Resueltos</th>
                   <th className="px-6 py-3 text-center text-sm font-semibold">Pendientes</th>
                   <th className="px-6 py-3 text-center text-sm font-semibold">Revisión</th>
                   <th className="px-6 py-3 text-center text-sm font-semibold">Reclamar</th>
+                  <th className="px-6 py-3 text-center text-sm font-semibold">PDF</th>
                 </tr>
               </thead>
               <tbody>
-                {fichas.map((ficha) => {
+                {fichasFiltradas.map((ficha) => {
                   const ligadas = gestionesPorFicha.get(ficha.id) ?? [];
                   const resueltos = ligadas.filter((g) => g.estado === 'Resuelta' || g.estado === 'Cerrada').length;
                   const enRevision = ligadas.filter((g) => g.estado === 'En_revision').length;
@@ -562,27 +641,20 @@ export default function SucursalDetail() {
                       className="cursor-pointer border-b hover:bg-gray-50"
                     >
                       <td className="px-6 py-4 text-sm">
-                        <div className="flex items-center gap-2">
-                          {formatDate(ficha.fecha_auditoria || ficha.created_at)}
-                          {ficha.url_pdf && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void getFichaPdfUrl(ficha).then((url) => url && window.open(url, '_blank', 'noopener'));
-                              }}
-                              title="Ver PDF"
-                              className="text-gray-400 hover:text-blue-600"
-                            >
-                              <FileText className="h-3.5 w-3.5" />
-                            </button>
-                          )}
-                        </div>
+                        {formatDate(ficha.fecha_auditoria || ficha.created_at)}
                       </td>
                       <td className="px-6 py-4 text-sm">{ficha.auditor_nombre || '—'}</td>
                       <td className={`px-6 py-4 text-center text-sm ${scoreColor(ficha.puntuacion_promedio)}`}>
                         {ficha.puntuacion_promedio != null ? `${ficha.puntuacion_promedio.toFixed(1)}/5` : '—'}
                       </td>
+                      {BLOQUES_FICHA.map((bloque) => {
+                        const valor = getBloqueScore(ficha, bloque.key);
+                        return (
+                          <td key={bloque.key} className={`px-4 py-4 text-center text-sm ${scoreColor(valor)}`}>
+                            {valor != null ? valor : '—'}
+                          </td>
+                        );
+                      })}
                       <td className="px-6 py-4 text-center text-sm font-semibold">
                         <span className={ficha.desvios_count > 0 ? 'text-gray-800' : 'text-green-600'}>
                           {ficha.desvios_count}
@@ -632,30 +704,48 @@ export default function SucursalDetail() {
                           <span className="text-xs text-gray-300">—</span>
                         )}
                       </td>
+                      <td className="px-6 py-4 text-center">
+                        {ficha.url_pdf ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void getFichaPdfUrl(ficha).then((url) => url && window.open(url, '_blank', 'noopener'));
+                            }}
+                            title="Ver PDF de esta auditoría"
+                            className="inline-flex items-center gap-1 text-gray-400 hover:text-blue-600"
+                          >
+                            <FileText className="h-4 w-4" />
+                          </button>
+                        ) : (
+                          <span className="text-xs text-gray-300">—</span>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
 
-                {gestionesSinFicha.length > 0 && (() => {
-                  const resueltosSinFicha = gestionesSinFicha.filter(
+                {gestionesSinFichaFiltradas.length > 0 && (() => {
+                  const items = gestionesSinFichaFiltradas;
+                  const resueltosSinFicha = items.filter(
                     (g) => g.estado === 'Resuelta' || g.estado === 'Cerrada',
                   ).length;
-                  const enRevisionSinFicha = gestionesSinFicha.filter((g) => g.estado === 'En_revision').length;
-                  const pendientesSinFicha = gestionesSinFicha.length - resueltosSinFicha - enRevisionSinFicha;
+                  const enRevisionSinFicha = items.filter((g) => g.estado === 'En_revision').length;
+                  const pendientesSinFicha = items.length - resueltosSinFicha - enRevisionSinFicha;
                   return (
                     <React.Fragment key="sin-ficha">
                       <tr
                         onClick={() => setShowOrfanas((v) => !v)}
                         className="cursor-pointer border-b bg-gray-50/60 hover:bg-gray-100"
                       >
-                        <td colSpan={3} className="px-6 py-4 text-sm text-gray-500">
+                        <td colSpan={3 + BLOQUES_FICHA.length} className="px-6 py-4 text-sm text-gray-500">
                           <span className="inline-flex items-center gap-1.5">
                             {showOrfanas ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                             Sin auditoría vinculada
                           </span>
                         </td>
                         <td className="px-6 py-4 text-center text-sm font-semibold text-gray-800">
-                          {gestionesSinFicha.length}
+                          {items.length}
                         </td>
                         <td className="px-6 py-4 text-center text-sm font-semibold text-green-600">{resueltosSinFicha}</td>
                         <td className="px-6 py-4 text-center text-sm">
@@ -693,13 +783,14 @@ export default function SucursalDetail() {
                             <span className="text-xs text-gray-300">—</span>
                           )}
                         </td>
+                        <td className="px-6 py-4 text-center text-xs text-gray-300">—</td>
                       </tr>
                       {showOrfanas && (
                         <tr>
-                          <td colSpan={8} className="bg-gray-50/60 p-0">
+                          <td colSpan={9 + BLOQUES_FICHA.length} className="bg-gray-50/60 p-0">
                             <table className="w-full">
                               <tbody>
-                                {gestionesSinFicha.map((gestion) => (
+                                {items.map((gestion) => (
                                   <tr
                                     key={gestion.id_gestion}
                                     onClick={() => navigate(role === 'sucursal' ? `/mis-desvios/${gestion.id_gestion}` : `/desvios/${gestion.id_gestion}`)}

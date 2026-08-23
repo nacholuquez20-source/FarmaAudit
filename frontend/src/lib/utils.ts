@@ -1,4 +1,4 @@
-import type { Severidad, GestionState, Gestion } from '../types';
+import type { AuditFicha, Severidad, GestionState, Gestion } from '../types';
 
 // El telefono/nombre se resuelven en vivo contra usuarios_whatsapp (ver
 // getResponsableActivo en api.ts) — nunca desde gestion.tel_responsable, que
@@ -154,14 +154,23 @@ export function esMesActual(fecha: string | null | undefined): boolean {
   return d.getFullYear() === hoy.getFullYear() && d.getMonth() === hoy.getMonth();
 }
 
-// Compartido entre SucursalDetail y AuditFichaDetail: los 4 bloques que
-// puntúa una auditoría de perfumería.
-export const BLOQUES_FICHA: { key: 'score_limpieza' | 'score_stock' | 'score_ofertas' | 'score_burbujas'; label: string }[] = [
-  { key: 'score_limpieza', label: 'Limpieza' },
-  { key: 'score_stock', label: 'Stock' },
-  { key: 'score_ofertas', label: 'Ofertas' },
-  { key: 'score_burbujas', label: 'Displays' },
+// Compartido entre SucursalDetail, AuditFichaDetail y AuditFichesGallery: los
+// 4 bloques que puntúa una auditoría de perfumería. Mismo orden y nombres que
+// BLOQUE_ORDER/BLOQUE_LABELS en audit_session.py (backend) — bloques_json
+// guarda las claves en mayúsculas tal cual salen de ahí.
+export const BLOQUES_FICHA: { key: string; label: string }[] = [
+  { key: 'LIMPIEZA', label: 'Limpieza' },
+  { key: 'STOCK', label: 'Stock' },
+  { key: 'OFERTAS', label: 'Ofertas' },
+  { key: 'BURBUJAS', label: 'Displays' },
 ];
+
+// bloques_json es null en fichas anteriores a etapa-28, y puede no tener
+// todas las claves aunque exista (auditorías libres que saltearon un bloque)
+// — nunca asumir que la clave está.
+export function getBloqueScore(ficha: AuditFicha, key: string): number | null {
+  return ficha.bloques_json?.[key] ?? null;
+}
 
 export function scoreColor(score: number | null): string {
   if (score === null) return 'text-slate-400';

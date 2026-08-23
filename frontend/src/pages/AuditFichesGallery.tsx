@@ -8,19 +8,13 @@ import { Select } from '../components/Select';
 import { analisisAuditoria, exportControlesPdf, getFichaById, getFichaPdfUrl, getSucursales } from '../lib/api';
 import type { AnalisisAuditoria } from '../lib/api';
 import { supabase } from '../lib/supabase';
+import { BLOQUES_FICHA, getBloqueScore } from '../lib/utils';
 import type { AuditFicha, Sucursal } from '../types';
 import { toast } from 'sonner';
 
 type Ficha = AuditFicha;
 
 const PAGE_SIZE = 24;
-
-const SCORE_LABELS: { key: keyof Ficha; label: string }[] = [
-  { key: 'score_limpieza', label: 'Limpieza' },
-  { key: 'score_stock', label: 'Stock' },
-  { key: 'score_ofertas', label: 'Ofertas' },
-  { key: 'score_burbujas', label: 'Burbujas' },
-];
 
 function scoreBadgeClasses(score: number | null): string {
   if (score === null) return 'bg-gray-400';
@@ -463,8 +457,8 @@ export function AuditFichesGalleryPanel() {
                   Puntajes por bloque
                 </p>
                 <div className="grid grid-cols-2 gap-2">
-                  {SCORE_LABELS.map(({ key, label }) => {
-                    const value = selected[key] as number | null;
+                  {BLOQUES_FICHA.map(({ key, label }) => {
+                    const value = getBloqueScore(selected, key);
                     return (
                       <div key={key} className="flex items-center justify-between">
                         <span className="text-gray-600">{label}</span>
