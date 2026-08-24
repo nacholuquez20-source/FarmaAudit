@@ -106,6 +106,16 @@ export function UsuariosWhatsappTab() {
     setShowForm(true);
   };
 
+  // Preasigna sucursal + rol para que "asociar sucursal, responsable y rol" sea un
+  // solo click desde el aviso de sucursales sin responsable — sin esto, el admin
+  // tiene que abrir el formulario, elegir "Responsable de sucursal" y después buscar
+  // la sucursal correcta en el select, a mano, cada vez.
+  const openFormParaSucursal = (idSucursal: string) => {
+    setForm({ ...EMPTY_FORM, rol: 'responsable_sucursal', id_sucursal: idSucursal });
+    setFormError('');
+    setShowForm(true);
+  };
+
   const handleRolChange = (rol: RolWhatsapp) => {
     setForm((current) => ({
       ...current,
@@ -140,8 +150,14 @@ export function UsuariosWhatsappTab() {
 
   const sucursalOptions = sucursalesActivas.map((s) => {
     const existente = responsablePorSucursal.get(s.id);
-    return { value: s.id, label: existente ? `${s.nombre} (ya: ${existente})` : s.nombre };
+    const zona = s.zona ? ` — ${s.zona}` : '';
+    return { value: s.id, label: existente ? `${s.nombre}${zona} (ya: ${existente})` : `${s.nombre}${zona}` };
   });
+
+  // Sucursales activas que todavía no tienen a nadie recibiendo sus mensajes de
+  // WhatsApp — es el gap que más rompe el flujo real (el encargado nunca se entera
+  // de un desvío) y antes quedaba invisible hasta que alguien lo notaba a mano.
+  const sucursalesSinResponsable = sucursalesActivas.filter((s) => !responsablePorSucursal.has(s.id));
 
   const searchNormalized = search.trim().toLowerCase();
   const usuariosFiltrados = searchNormalized
@@ -294,6 +310,27 @@ export function UsuariosWhatsappTab() {
       {error && (
         <div className="mb-4">
           <FeedbackState title={error} tone="error" />
+        </div>
+      )}
+
+      {sucursalesSinResponsable.length > 0 && (
+        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <p className="mb-2 text-sm font-semibold text-amber-900">
+            {sucursalesSinResponsable.length} sucursal{sucursalesSinResponsable.length === 1 ? '' : 'es'} sin responsable
+            asignado — no le va a llegar ningún mensaje del bot hasta que la asignes:
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {sucursalesSinResponsable.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => openFormParaSucursal(s.id)}
+                className="rounded-full border border-amber-300 bg-white px-3 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+              >
+                + {s.nombre}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 

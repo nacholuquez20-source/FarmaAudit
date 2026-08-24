@@ -4,7 +4,6 @@ import { AppLayout } from '../components/AppLayout';
 import {
   MarcasTab,
   SistemaTab,
-  SucursalesEditorTab,
   SucursalesTab,
   UsuariosPanelTab,
   UsuariosWhatsappTab,
@@ -53,12 +52,7 @@ export default function Admin() {
       </div>
 
       <div style={{ display: activeTab === 'sucursales' ? 'block' : 'none' }}>
-        {isMounted('sucursales') && (
-          <div className="space-y-8">
-            <SucursalesTab />
-            <SucursalesEditorTab />
-          </div>
-        )}
+        {isMounted('sucursales') && <SucursalesTab />}
       </div>
       <div style={{ display: activeTab === 'whatsapp' ? 'block' : 'none' }}>
         {isMounted('whatsapp') && <UsuariosWhatsappTab />}
