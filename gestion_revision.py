@@ -112,12 +112,15 @@ async def aplicar_revision_gestion(
     if telefono and accion in {"aprobar", "rechazar"}:
         try:
             if accion == "aprobar":
-                mensaje = f"FarmaAudit: tu correccion para \"{gestion.get('desvio')}\" fue aprobada. Gracias!"
+                mensaje = (
+                    f"✅ Tu corrección para \"{gestion.get('desvio')}\" quedó aprobada. "
+                    "¡Gracias por resolverlo!"
+                )
             else:
                 mensaje = (
-                    f"FarmaAudit: tu correccion para \"{gestion.get('desvio')}\" fue rechazada.\n"
-                    f"Motivo: {motivo}\n"
-                    "Responde este WhatsApp para verla de nuevo y volver a enviar la correccion."
+                    f"🔄 Tu corrección para \"{gestion.get('desvio')}\" todavía necesita un ajuste.\n"
+                    f"Motivo: {motivo}\n\n"
+                    "Escribinos por acá cuando quieras volver a intentarlo."
                 )
             await meta_client.send_text(telefono, mensaje)
         except Exception as exc:

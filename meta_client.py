@@ -377,6 +377,21 @@ class MetaClient:
         content, _ = await self.download_media_with_metadata(media_id)
         return content
 
+    async def download_media_by_url(self, media_url: str) -> Tuple[bytes, str]:
+        """Re-download bytes + mime type from a previously-resolved Meta CDN
+        media URL.
+
+        Meta's resolved media URLs require the same Authorization header as
+        the rest of the Graph API (they are not public links) and are only
+        valid for a short window after being issued — best-effort, callers
+        must handle failure (raises on any error, same as download_media).
+        """
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+        response = await self._get_with_retry(media_url, headers, timeout=60)
+        response.raise_for_status()
+        mime_type = response.headers.get("content-type", "image/jpeg").split(";")[0].strip()
+        return response.content, mime_type
+
     async def send_punto(
         self, phone: str, numero: int, total: int, area: str, descripcion: str
     ) -> bool:

@@ -246,9 +246,22 @@ async def get_previous_audit(sucursal_id: str) -> Optional[Dict]:
 
 
 async def send_manager_notification(
-    telefono: str, sucursal_id: str, meta_client: MetaClient
+    telefono: str,
+    sucursal_id: str,
+    meta_client: MetaClient,
+    auditor_nombre: Optional[str] = None,
+    desvio_count: int = 0,
 ) -> bool:
-    """Send WhatsApp notification to branch manager about audit completion."""
+    """Send WhatsApp notification to branch manager about audit completion.
+
+    Only covers the desvio_count == 0 case ("todo en orden") — cuando hay
+    desvíos, el aviso con el detalle lo manda
+    _notify_responsable_desvios_pendientes más adelante en el flujo, así que
+    mandar algo acá también sería un segundo mensaje casi idéntico.
+    """
+    if desvio_count > 0:
+        return True
+
     try:
         db = SupabaseManager()
         sucursal = db.get_sucursal(sucursal_id)
@@ -262,16 +275,12 @@ async def send_manager_notification(
             logger.warning(f"No manager phone for sucursal {sucursal_id}")
             return False
 
-        message = f"""📋 Auditoría de Perfumería Completada
-
-Sucursal: {sucursal.nombre if sucursal else sucursal_id}
-Auditor: {telefono}
-Fecha: {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M')}
-
-✅ Auditoría enviada con hallazgos pendientes de revisar.
-
-Por favor revisar los detalles en el sistema.
-"""
+        message = (
+            f"📋 Se auditó {sucursal.nombre if sucursal else sucursal_id} hoy "
+            f"({datetime.now(timezone.utc).strftime('%d/%m/%Y')}), "
+            f"a cargo de {auditor_nombre or 'el equipo de auditoría'}.\n\n"
+            f"✅ No se encontraron desvíos. ¡Felicitaciones al equipo!"
+        )
 
         return await meta_client.send_text(responsable.telefono, message)
 

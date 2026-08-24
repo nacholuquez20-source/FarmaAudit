@@ -61,6 +61,74 @@ def _download_bytes(url: str) -> Optional[bytes]:
         return None
 
 
+def _mapear_auditor_telefono(db: SupabaseManager, gestion_ids: List[str]) -> Dict[str, Optional[str]]:
+    """Para cada id_gestion, resuelve el telefono del auditor via su ficha
+    (gestion.ficha_id -> audit_fiches.auditor_telefono). Gestiones sin
+    ficha_id (previas al Bloque 2) o cuya ficha no tiene auditor_telefono
+    resuelto (historicas, nombre ambiguo) mapean a None — el caller decide
+    que hacer (hoy: descartarlas del envio por WhatsApp)."""
+    if not gestion_ids:
+        return {}
+    gestiones_resp = (
+        db.client.table("gestion")
+        .select("id_gestion, ficha_id")
+        .in_("id_gestion", gestion_ids)
+        .execute()
+    )
+    gestiones_by_id = {g["id_gestion"]: g for g in (gestiones_resp.data or [])}
+
+    ficha_ids = sorted({g["ficha_id"] for g in gestiones_by_id.values() if g.get("ficha_id")})
+    auditor_telefono_by_ficha: Dict[str, Optional[str]] = {}
+    if ficha_ids:
+        fichas_resp = (
+            db.client.table("audit_fiches")
+            .select("id, auditor_telefono")
+            .in_("id", ficha_ids)
+            .execute()
+        )
+        auditor_telefono_by_ficha = {f["id"]: f.get("auditor_telefono") for f in (fichas_resp.data or [])}
+
+    return {
+        id_gestion: (auditor_telefono_by_ficha.get(g["ficha_id"]) if g.get("ficha_id") else None)
+        for id_gestion, g in gestiones_by_id.items()
+    }
+
+
+def _filtrar_eventos_nuevos(
+    db: SupabaseManager,
+    id_sucursal: str,
+    auditor_telefono: str,
+    eventos_por_gestion: Dict[str, List[Dict[str, Any]]],
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Descarta eventos ya cubiertos por un informe anterior de este mismo
+    (sucursal, auditor) — mismo criterio para el job de fondo y el disparo
+    inmediato, asi nunca se duplica un hallazgo entre los dos caminos."""
+    ultimo_informe_resp = (
+        db.client.table("informes_respuesta")
+        .select("corte_at")
+        .eq("id_sucursal", id_sucursal)
+        .eq("auditor_telefono", auditor_telefono)
+        .order("corte_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    ultimo_corte = None
+    if ultimo_informe_resp.data:
+        ultimo_corte = datetime.fromisoformat(ultimo_informe_resp.data[0]["corte_at"].replace("Z", "+00:00"))
+
+    eventos_pendientes: Dict[str, List[Dict[str, Any]]] = {}
+    for id_gestion, eventos_gestion in eventos_por_gestion.items():
+        nuevos = eventos_gestion
+        if ultimo_corte:
+            nuevos = [
+                e for e in eventos_gestion
+                if datetime.fromisoformat(e["created_at"].replace("Z", "+00:00")) > ultimo_corte
+            ]
+        if nuevos:
+            eventos_pendientes[id_gestion] = nuevos
+    return eventos_pendientes
+
+
 def _consolidar_respuesta(eventos: List[Dict[str, Any]]) -> Dict[str, Any]:
     """De todos los eventos de un desvio dentro de la ventana, arma una sola
     respuesta: el comentario es la concatenacion en orden (el encargado puede
@@ -276,17 +344,7 @@ async def enviar_informes_respuesta() -> None:
             .execute()
         )
         gestiones_by_id = {g["id_gestion"]: g for g in (gestiones_resp.data or [])}
-
-        ficha_ids = sorted({g["ficha_id"] for g in gestiones_by_id.values() if g.get("ficha_id")})
-        auditor_telefono_by_ficha: Dict[str, Optional[str]] = {}
-        if ficha_ids:
-            fichas_resp = (
-                db.client.table("audit_fiches")
-                .select("id, auditor_telefono")
-                .in_("id", ficha_ids)
-                .execute()
-            )
-            auditor_telefono_by_ficha = {f["id"]: f.get("auditor_telefono") for f in (fichas_resp.data or [])}
+        auditor_telefono_by_gestion = _mapear_auditor_telefono(db, gestion_ids)
 
         # Agrupar eventos por (id_sucursal, auditor_telefono). Gestiones sin
         # ficha_id (previas al Bloque 2) o cuya ficha no tiene auditor_telefono
@@ -298,8 +356,7 @@ async def enviar_informes_respuesta() -> None:
             gestion = gestiones_by_id.get(evento["id_gestion"])
             if not gestion:
                 continue
-            ficha_id = gestion.get("ficha_id")
-            auditor_telefono = auditor_telefono_by_ficha.get(ficha_id) if ficha_id else None
+            auditor_telefono = auditor_telefono_by_gestion.get(evento["id_gestion"])
             if not auditor_telefono:
                 continue
 
@@ -316,31 +373,8 @@ async def enviar_informes_respuesta() -> None:
         for (id_sucursal, auditor_telefono), grupo in grupos.items():
             eventos_por_gestion = grupo["eventos_por_gestion"]
 
-            ultimo_informe_resp = (
-                db.client.table("informes_respuesta")
-                .select("corte_at")
-                .eq("id_sucursal", id_sucursal)
-                .eq("auditor_telefono", auditor_telefono)
-                .order("corte_at", desc=True)
-                .limit(1)
-                .execute()
-            )
-            ultimo_corte = None
-            if ultimo_informe_resp.data:
-                ultimo_corte = datetime.fromisoformat(ultimo_informe_resp.data[0]["corte_at"].replace("Z", "+00:00"))
-
             # Filtrar a solo eventos posteriores al ultimo corte de ESTE grupo.
-            eventos_pendientes: Dict[str, List[Dict[str, Any]]] = {}
-            for id_gestion, eventos_gestion in eventos_por_gestion.items():
-                nuevos = eventos_gestion
-                if ultimo_corte:
-                    nuevos = [
-                        e for e in eventos_gestion
-                        if datetime.fromisoformat(e["created_at"].replace("Z", "+00:00")) > ultimo_corte
-                    ]
-                if nuevos:
-                    eventos_pendientes[id_gestion] = nuevos
-
+            eventos_pendientes = _filtrar_eventos_nuevos(db, id_sucursal, auditor_telefono, eventos_por_gestion)
             if not eventos_pendientes:
                 continue
 
@@ -367,3 +401,76 @@ async def enviar_informes_respuesta() -> None:
 
     except Exception as e:
         logger.error(f"Error en job de informes de respuestas: {e}", exc_info=True)
+
+
+async def generar_informe_inmediato_sucursal(id_sucursal: str, gestion_ids: List[str]) -> List[Dict[str, Any]]:
+    """Dispara el informe de respuestas para una sucursal ahora mismo, sin
+    esperar el debounce de enviar_informes_respuesta — se usa cuando el
+    encargado termina de responder todos sus desvios pendientes en una sola
+    sesion de WhatsApp (ver router.py:_continue_desvio_flow). El job de
+    fondo sigue corriendo igual como red de seguridad para sesiones que
+    quedan a medio terminar (el encargado corta y no vuelve a escribir).
+
+    gestion_ids: las gestiones que el encargado toco en esta sesion. Pueden
+    corresponder a mas de un auditor (desvios de auditorias viejas todavia
+    abiertas) — se agrupan y, si hace falta, se manda mas de un PDF."""
+    if not gestion_ids:
+        return []
+    try:
+        db = SupabaseManager()
+
+        eventos_resp = (
+            db.client.table("desvio_eventos")
+            .select("id, id_gestion, tipo, comentario, metadata, created_at")
+            .in_("id_gestion", gestion_ids)
+            .in_("tipo", list(TIPOS_RESPUESTA_ENCARGADO))
+            .order("created_at")
+            .execute()
+        )
+        eventos = [
+            e for e in (eventos_resp.data or [])
+            if (e.get("metadata") or {}).get("origen") == "sucursal"
+        ]
+        if not eventos:
+            return []
+
+        auditor_telefono_by_gestion = _mapear_auditor_telefono(db, gestion_ids)
+
+        grupos: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+        for evento in eventos:
+            auditor_telefono = auditor_telefono_by_gestion.get(evento["id_gestion"])
+            if not auditor_telefono:
+                continue
+            grupo = grupos.setdefault(auditor_telefono, {})
+            grupo.setdefault(evento["id_gestion"], []).append(evento)
+
+        if not grupos:
+            return []
+
+        meta_client = MetaClient()
+        resultados = []
+
+        for auditor_telefono, eventos_por_gestion in grupos.items():
+            eventos_pendientes = _filtrar_eventos_nuevos(db, id_sucursal, auditor_telefono, eventos_por_gestion)
+            if not eventos_pendientes:
+                continue
+
+            todos_los_eventos = [e for lst in eventos_pendientes.values() for e in lst]
+            corte_at = max(
+                datetime.fromisoformat(e["created_at"].replace("Z", "+00:00")) for e in todos_los_eventos
+            ).isoformat()
+
+            resultado = await _generar_y_enviar_informe(
+                db, meta_client, id_sucursal, auditor_telefono,
+                gestion_ids=sorted(eventos_pendientes.keys()),
+                eventos_por_gestion=eventos_pendientes,
+                corte_at=corte_at,
+            )
+            resultados.append(resultado)
+            if resultado["resultado"] not in ("enviado", "sin_ventana"):
+                logger.warning(f"Informe inmediato para {id_sucursal}/{auditor_telefono}: {resultado['resultado']}")
+
+        return resultados
+    except Exception as e:
+        logger.error(f"Error generando informe inmediato para {id_sucursal}: {e}", exc_info=True)
+        return []

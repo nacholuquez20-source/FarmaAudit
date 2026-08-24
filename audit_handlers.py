@@ -130,9 +130,9 @@ async def _notify_responsable_desvios_pendientes(
 
         cantidad = len(session.desvios)
         texto = (
-            f"🚨 Se detectaron {cantidad} desvío(s) en tu sucursal durante la auditoría de hoy.\n\n"
+            f"📋 La auditoría de hoy encontró {cantidad} punto(s) para mejorar en tu sucursal.\n\n"
             f"Tu auditor/a te va a compartir el detalle con fotos y comentarios por WhatsApp. "
-            f"Cuando resuelvas alguno, escribinos a este mismo número para actualizarlo."
+            f"A medida que resuelvas cada uno, escribinos a este mismo número para dejarlo registrado."
         )
         ok = await meta_client.send_text(tel, texto)
         if ok:
@@ -2398,7 +2398,9 @@ class AuditConversationHandler:
                 # Manager notification (non-blocking)
                 try:
                     await send_manager_notification(
-                        payload.telefono, session.sucursal_id, meta_client
+                        payload.telefono, session.sucursal_id, meta_client,
+                        auditor_nombre=session.auditor_nombre,
+                        desvio_count=len(session.desvios),
                     )
                 except Exception as e:
                     logger.warning(f"Failed to send manager notification: {e}")

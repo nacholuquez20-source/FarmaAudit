@@ -1125,6 +1125,23 @@ class SupabaseManager:
             logger.error(f"Failed to get gestion {id_gestion}: {e}")
             return None
 
+    def get_reporte_foto_url(self, id_reporte: Optional[str]) -> Optional[str]:
+        """Foto capturada por el auditor al detectar el hallazgo, si existe.
+
+        Es una URL de Meta resuelta en el momento de la auditoria (no un
+        link publico) — quien la use debe re-descargarla con el mismo
+        Bearer token que el resto de la Graph API, y tolerar que ya haya
+        vencido (ver informes_respuesta.py, mismo caveat)."""
+        if not id_reporte:
+            return None
+        try:
+            response = self.client.table("reportes").select("foto_url").eq("id", id_reporte).execute()
+            data = response.data or []
+            return (data[0].get("foto_url") or None) if data else None
+        except Exception as e:
+            logger.warning(f"Failed to get reporte {id_reporte}: {e}")
+            return None
+
     def _generate_thumbnail(self, content: bytes, mime_type: str) -> Optional[bytes]:
         """Generate thumbnail from image bytes. Returns thumbnail bytes or None on failure."""
         if not mime_type.startswith("image/"):
@@ -1146,8 +1163,11 @@ class SupabaseManager:
             "image/png": "png",
             "image/webp": "webp",
             "application/pdf": "pdf",
+            "audio/mpeg": "mp3",
+            "audio/ogg": "ogg",
+            "audio/mp4": "m4a",
         }
-        ext = ext_by_mime.get(mime_type, "jpg")
+        ext = ext_by_mime.get(mime_type, "bin" if mime_type.startswith("audio/") else "jpg")
         uuid_hex = uuid.uuid4().hex
         path = f"gestion/{id_gestion}/whatsapp-{uuid_hex}.{ext}"
 

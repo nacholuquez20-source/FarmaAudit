@@ -31,6 +31,7 @@ class ConversationState(str, Enum):
     AUDITORIA_PAUSADA = "auditoria_pausada"
     RECOLECTANDO_RESPUESTA = "recolectando_respuesta"
     ENCARGADO_SELECCIONANDO_DESVIO = "encargado_seleccionando_desvio"
+    ENCARGADO_DESVIO_ACTIVO = "encargado_desvio_activo"
     ENCARGADO_ESPERANDO_RESPUESTA = "encargado_esperando_respuesta"
     ENCARGADO_ELIGIENDO_MODULO = "encargado_eligiendo_modulo"
     CAMPANIA_LISTANDO_TAREAS = "campania_listando_tareas"

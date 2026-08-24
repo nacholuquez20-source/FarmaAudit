@@ -47,6 +47,7 @@ from audit_session import (
     BLOQUE_LABELS, BLOQUE_DESCRIPTIONS
 )
 from audit_handlers import AuditConversationHandler
+from informes_respuesta import generar_informe_inmediato_sucursal
 
 
 logger = logging.getLogger(__name__)
@@ -404,12 +405,43 @@ class ConversationRouter:
         except json.JSONDecodeError:
             return {}
 
-    @staticmethod
-    def _format_desvio_option(index: int, gestion: Dict[str, Any]) -> str:
-        descripcion = str(gestion.get("desvio") or "Sin descripcion").strip()
-        if len(descripcion) > 90:
-            descripcion = f"{descripcion[:87]}..."
-        return f"{index}) [{gestion.get('severidad', '-')}] {descripcion}"
+    async def _enviar_foto_hallazgo(
+        self,
+        meta_client: MetaClient,
+        telefono: str,
+        gestion: Dict[str, Any],
+    ) -> None:
+        """Best-effort: reenvía al encargado la foto que sacó el auditor al
+        detectar el desvío, para que vea exactamente qué se marcó mal.
+
+        reportes.foto_url es una URL autenticada de Meta capturada en el
+        momento de la auditoría — puede haber vencido para cuando el
+        encargado la ve. Si falla, seguimos sin foto en vez de cortar el
+        recorrido (mismo criterio que informes_respuesta.py con esta misma
+        URL)."""
+        id_reporte = gestion.get("id_reporte")
+        if not id_reporte:
+            return
+        foto_url = self.sheets.get_reporte_foto_url(id_reporte)
+        if not foto_url:
+            return
+        try:
+            content, mime_type = await meta_client.download_media_by_url(foto_url)
+            upload_result = self.sheets.upload_desvio_evidencia(str(gestion["id_gestion"]), content, mime_type)
+            signed_url = self.sheets.create_signed_evidencia_url(upload_result["path"])
+            if signed_url:
+                await meta_client.send_image_by_url(telefono, signed_url)
+        except Exception as e:
+            logger.info(f"No se pudo reenviar la foto del hallazgo {gestion.get('id_gestion')}: {e}")
+
+    async def _disparar_informe_inmediato(self, id_sucursal: str, gestion_ids: List[str]) -> None:
+        """Best-effort: no debe frenar la conversación con el encargado si
+        el armado del PDF falla — enviar_informes_respuesta (job de fondo)
+        es la red de seguridad para lo que quede sin mandar acá."""
+        try:
+            await generar_informe_inmediato_sucursal(id_sucursal, gestion_ids)
+        except Exception as e:
+            logger.warning(f"No se pudo disparar el informe inmediato para {id_sucursal}: {e}")
 
     async def handle_encargado_message(
         self,
@@ -431,7 +463,16 @@ class ConversationRouter:
             )
 
         if conv.estado_actual == ConversationState.ENCARGADO_SELECCIONANDO_DESVIO:
-            return await self._handle_encargado_seleccion(payload, conv, meta_client, encargado)
+            # Estado del flujo viejo (lista numerada), reemplazado por el
+            # recorrido uno-a-uno. Si alguien queda a mitad de una
+            # conversacion vieja justo cuando se despliega este cambio, se
+            # reinicia con el flujo nuevo en vez de caer en un handler que
+            # ya no existe.
+            self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
+            return await self._start_encargado_flow(payload, meta_client, encargado)
+
+        if conv.estado_actual == ConversationState.ENCARGADO_DESVIO_ACTIVO:
+            return await self._handle_encargado_desvio_activo(payload, conv, meta_client, encargado)
 
         if conv.estado_actual == ConversationState.ENCARGADO_ESPERANDO_RESPUESTA:
             return await self._handle_encargado_respuesta(payload, conv, meta_client, encargado)
@@ -471,7 +512,7 @@ class ConversationRouter:
         if not gestiones and not tareas:
             await meta_client.send_text(
                 payload.telefono,
-                f"Hola {encargado.get('nombre') or ''}. No tenes desvios ni tareas de campana pendientes.",
+                f"Hola {encargado.get('nombre') or ''}. No tenés desvíos ni tareas de campaña pendientes.",
             )
             self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
             return "encargado_sin_pendientes"
@@ -480,12 +521,12 @@ class ConversationRouter:
             await meta_client.send_quick_reply(
                 payload.telefono,
                 (
-                    f"Hola {encargado.get('nombre') or ''}. Tenes {len(gestiones)} desvio(s) y "
-                    f"{len(tareas)} tarea(s) de campana pendientes. Que queres ver?"
+                    f"Hola {encargado.get('nombre') or ''}. Tenés {len(gestiones)} desvío(s) y "
+                    f"{len(tareas)} tarea(s) de campaña pendientes. ¿Qué querés ver?"
                 ),
                 buttons=[
-                    {"id": "ver_desvios", "title": "Desvios"},
-                    {"id": "ver_campanias", "title": "Campanias"},
+                    {"id": "ver_desvios", "title": "Desvíos"},
+                    {"id": "ver_campanias", "title": "Campañas"},
                 ],
             )
             self.sheets.update_conversacion(payload.telefono, ConversationState.ENCARGADO_ELIGIENDO_MODULO)
@@ -509,7 +550,7 @@ class ConversationRouter:
         if choice == "ver_campanias":
             tareas = self.sheets.get_campania_tareas_pendientes_sucursal(id_sucursal)
             if not tareas:
-                await meta_client.send_text(payload.telefono, "No tenes tareas de campana pendientes.")
+                await meta_client.send_text(payload.telefono, "No tenés tareas de campaña pendientes.")
                 self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
                 return "encargado_campanias_vacio"
             return await self._start_campania_flow(payload, meta_client, encargado, tareas)
@@ -517,12 +558,12 @@ class ConversationRouter:
         if choice == "ver_desvios":
             gestiones = self.sheets.get_gestiones_pendientes_sucursal(id_sucursal)
             if not gestiones:
-                await meta_client.send_text(payload.telefono, "No tenes desvios pendientes.")
+                await meta_client.send_text(payload.telefono, "No tenés desvíos pendientes.")
                 self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
                 return "encargado_desvios_vacio"
             return await self._start_desvio_flow(payload, meta_client, encargado, gestiones)
 
-        await meta_client.send_text(payload.telefono, "Elegi una opcion: Desvios o Campanias.")
+        await meta_client.send_text(payload.telefono, "Elegí una opción: Desvíos o Campañas.")
         return "encargado_modulo_invalido"
 
     async def _start_desvio_flow(
@@ -531,31 +572,130 @@ class ConversationRouter:
         meta_client: MetaClient,
         encargado: Dict[str, Any],
         gestiones: List[Dict[str, Any]],
+        skip_ids: Optional[List[str]] = None,
+        resueltos_ids: Optional[List[str]] = None,
     ) -> str:
-        MAX_OPCIONES_DESVIO = 20
-        opciones = gestiones[:MAX_OPCIONES_DESVIO]
-        header = f"Hola {encargado.get('nombre') or ''}. Tenes {len(gestiones)} desvio(s) pendiente(s)"
-        if len(gestiones) > len(opciones):
-            header += f" (mostrando los primeros {len(opciones)})"
-        lines = [
-            f"{header}:",
-            "",
-            *[self._format_desvio_option(index, gestion) for index, gestion in enumerate(opciones, start=1)],
-            "",
-            "Responde con el numero del desvio que queres corregir.",
-        ]
+        """Arranca (o retoma) el recorrido de desvíos pendientes uno a la
+        vez: foto del hallazgo (best-effort) + descripción + botones 'Ya lo
+        resolví' / 'Saltar por ahora'. Reemplaza la lista numerada anterior
+        con el mismo patrón paso-a-paso que ya usa el flujo de campañas
+        (ver _start_campania_flow / _continue_campania_flow)."""
+        skip_ids = skip_ids or []
+        resueltos_ids = resueltos_ids or []
+        pendientes = [g for g in gestiones if str(g.get("id_gestion")) not in skip_ids]
+
+        if not pendientes:
+            if not gestiones:
+                texto = "🎉 Terminaste con todos los desvíos pendientes de tu sucursal. ¡Gracias!"
+            else:
+                texto = (
+                    "Por ahora no tengo más desvíos para mostrarte — dejaste algunos salteados. "
+                    "Escribime cuando quieras retomarlos."
+                )
+            await meta_client.send_text(payload.telefono, texto)
+            self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
+            if resueltos_ids:
+                await self._disparar_informe_inmediato(str(encargado["id_sucursal"]), resueltos_ids)
+            return "encargado_desvios_completado" if not gestiones else "encargado_desvios_pausados"
+
+        gestion = pendientes[0]
+        id_gestion = str(gestion["id_gestion"])
+
+        await self._enviar_foto_hallazgo(meta_client, payload.telefono, gestion)
+
+        restantes = len(pendientes)
+        descripcion = str(gestion.get("desvio") or "Sin descripción").strip()
+        severidad = gestion.get("severidad", "-")
+        plural = "s" if restantes != 1 else ""
+        body = (
+            f"📋 Te queda{plural} {restantes} desvío(s) por resolver en tu sucursal.\n\n"
+            f"[{severidad}] {descripcion}"
+        )
         context = {
-            "flujo": "encargado",
+            "flujo": "encargado_desvio",
             "id_sucursal": encargado["id_sucursal"],
-            "opciones": [gestion["id_gestion"] for gestion in opciones if gestion.get("id_gestion")],
+            "id_gestion": id_gestion,
+            "skip_ids": skip_ids,
+            "resueltos_ids": resueltos_ids,
         }
         self.sheets.update_conversacion(
             telefono=payload.telefono,
-            estado=ConversationState.ENCARGADO_SELECCIONANDO_DESVIO,
+            estado=ConversationState.ENCARGADO_DESVIO_ACTIVO,
+            id_pendiente=id_gestion,
             ultimo_mensaje=json.dumps(context),
         )
-        await meta_client.send_text(payload.telefono, "\n".join(lines))
-        return "encargado_menu_enviado"
+        await meta_client.send_quick_reply(
+            payload.telefono,
+            body,
+            buttons=[
+                {"id": "desvio_resuelto", "title": "✅ Ya lo resolví"},
+                {"id": "desvio_saltar", "title": "⏭️ Saltar por ahora"},
+            ],
+        )
+        return "encargado_desvio_activo_enviado"
+
+    async def _continue_desvio_flow(
+        self,
+        payload: WhatsAppPayload,
+        meta_client: MetaClient,
+        encargado: Dict[str, Any],
+        skip_ids: List[str],
+        resueltos_ids: List[str],
+    ) -> str:
+        """Vuelve a consultar los desvíos pendientes reales (los resueltos ya
+        salieron de la lista al pasar a estado En_revision) y muestra el
+        siguiente, o cierra el recorrido si no queda ninguno."""
+        id_sucursal = str(encargado["id_sucursal"])
+        gestiones = self.sheets.get_gestiones_pendientes_sucursal(id_sucursal)
+        return await self._start_desvio_flow(
+            payload, meta_client, encargado, gestiones,
+            skip_ids=skip_ids, resueltos_ids=resueltos_ids,
+        )
+
+    async def _handle_encargado_desvio_activo(
+        self,
+        payload: WhatsAppPayload,
+        conv: Conversacion,
+        meta_client: MetaClient,
+        encargado: Dict[str, Any],
+    ) -> str:
+        context = self._safe_json_loads(conv.ultimo_mensaje)
+        id_gestion = conv.id_pendiente or context.get("id_gestion")
+        skip_ids = list(context.get("skip_ids") or [])
+        resueltos_ids = list(context.get("resueltos_ids") or [])
+        choice = (payload.contenido or "").strip().lower()
+
+        if not id_gestion:
+            self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
+            return await self._start_encargado_flow(payload, meta_client, encargado)
+
+        if choice == "desvio_resuelto":
+            self.sheets.update_conversacion(
+                telefono=payload.telefono,
+                estado=ConversationState.ENCARGADO_ESPERANDO_RESPUESTA,
+                id_pendiente=str(id_gestion),
+                ultimo_mensaje=json.dumps(context),
+            )
+            await meta_client.send_text(
+                payload.telefono,
+                "Perfecto. Mandame una foto, un audio o escribime qué hiciste para resolverlo.",
+            )
+            return "encargado_desvio_resuelto_pedido_evidencia"
+
+        if choice == "desvio_saltar":
+            if str(id_gestion) not in skip_ids:
+                skip_ids.append(str(id_gestion))
+            return await self._continue_desvio_flow(payload, meta_client, encargado, skip_ids, resueltos_ids)
+
+        await meta_client.send_quick_reply(
+            payload.telefono,
+            "Elegí una opción: Ya lo resolví o Saltar por ahora.",
+            buttons=[
+                {"id": "desvio_resuelto", "title": "✅ Ya lo resolví"},
+                {"id": "desvio_saltar", "title": "⏭️ Saltar por ahora"},
+            ],
+        )
+        return "encargado_desvio_activo_invalido"
 
     @staticmethod
     def _format_tarea_row(tarea: Dict[str, Any]) -> Dict[str, str]:
@@ -590,8 +730,8 @@ class ConversationRouter:
         )
         await meta_client.send_list_message(
             payload.telefono,
-            header="Campanas",
-            body=f"Hola {encargado.get('nombre') or ''}. Tenes {len(tareas)} tarea(s) de campana pendientes.",
+            header="Campañas",
+            body=f"Hola {encargado.get('nombre') or ''}. Tenés {len(tareas)} tarea(s) de campaña pendientes.",
             footer="",
             button_text="Ver tareas",
             options=rows,
@@ -611,12 +751,12 @@ class ConversationRouter:
         tarea_id = (payload.contenido or "").strip()
 
         if tarea_id not in tareas_ids:
-            await meta_client.send_text(payload.telefono, "Elegi una tarea de la lista que te mande.")
+            await meta_client.send_text(payload.telefono, "Elegí una tarea de la lista que te mandé.")
             return "campania_seleccion_invalida"
 
         tarea = self.sheets.get_campania_tarea_by_id(tarea_id)
         if not tarea or tarea.get("id_sucursal") != encargado.get("id_sucursal"):
-            await meta_client.send_text(payload.telefono, "No pude encontrar esa tarea. Escribi cualquier mensaje para reiniciar.")
+            await meta_client.send_text(payload.telefono, "No pude encontrar esa tarea. Escribí cualquier mensaje para reiniciar.")
             self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
             return "campania_tarea_no_encontrada"
 
@@ -632,7 +772,7 @@ class ConversationRouter:
         label = accion.get("descripcion") or accion.get("tipo") or "Tarea"
         await meta_client.send_quick_reply(
             payload.telefono,
-            f"{campania.get('nombre') or 'Campana'}: {label}\nQue queres hacer?",
+            f"{campania.get('nombre') or 'Campaña'}: {label}\n¿Qué querés hacer?",
             buttons=[
                 {"id": "completada", "title": "Completada"},
                 {"id": "falta_insumo", "title": "Falta insumo"},
@@ -657,7 +797,7 @@ class ConversationRouter:
 
         tarea = self.sheets.get_campania_tarea_by_id(str(tarea_id))
         if not tarea or tarea.get("id_sucursal") != encargado.get("id_sucursal"):
-            await meta_client.send_text(payload.telefono, "Esa tarea ya no esta disponible.")
+            await meta_client.send_text(payload.telefono, "Esa tarea ya no está disponible.")
             self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
             return "campania_tarea_no_disponible"
 
@@ -697,10 +837,10 @@ class ConversationRouter:
                 id_pendiente=str(tarea_id),
                 ultimo_mensaje=json.dumps(context),
             )
-            await meta_client.send_text(payload.telefono, "Que insumo te falta? Contame brevemente (y cantidad si aplica).")
+            await meta_client.send_text(payload.telefono, "¿Qué insumo te falta? Contame brevemente (y cantidad si aplica).")
             return "campania_solicitando_insumo_detalle"
 
-        await meta_client.send_text(payload.telefono, "Elegi una opcion: Completada o Falta insumo.")
+        await meta_client.send_text(payload.telefono, "Elegí una opción: Completada o Falta insumo.")
         return "campania_tarea_activa_invalida"
 
     async def _handle_campania_esperando_evidencia(
@@ -718,7 +858,7 @@ class ConversationRouter:
 
         tarea = self.sheets.get_campania_tarea_by_id(str(tarea_id))
         if not tarea or tarea.get("id_sucursal") != encargado.get("id_sucursal"):
-            await meta_client.send_text(payload.telefono, "Esa tarea ya no esta disponible.")
+            await meta_client.send_text(payload.telefono, "Esa tarea ya no está disponible.")
             self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
             return "campania_tarea_no_disponible"
 
@@ -755,7 +895,7 @@ class ConversationRouter:
             return await self._continue_campania_flow(payload, meta_client, encargado)
         except Exception as e:
             logger.error(f"Error saving campania evidencia for {tarea_id}: {e}", exc_info=True)
-            await meta_client.send_text(payload.telefono, "No pude guardar la foto. Intenta nuevamente.")
+            await meta_client.send_text(payload.telefono, "No pude guardar la foto. Intentá nuevamente.")
             return "campania_evidencia_error"
 
     async def _handle_campania_solicitando_insumo_detalle(
@@ -773,7 +913,7 @@ class ConversationRouter:
 
         detalle = (payload.contenido or "").strip()
         if payload.tipo != "text" or not detalle:
-            await meta_client.send_text(payload.telefono, "Contame en texto que insumo te falta.")
+            await meta_client.send_text(payload.telefono, "Contame por texto qué insumo te falta.")
             return "campania_insumo_detalle_invalido"
 
         context["tarea_id"] = str(tarea_id)
@@ -786,7 +926,7 @@ class ConversationRouter:
         )
         await meta_client.send_quick_reply(
             payload.telefono,
-            "Quien provee ese insumo?",
+            "¿Quién provee ese insumo?",
             buttons=[
                 {"id": "laboratorio_apm", "title": "Laboratorio/APM"},
                 {"id": "cadena", "title": "Cadena"},
@@ -811,12 +951,12 @@ class ConversationRouter:
             return await self._start_encargado_flow(payload, meta_client, encargado)
 
         if proveedor not in {"laboratorio_apm", "cadena"}:
-            await meta_client.send_text(payload.telefono, "Elegi una opcion: Laboratorio/APM o Cadena.")
+            await meta_client.send_text(payload.telefono, "Elegí una opción: Laboratorio/APM o Cadena.")
             return "campania_insumo_proveedor_invalido"
 
         tarea = self.sheets.get_campania_tarea_by_id(str(tarea_id))
         if not tarea or tarea.get("id_sucursal") != encargado.get("id_sucursal"):
-            await meta_client.send_text(payload.telefono, "Esa tarea ya no esta disponible.")
+            await meta_client.send_text(payload.telefono, "Esa tarea ya no está disponible.")
             self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
             return "campania_tarea_no_disponible"
 
@@ -837,9 +977,9 @@ class ConversationRouter:
         )
 
         if proveedor == "laboratorio_apm":
-            mensaje = "Listo, quedo escalado al contacto de la marca/laboratorio para que te lo acerquen."
+            mensaje = "Listo, quedó escalado al contacto de la marca/laboratorio para que te lo acerquen."
         else:
-            mensaje = "Listo, tu pedido quedo enviado para aprobacion interna."
+            mensaje = "Listo, tu pedido quedó enviado para aprobación interna."
         await meta_client.send_text(payload.telefono, mensaje)
         return await self._continue_campania_flow(payload, meta_client, encargado)
 
@@ -851,50 +991,10 @@ class ConversationRouter:
     ) -> str:
         tareas = self.sheets.get_campania_tareas_pendientes_sucursal(str(encargado["id_sucursal"]))
         if not tareas:
-            await meta_client.send_text(payload.telefono, "No te quedan mas tareas de campana pendientes. Gracias!")
+            await meta_client.send_text(payload.telefono, "No te quedan más tareas de campaña pendientes. ¡Gracias!")
             self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
             return "campania_completa"
         return await self._start_campania_flow(payload, meta_client, encargado, tareas)
-
-    async def _handle_encargado_seleccion(
-        self,
-        payload: WhatsAppPayload,
-        conv: Conversacion,
-        meta_client: MetaClient,
-        encargado: Dict[str, Any],
-    ) -> str:
-        context = self._safe_json_loads(conv.ultimo_mensaje)
-        opciones_raw = context.get("opciones")
-        opciones: List[str] = opciones_raw if isinstance(opciones_raw, list) else []
-        try:
-            selected_index = int((payload.contenido or "").strip()) - 1
-        except ValueError:
-            await meta_client.send_text(payload.telefono, "Responde solo con el numero del desvio.")
-            return "encargado_seleccion_invalida"
-
-        if selected_index < 0 or selected_index >= len(opciones):
-            await meta_client.send_text(payload.telefono, "Ese numero no esta en la lista. Proba de nuevo.")
-            return "encargado_seleccion_fuera_rango"
-
-        id_gestion = opciones[selected_index]
-        gestion = self.sheets.get_gestion_by_id(id_gestion)
-        if not gestion or gestion.get("id_sucursal") != encargado.get("id_sucursal"):
-            await meta_client.send_text(payload.telefono, "No pude encontrar ese desvio. Escribi cualquier mensaje para reiniciar.")
-            self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
-            return "encargado_desvio_no_encontrado"
-
-        context["id_gestion"] = id_gestion
-        self.sheets.update_conversacion(
-            telefono=payload.telefono,
-            estado=ConversationState.ENCARGADO_ESPERANDO_RESPUESTA,
-            id_pendiente=id_gestion,
-            ultimo_mensaje=json.dumps(context),
-        )
-        await meta_client.send_text(
-            payload.telefono,
-            "Perfecto. Envia una foto de la correccion o escribi una descripcion de lo realizado.",
-        )
-        return "encargado_desvio_seleccionado"
 
     async def _handle_encargado_respuesta(
         self,
@@ -903,14 +1003,18 @@ class ConversationRouter:
         meta_client: MetaClient,
         encargado: Dict[str, Any],
     ) -> str:
-        id_gestion = conv.id_pendiente or self._safe_json_loads(conv.ultimo_mensaje).get("id_gestion")
+        context = self._safe_json_loads(conv.ultimo_mensaje)
+        id_gestion = conv.id_pendiente or context.get("id_gestion")
+        skip_ids = list(context.get("skip_ids") or [])
+        resueltos_ids = list(context.get("resueltos_ids") or [])
+
         if not id_gestion:
             self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
             return await self._start_encargado_flow(payload, meta_client, encargado)
 
         gestion = self.sheets.get_gestion_by_id(str(id_gestion))
         if not gestion or gestion.get("id_sucursal") != encargado.get("id_sucursal"):
-            await meta_client.send_text(payload.telefono, "Ese desvio ya no esta disponible para tu sucursal.")
+            await meta_client.send_text(payload.telefono, "Ese desvío ya no está disponible para tu sucursal.")
             self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
             return "encargado_desvio_no_disponible"
 
@@ -922,7 +1026,7 @@ class ConversationRouter:
                 path = upload_result["path"]
                 thumb_path = upload_result.get("thumb_path")
                 signed_url = self.sheets.create_signed_evidencia_url(path)
-                comentario = (payload.contenido or "").strip() or "Foto de correccion enviada por WhatsApp."
+                comentario = (payload.contenido or "").strip() or "Foto de corrección enviada por WhatsApp."
                 self.sheets.save_encargado_evento(
                     id_gestion=str(id_gestion),
                     tipo="evidencia",
@@ -933,6 +1037,26 @@ class ConversationRouter:
                         "foto_path": path,
                         "thumb_path": thumb_path,
                         "foto_url_signed": signed_url,
+                        "mime_type": mime_type,
+                        "size_bytes": len(content),
+                        "canal": "whatsapp",
+                    },
+                )
+            elif payload.tipo == "audio" and payload.media_id:
+                content, mime_type = await meta_client.download_media_with_metadata(payload.media_id)
+                upload_result = self.sheets.upload_desvio_evidencia(str(id_gestion), content, mime_type)
+                path = upload_result["path"]
+                signed_url = self.sheets.create_signed_evidencia_url(path)
+                comentario = (payload.contenido or "").strip() or "Audio enviado por WhatsApp."
+                self.sheets.save_encargado_evento(
+                    id_gestion=str(id_gestion),
+                    tipo="evidencia",
+                    contenido=comentario,
+                    actor_nombre=actor_nombre,
+                    metadata={
+                        "origen": "sucursal",
+                        "audio_path": path,
+                        "audio_url_signed": signed_url,
                         "mime_type": mime_type,
                         "size_bytes": len(content),
                         "canal": "whatsapp",
@@ -952,7 +1076,7 @@ class ConversationRouter:
                     },
                 )
             else:
-                await meta_client.send_text(payload.telefono, "Envia una foto o un texto con la correccion.")
+                await meta_client.send_text(payload.telefono, "Enviá una foto, un audio o un texto con la corrección.")
                 return "encargado_respuesta_invalida"
 
             self.sheets.update_gestion_fields(
@@ -963,12 +1087,17 @@ class ConversationRouter:
                 },
             )
             self.sheets.create_notifications_for_auditors(str(id_gestion))
-            self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
-            await meta_client.send_text(payload.telefono, "Recibida tu respuesta. El auditor la revisara en FarmaAudit.")
-            return "encargado_respuesta_guardada"
+            await meta_client.send_text(
+                payload.telefono,
+                "✅ Recibido, el auditor lo revisa y te avisamos si necesita algún ajuste.",
+            )
+
+            if str(id_gestion) not in resueltos_ids:
+                resueltos_ids.append(str(id_gestion))
+            return await self._continue_desvio_flow(payload, meta_client, encargado, skip_ids, resueltos_ids)
         except Exception as e:
             logger.error(f"Error saving encargado response for {id_gestion}: {e}", exc_info=True)
-            await meta_client.send_text(payload.telefono, "No pude guardar la respuesta. Intenta nuevamente.")
+            await meta_client.send_text(payload.telefono, "No pude guardar la respuesta. Intentá nuevamente.")
             return "encargado_respuesta_error"
 
     def _build_respuesta_collection(
@@ -2904,7 +3033,7 @@ EDITAR → Hacer cambios""",
 
                 msg = (
 
-                    f"🚨 **Nuevo Hallazgo de Auditoría**\n\n"
+                    f"📋 *Nuevo hallazgo de auditoría*\n\n"
 
                     f"Sucursal: {sucursal.nombre}\n"
 
@@ -2914,9 +3043,9 @@ EDITAR → Hacer cambios""",
 
                     f"Severidad: {hallazgo_data['severidad']}\n"
 
-                    f"Plazo: {plazo_fecha.strftime('%Y-%m-%d %H:%M')}\n\n"
+                    f"Plazo: {plazo_fecha.strftime('%d/%m/%Y')}\n\n"
 
-                    f"ID Gestión: {gestion_id}"
+                    f"Cuando lo resuelvas, escribinos por acá para dejarlo registrado."
 
                 )
 
@@ -5170,7 +5299,7 @@ EJEMPLO SI HAY DESVIOS:
 
                     msg = (
 
-                        f"🚨 **Hallazgo de Auditoría Guiada**\n\n"
+                        f"📋 *Nuevo hallazgo de auditoría*\n\n"
 
                         f"Sucursal: {sucursal.nombre}\n"
 
@@ -5180,9 +5309,9 @@ EJEMPLO SI HAY DESVIOS:
 
                         f"Severidad: {eval_result.severidad}\n"
 
-                        f"Plazo: {plazo_fecha.strftime('%Y-%m-%d %H:%M')}\n\n"
+                        f"Plazo: {plazo_fecha.strftime('%d/%m/%Y')}\n\n"
 
-                        f"ID Gestión: {gestion_id}"
+                        f"Cuando lo resuelvas, escribinos por acá para dejarlo registrado."
 
                     )
 
