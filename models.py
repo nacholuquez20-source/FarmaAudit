@@ -45,6 +45,19 @@ class ConversationState(str, Enum):
     PERFUMERIA_CAPTURANDO_EVIDENCIA = "perfumeria_capturando_evidencia"
     PERFUMERIA_DESCRIBIENDO_DESVIO = "perfumeria_describiendo_desvio"
 
+    # Crear/lanzar campanias y tours desde WhatsApp (auditor, Fase 8 —
+    # ver ARQUITECTURA_DESVIOS_CAMPANIAS.md, Modulo 4). Prefijo AUDITOR_CAMPANIA_
+    # para no colisionar con los CAMPANIA_* del encargado.
+    AUDITOR_ELIGIENDO_MODULO = "auditor_eligiendo_modulo"
+    AUDITOR_CAMPANIA_ELIGIENDO_TIPO = "auditor_campania_eligiendo_tipo"
+    AUDITOR_CAMPANIA_ELIGIENDO_MARCA = "auditor_campania_eligiendo_marca"
+    AUDITOR_CAMPANIA_NOMBRE = "auditor_campania_nombre"
+    AUDITOR_CAMPANIA_AGREGANDO_ACCION = "auditor_campania_agregando_accion"
+    AUDITOR_CAMPANIA_ESPERANDO_REFERENCIA = "auditor_campania_esperando_referencia"
+    AUDITOR_CAMPANIA_ALCANCE = "auditor_campania_alcance"
+    AUDITOR_CAMPANIA_PLAZO = "auditor_campania_plazo"
+    AUDITOR_CAMPANIA_CONFIRMANDO = "auditor_campania_confirmando"
+
 
 class Severidad(str, Enum):
     """Severity levels for findings."""

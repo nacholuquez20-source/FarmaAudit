@@ -1515,6 +1515,84 @@ class SupabaseManager:
             logger.warning(f"Failed to create signed campania referencia URL for {path}: {e}")
             return ""
 
+    def get_marcas_activas(self) -> List[Dict[str, Any]]:
+        """Catalogo de marcas para el paso 'elegir marca' del flujo de creacion de
+        campanias por WhatsApp (Fase 8)."""
+        try:
+            response = self.client.table("marcas").select("id, nombre").eq("activo", True).order("nombre").execute()
+            return response.data or []
+        except Exception as e:
+            logger.error(f"Failed to get marcas activas: {e}")
+            return []
+
+    def get_sucursales_activas(self) -> List[Dict[str, Any]]:
+        """Sucursales para el paso 'alcance' del flujo de creacion de campanias por
+        WhatsApp (Fase 8) -- segmentacion rapida y matching por nombre se resuelven
+        en Python sobre esta lista, no hace falta una query por filtro."""
+        try:
+            response = (
+                self.client.table("sucursales")
+                .select("id, nombre, categoria, tiene_perfumeria, responsable, tel_responsable")
+                .eq("activo", True)
+                .order("nombre")
+                .execute()
+            )
+            return response.data or []
+        except Exception as e:
+            logger.error(f"Failed to get sucursales activas: {e}")
+            return []
+
+    def upload_campania_referencia_borrador(self, content: bytes, mime_type: str) -> str:
+        """Sube una foto de referencia recibida por WhatsApp durante la creacion de una
+        campania por el auditor (Fase 8) ANTES de que exista la fila de `campanias`
+        (se crea recien al confirmar) -- el path usa un uuid en vez de campania_id."""
+        ext_by_mime = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+        ext = ext_by_mime.get(mime_type, "jpg")
+        path = f"campania-referencias/borrador-{uuid.uuid4().hex}.{ext}"
+        self.client.storage.from_("desvio-evidencias").upload(
+            path, content, {"content-type": mime_type, "upsert": "false"}
+        )
+        return path
+
+    def create_campania_bot(
+        self,
+        nombre: str,
+        tipo: str,
+        marca_id: Optional[str],
+        creado_por_telefono: str,
+    ) -> Dict[str, Any]:
+        """Crea la fila de `campanias` desde el bot de WhatsApp (Fase 8) -- usa service
+        role (bypassa RLS, como el resto del bot) en vez de PostgREST/RLS como el wizard
+        web. `creado_por` (FK a profiles) queda NULL a proposito: el bot identifica al
+        auditor solo por telefono, no por auth.uid(); `creado_por_telefono` es el rastro
+        real de quien la lanzo."""
+        response = self.client.table("campanias").insert({
+            "nombre": nombre,
+            "tipo": tipo,
+            "marca_id": marca_id,
+            "creado_por_telefono": creado_por_telefono,
+        }).execute()
+        data = response.data or []
+        return data[0] if data else {}
+
+    def create_campania_acciones_bot(self, campania_id: str, acciones: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Crea las filas de `campania_acciones` desde el bot (Fase 8). `acciones` ya
+        viene con `tipo`/`descripcion`/`imagen_referencia_path` resueltos por el flujo
+        conversacional (ver _handle_auditor_campania_*)."""
+        rows = [
+            {
+                "campania_id": campania_id,
+                "tipo": accion["tipo"],
+                "descripcion": accion.get("descripcion"),
+                "requiere_foto": accion.get("requiere_foto", True),
+                "verificable_por_foto": accion.get("verificable_por_foto", accion["tipo"] != "descuento_caja"),
+                "imagen_referencia_path": accion.get("imagen_referencia_path"),
+            }
+            for accion in acciones
+        ]
+        response = self.client.table("campania_acciones").insert(rows).execute()
+        return response.data or []
+
     def create_solicitud_insumo(
         self,
         tarea_id: str,

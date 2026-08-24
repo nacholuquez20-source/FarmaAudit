@@ -48,9 +48,34 @@ from audit_session import (
 )
 from audit_handlers import AuditConversationHandler
 from informes_respuesta import generar_informe_inmediato_sucursal
+from campanias_service import activar_campania_core, CampaniaActivarError
+import difflib
 
 
 logger = logging.getLogger(__name__)
+
+# Fase 8 (crear/lanzar campanias y tours desde WhatsApp) — ver
+# ARQUITECTURA_DESVIOS_CAMPANIAS.md, Modulo 4.
+MESES_ES = [
+    "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+]
+COMERCIAL_ACCION_LABELS = {
+    "exhibicion": "Exhibir productos",
+    "material_pop": "Material POP / cartel",
+    "burbuja_precio": "Burbuja de precio",
+    "descuento_caja": "Descuento en caja",
+    "custom": "Otra (personalizada)",
+}
+# Checklist fijo del Tour de Farmacias (Modulo 3, v5/v6) — mismo set que el wizard web.
+TOUR_ACCIONES_DEFAULT = [
+    ("vidriera", "Vidriera"),
+    ("iluminacion", "Iluminación"),
+    ("gondola_orden", "Orden de góndolas"),
+    ("piso", "Piso"),
+    ("limpieza", "Limpieza"),
+    ("heladera_cadena_frio", "Cadena de frío"),
+]
 
 
 
@@ -248,6 +273,10 @@ class ConversationRouter:
                     return await AuditConversationHandler.start_revision_bandeja(
                         payload, meta_client, auditor_nombre=auditor.nombre
                     )
+                if trigger in {"campaña", "campana", "campañas", "campanas", "nueva campaña", "nueva campana"}:
+                    return await self._iniciar_creacion_campania(payload, meta_client, tipo=None)
+                if trigger in {"tour", "tour de farmacias", "tour farmacias"}:
+                    return await self._iniciar_creacion_campania(payload, meta_client, tipo="tour_interno")
 
 
             # Get conversation state
@@ -272,7 +301,7 @@ class ConversationRouter:
             if payload.tipo == "text" and payload.contenido:
                 trigger = payload.contenido.lower().strip()
                 if trigger in {"hola", "inicio", "empezar", "comenzar", "start"}:
-                    return await self._iniciar_seleccion_sucursal(payload, meta_client)
+                    return await self._mostrar_menu_auditor(payload, meta_client)
 
             if payload.context_message_id and conv.estado_actual != ConversationState.RECOLECTANDO_RESPUESTA:
                 quoted_context = self.sheets.get_whatsapp_bot_message(payload.context_message_id)
@@ -373,6 +402,42 @@ class ConversationRouter:
             elif conv.estado_actual == ConversationState.PERFUMERIA_DESCRIBIENDO_DESVIO:
 
                 return await self._handle_perfumeria_descripcion_desvio(payload, conv, meta_client)
+
+            elif conv.estado_actual == ConversationState.AUDITOR_ELIGIENDO_MODULO:
+
+                return await self._handle_auditor_eligiendo_modulo(payload, conv, meta_client)
+
+            elif conv.estado_actual == ConversationState.AUDITOR_CAMPANIA_ELIGIENDO_TIPO:
+
+                return await self._handle_auditor_campania_eligiendo_tipo(payload, conv, meta_client)
+
+            elif conv.estado_actual == ConversationState.AUDITOR_CAMPANIA_ELIGIENDO_MARCA:
+
+                return await self._handle_auditor_campania_eligiendo_marca(payload, conv, meta_client)
+
+            elif conv.estado_actual == ConversationState.AUDITOR_CAMPANIA_NOMBRE:
+
+                return await self._handle_auditor_campania_nombre(payload, conv, meta_client)
+
+            elif conv.estado_actual == ConversationState.AUDITOR_CAMPANIA_AGREGANDO_ACCION:
+
+                return await self._handle_auditor_campania_agregando_accion(payload, conv, meta_client)
+
+            elif conv.estado_actual == ConversationState.AUDITOR_CAMPANIA_ESPERANDO_REFERENCIA:
+
+                return await self._handle_auditor_campania_esperando_referencia(payload, conv, meta_client)
+
+            elif conv.estado_actual == ConversationState.AUDITOR_CAMPANIA_ALCANCE:
+
+                return await self._handle_auditor_campania_alcance(payload, conv, meta_client)
+
+            elif conv.estado_actual == ConversationState.AUDITOR_CAMPANIA_PLAZO:
+
+                return await self._handle_auditor_campania_plazo(payload, conv, meta_client)
+
+            elif conv.estado_actual == ConversationState.AUDITOR_CAMPANIA_CONFIRMANDO:
+
+                return await self._handle_auditor_campania_confirmando(payload, conv, meta_client)
 
             else:
 
@@ -1026,6 +1091,564 @@ class ConversationRouter:
             self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
             return "campania_completa"
         return await self._start_campania_flow(payload, meta_client, encargado, tareas)
+
+    # ============================================================
+    # Fase 8 — crear y lanzar Campañas/Tour desde WhatsApp (auditor)
+    # Ver ARQUITECTURA_DESVIOS_CAMPANIAS.md, Módulo 4.
+    # ============================================================
+
+    async def _mostrar_menu_auditor(self, payload: WhatsAppPayload, meta_client: MetaClient) -> str:
+        self.sheets.update_conversacion(payload.telefono, ConversationState.AUDITOR_ELIGIENDO_MODULO)
+        await meta_client.send_quick_reply(
+            payload.telefono,
+            "¿Qué querés hacer?",
+            buttons=[
+                {"id": "auditar", "title": "🔍 Auditar"},
+                {"id": "campania", "title": "📣 Campaña"},
+                {"id": "tour", "title": "🚶 Tour"},
+            ],
+        )
+        return "auditor_menu_enviado"
+
+    async def _handle_auditor_eligiendo_modulo(
+        self, payload: WhatsAppPayload, conv: Conversacion, meta_client: MetaClient
+    ) -> str:
+        choice = (payload.contenido or "").strip().lower()
+        if choice == "auditar":
+            return await self._iniciar_seleccion_sucursal(payload, meta_client)
+        if choice == "campania":
+            return await self._iniciar_creacion_campania(payload, meta_client, tipo="comercial")
+        if choice == "tour":
+            return await self._iniciar_creacion_campania(payload, meta_client, tipo="tour_interno")
+        await meta_client.send_text(payload.telefono, "Elegí una opción del menú.")
+        return "auditor_menu_invalido"
+
+    async def _chequear_cancelacion_auditor_campania(
+        self, payload: WhatsAppPayload, meta_client: MetaClient
+    ) -> Optional[str]:
+        """Cancelación explícita en cualquier paso del flujo — reusa el mismo helper
+        (`_is_cancel_intent`) que ya usan EN_BLOQUE/STOCK_LOOP, no uno nuevo."""
+        if payload.tipo == "text" and self._is_cancel_intent(payload.contenido or ""):
+            self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
+            await meta_client.send_text(payload.telefono, "Cancelado, no se creó nada. Escribime \"hola\" para el menú.")
+            return "auditor_campania_cancelada"
+        return None
+
+    async def _iniciar_creacion_campania(
+        self, payload: WhatsAppPayload, meta_client: MetaClient, tipo: Optional[str]
+    ) -> str:
+        context: Dict[str, Any] = {"flujo": "auditor_campania", "tipo": tipo}
+        if tipo is None:
+            self.sheets.update_conversacion(
+                telefono=payload.telefono,
+                estado=ConversationState.AUDITOR_CAMPANIA_ELIGIENDO_TIPO,
+                ultimo_mensaje=json.dumps(context),
+            )
+            await meta_client.send_quick_reply(
+                payload.telefono,
+                "¿Campaña de marca o Tour de Farmacias?",
+                buttons=[
+                    {"id": "comercial", "title": "Campaña de marca"},
+                    {"id": "tour_interno", "title": "Tour de Farmacias"},
+                ],
+            )
+            return "auditor_campania_eligiendo_tipo"
+        return await self._continuar_tras_tipo(payload, meta_client, context)
+
+    async def _handle_auditor_campania_eligiendo_tipo(
+        self, payload: WhatsAppPayload, conv: Conversacion, meta_client: MetaClient
+    ) -> str:
+        cancel = await self._chequear_cancelacion_auditor_campania(payload, meta_client)
+        if cancel:
+            return cancel
+        choice = (payload.contenido or "").strip().lower()
+        if choice not in {"comercial", "tour_interno"}:
+            await meta_client.send_text(payload.telefono, "Elegí: Campaña de marca o Tour de Farmacias.")
+            return "auditor_campania_tipo_invalido"
+        context = self._safe_json_loads(conv.ultimo_mensaje)
+        context["tipo"] = choice
+        return await self._continuar_tras_tipo(payload, meta_client, context)
+
+    async def _continuar_tras_tipo(
+        self, payload: WhatsAppPayload, meta_client: MetaClient, context: Dict[str, Any]
+    ) -> str:
+        if context["tipo"] == "comercial":
+            marcas = self.sheets.get_marcas_activas()
+            if not marcas:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "No hay marcas cargadas todavía. Pedile al admin que cargue una marca desde el panel web antes de lanzar una campaña.",
+                )
+                self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
+                return "auditor_campania_sin_marcas"
+            context["marcas_opciones"] = {m["id"]: m["nombre"] for m in marcas[:10]}
+            self.sheets.update_conversacion(
+                telefono=payload.telefono,
+                estado=ConversationState.AUDITOR_CAMPANIA_ELIGIENDO_MARCA,
+                ultimo_mensaje=json.dumps(context),
+            )
+            await meta_client.send_list_message(
+                payload.telefono,
+                header="Marcas",
+                body="¿De qué marca es la campaña?",
+                footer="",
+                button_text="Elegir marca",
+                options=[{"id": m["id"], "title": str(m["nombre"])[:24]} for m in marcas[:10]],
+            )
+            return "auditor_campania_eligiendo_marca"
+
+        # Tour de Farmacias: sin marca, checklist fijo precargado (Módulo 3, §3.1).
+        context["marca_id"] = None
+        context["marca_nombre"] = None
+        context["acciones"] = [
+            {"tipo": tipo_accion, "descripcion": descripcion, "imagen_referencia_path": None}
+            for tipo_accion, descripcion in TOUR_ACCIONES_DEFAULT
+        ]
+        ahora = datetime.now(timezone.utc)
+        sugerido = f"Tour de Farmacias — {MESES_ES[ahora.month - 1]} {ahora.year}"
+        context["nombre_sugerido"] = sugerido
+        self.sheets.update_conversacion(
+            telefono=payload.telefono,
+            estado=ConversationState.AUDITOR_CAMPANIA_NOMBRE,
+            ultimo_mensaje=json.dumps(context),
+        )
+        await meta_client.send_text(
+            payload.telefono,
+            f'¿Cómo le ponemos al tour? Escribí un nombre, o mandá "ok" para usar: "{sugerido}".',
+        )
+        return "auditor_campania_pidiendo_nombre"
+
+    async def _handle_auditor_campania_eligiendo_marca(
+        self, payload: WhatsAppPayload, conv: Conversacion, meta_client: MetaClient
+    ) -> str:
+        cancel = await self._chequear_cancelacion_auditor_campania(payload, meta_client)
+        if cancel:
+            return cancel
+        context = self._safe_json_loads(conv.ultimo_mensaje)
+        marcas_opciones = context.get("marcas_opciones") or {}
+        marca_id = (payload.contenido or "").strip()
+        marca_nombre = marcas_opciones.get(marca_id)
+        if not marca_nombre:
+            await meta_client.send_text(payload.telefono, "Elegí una marca de la lista que te mandé.")
+            return "auditor_campania_marca_invalida"
+        context["marca_id"] = marca_id
+        context["marca_nombre"] = marca_nombre
+        context["acciones"] = []
+        self.sheets.update_conversacion(
+            telefono=payload.telefono,
+            estado=ConversationState.AUDITOR_CAMPANIA_NOMBRE,
+            ultimo_mensaje=json.dumps(context),
+        )
+        await meta_client.send_text(payload.telefono, f"Campaña de {marca_nombre}. ¿Qué nombre le ponemos?")
+        return "auditor_campania_pidiendo_nombre"
+
+    async def _handle_auditor_campania_nombre(
+        self, payload: WhatsAppPayload, conv: Conversacion, meta_client: MetaClient
+    ) -> str:
+        cancel = await self._chequear_cancelacion_auditor_campania(payload, meta_client)
+        if cancel:
+            return cancel
+        context = self._safe_json_loads(conv.ultimo_mensaje)
+        texto = (payload.contenido or "").strip()
+        if not texto:
+            await meta_client.send_text(payload.telefono, "Contame el nombre de la campaña.")
+            return "auditor_campania_nombre_vacio"
+
+        if context.get("tipo") == "tour_interno" and texto.lower() in {"ok", "dale", "si", "sí"}:
+            context["nombre"] = context.get("nombre_sugerido") or "Tour de Farmacias"
+        else:
+            context["nombre"] = texto[:120]
+
+        if context.get("tipo") == "tour_interno":
+            # Checklist ya seedeado en _continuar_tras_tipo — directo a alcance.
+            return await self._pedir_alcance_campania(payload, meta_client, context)
+
+        context["accion_actual"] = {}
+        context["substep"] = "tipo"
+        self.sheets.update_conversacion(
+            telefono=payload.telefono,
+            estado=ConversationState.AUDITOR_CAMPANIA_AGREGANDO_ACCION,
+            ultimo_mensaje=json.dumps(context),
+        )
+        return await self._pedir_tipo_accion(payload, meta_client)
+
+    async def _pedir_tipo_accion(self, payload: WhatsAppPayload, meta_client: MetaClient) -> str:
+        await meta_client.send_list_message(
+            payload.telefono,
+            header="Acciones",
+            body="¿Qué acción querés controlar?",
+            footer="",
+            button_text="Elegir",
+            options=[{"id": tipo_accion, "title": label} for tipo_accion, label in COMERCIAL_ACCION_LABELS.items()],
+        )
+        return "auditor_campania_pidiendo_tipo_accion"
+
+    async def _guardar_accion_y_preguntar_otra(
+        self, payload: WhatsAppPayload, meta_client: MetaClient, context: Dict[str, Any]
+    ) -> str:
+        accion = context.pop("accion_actual", {}) or {}
+        if accion.get("tipo"):
+            context.setdefault("acciones", []).append({
+                "tipo": accion["tipo"],
+                "descripcion": accion.get("descripcion"),
+                "imagen_referencia_path": accion.get("imagen_referencia_path"),
+            })
+        context["substep"] = "otra"
+        self.sheets.update_conversacion(
+            telefono=payload.telefono,
+            estado=ConversationState.AUDITOR_CAMPANIA_AGREGANDO_ACCION,
+            ultimo_mensaje=json.dumps(context),
+        )
+        await meta_client.send_quick_reply(
+            payload.telefono,
+            f"Listo, agregada. Llevás {len(context.get('acciones') or [])} acción(es). ¿Agregás otra?",
+            buttons=[{"id": "si", "title": "Sí"}, {"id": "no", "title": "No, seguir"}],
+        )
+        return "auditor_campania_accion_guardada"
+
+    async def _handle_auditor_campania_agregando_accion(
+        self, payload: WhatsAppPayload, conv: Conversacion, meta_client: MetaClient
+    ) -> str:
+        cancel = await self._chequear_cancelacion_auditor_campania(payload, meta_client)
+        if cancel:
+            return cancel
+        context = self._safe_json_loads(conv.ultimo_mensaje)
+        substep = context.get("substep") or "tipo"
+        texto = (payload.contenido or "").strip()
+
+        if substep == "tipo":
+            tipo_accion = texto.lower()
+            if tipo_accion not in COMERCIAL_ACCION_LABELS:
+                await meta_client.send_text(payload.telefono, "Elegí una opción de la lista.")
+                return "auditor_campania_tipo_accion_invalido"
+            context["accion_actual"] = {"tipo": tipo_accion}
+            context["substep"] = "descripcion"
+            self.sheets.update_conversacion(
+                telefono=payload.telefono,
+                estado=ConversationState.AUDITOR_CAMPANIA_AGREGANDO_ACCION,
+                ultimo_mensaje=json.dumps(context),
+            )
+            label = COMERCIAL_ACCION_LABELS[tipo_accion]
+            await meta_client.send_text(payload.telefono, f"{label}: contame brevemente qué tiene que hacer el encargado.")
+            return "auditor_campania_pidiendo_descripcion_accion"
+
+        if substep == "descripcion":
+            if not texto:
+                await meta_client.send_text(payload.telefono, "Contame brevemente qué hay que hacer.")
+                return "auditor_campania_descripcion_vacia"
+            context.setdefault("accion_actual", {})["descripcion"] = texto[:200]
+            tipo_actual = context["accion_actual"].get("tipo")
+            if tipo_actual == "descuento_caja":
+                # Activación administrativa, no verificable por foto — no tiene sentido
+                # ofrecer una foto de referencia (ver §2.1 v2, verificable_por_foto=false).
+                return await self._guardar_accion_y_preguntar_otra(payload, meta_client, context)
+            context["substep"] = "referencia"
+            self.sheets.update_conversacion(
+                telefono=payload.telefono,
+                estado=ConversationState.AUDITOR_CAMPANIA_AGREGANDO_ACCION,
+                ultimo_mensaje=json.dumps(context),
+            )
+            await meta_client.send_quick_reply(
+                payload.telefono,
+                "¿Le mandamos una foto de referencia (así debe quedar)?",
+                buttons=[{"id": "si", "title": "Sí"}, {"id": "no", "title": "No"}],
+            )
+            return "auditor_campania_pidiendo_referencia"
+
+        if substep == "referencia":
+            if texto.lower() in {"si", "sí"}:
+                self.sheets.update_conversacion(
+                    telefono=payload.telefono,
+                    estado=ConversationState.AUDITOR_CAMPANIA_ESPERANDO_REFERENCIA,
+                    ultimo_mensaje=json.dumps(context),
+                )
+                await meta_client.send_text(payload.telefono, "Mandame la foto de referencia.")
+                return "auditor_campania_esperando_referencia"
+            return await self._guardar_accion_y_preguntar_otra(payload, meta_client, context)
+
+        if substep == "otra":
+            if texto.lower() in {"si", "sí"}:
+                context["accion_actual"] = {}
+                context["substep"] = "tipo"
+                self.sheets.update_conversacion(
+                    telefono=payload.telefono,
+                    estado=ConversationState.AUDITOR_CAMPANIA_AGREGANDO_ACCION,
+                    ultimo_mensaje=json.dumps(context),
+                )
+                return await self._pedir_tipo_accion(payload, meta_client)
+            return await self._pedir_alcance_campania(payload, meta_client, context)
+
+        # Substep desconocido (no debería pasar) — reinicia al menú en vez de romper.
+        self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
+        return await self._mostrar_menu_auditor(payload, meta_client)
+
+    async def _handle_auditor_campania_esperando_referencia(
+        self, payload: WhatsAppPayload, conv: Conversacion, meta_client: MetaClient
+    ) -> str:
+        cancel = await self._chequear_cancelacion_auditor_campania(payload, meta_client)
+        if cancel:
+            return cancel
+        context = self._safe_json_loads(conv.ultimo_mensaje)
+        if payload.tipo != "image" or not payload.media_id:
+            await meta_client.send_text(payload.telefono, 'Mandame una foto de referencia, o escribí "cancelar" para salir.')
+            return "auditor_campania_referencia_invalida"
+        try:
+            content, mime_type = await meta_client.download_media_with_metadata(payload.media_id)
+            path = self.sheets.upload_campania_referencia_borrador(content, mime_type)
+        except Exception as e:
+            logger.error(f"Error subiendo foto de referencia (bot, auditor): {e}", exc_info=True)
+            await meta_client.send_text(payload.telefono, "No pude guardar la foto. Intentá de nuevo.")
+            return "auditor_campania_referencia_error"
+        context.setdefault("accion_actual", {})["imagen_referencia_path"] = path
+        return await self._guardar_accion_y_preguntar_otra(payload, meta_client, context)
+
+    async def _pedir_alcance_campania(
+        self, payload: WhatsAppPayload, meta_client: MetaClient, context: Dict[str, Any]
+    ) -> str:
+        context.pop("substep_alcance", None)
+        self.sheets.update_conversacion(
+            telefono=payload.telefono,
+            estado=ConversationState.AUDITOR_CAMPANIA_ALCANCE,
+            ultimo_mensaje=json.dumps(context),
+        )
+        await meta_client.send_list_message(
+            payload.telefono,
+            header="Alcance",
+            body="¿A qué sucursales se la mandamos?",
+            footer="",
+            button_text="Elegir",
+            options=[
+                {"id": "todas", "title": "Todas las sucursales"},
+                {"id": "cat_a", "title": "Categoría A"},
+                {"id": "cat_b", "title": "Categoría B"},
+                {"id": "cat_c", "title": "Categoría C"},
+                {"id": "perfumeria", "title": "Con perfumería"},
+                {"id": "elegir", "title": "Elegir por nombre"},
+            ],
+        )
+        return "auditor_campania_pidiendo_alcance"
+
+    async def _confirmar_alcance_resuelto(
+        self,
+        payload: WhatsAppPayload,
+        meta_client: MetaClient,
+        context: Dict[str, Any],
+        sucursal_ids: List[str],
+        sucursal_nombres: List[str],
+    ) -> str:
+        context["sucursal_ids"] = sucursal_ids
+        context["sucursal_nombres"] = sucursal_nombres
+        context.pop("substep_alcance", None)
+        self.sheets.update_conversacion(
+            telefono=payload.telefono,
+            estado=ConversationState.AUDITOR_CAMPANIA_PLAZO,
+            ultimo_mensaje=json.dumps(context),
+        )
+        await meta_client.send_quick_reply(
+            payload.telefono,
+            f"{len(sucursal_ids)} sucursal(es) seleccionadas. ¿Cuántos días de plazo?",
+            buttons=[
+                {"id": "7", "title": "7 días"},
+                {"id": "14", "title": "14 días"},
+                {"id": "30", "title": "30 días"},
+            ],
+        )
+        return "auditor_campania_pidiendo_plazo"
+
+    async def _resolver_sucursales_por_nombre(
+        self, payload: WhatsAppPayload, meta_client: MetaClient, context: Dict[str, Any], texto: str
+    ) -> str:
+        """Matching difuso de nombres escritos a mano contra sucursales activas — no usa
+        `send_list_message` porque con ~15-30+ sucursales no entran en el tope de 10
+        filas de Meta (ver `meta_client.py:MAX_LIST_ROWS_TOTAL`)."""
+        sucursales = self.sheets.get_sucursales_activas()
+        por_nombre = {s["nombre"]: s for s in sucursales}
+        nombres_disponibles = list(por_nombre.keys())
+
+        encontrados: List[Dict[str, Any]] = []
+        ambiguos: List[Tuple[str, List[str]]] = []
+        no_encontrados: List[str] = []
+
+        for parte in [p.strip() for p in texto.split(",") if p.strip()]:
+            if parte in por_nombre:
+                encontrados.append(por_nombre[parte])
+                continue
+            substr = [n for n in nombres_disponibles if parte.lower() in n.lower()]
+            cercanos = difflib.get_close_matches(parte, nombres_disponibles, n=3, cutoff=0.6)
+            candidatos = list(dict.fromkeys(substr + cercanos))
+            if len(candidatos) == 1:
+                encontrados.append(por_nombre[candidatos[0]])
+            elif len(candidatos) > 1:
+                ambiguos.append((parte, candidatos[:5]))
+            else:
+                no_encontrados.append(parte)
+
+        if no_encontrados or ambiguos:
+            lineas = []
+            if no_encontrados:
+                lineas.append("No encontré: " + ", ".join(no_encontrados) + ".")
+            for parte, candidatos in ambiguos:
+                lineas.append(f'"{parte}" es ambiguo, ¿cuál? {", ".join(candidatos)}')
+            lineas.append('Volvé a escribir los nombres (separados por coma), o escribí "cancelar".')
+            await meta_client.send_text(payload.telefono, "\n".join(lineas))
+            return "auditor_campania_alcance_no_resuelto"
+
+        if not encontrados:
+            await meta_client.send_text(payload.telefono, "No entendí ningún nombre. Probá de nuevo.")
+            return "auditor_campania_alcance_vacio"
+
+        return await self._confirmar_alcance_resuelto(
+            payload, meta_client, context, [s["id"] for s in encontrados], [s["nombre"] for s in encontrados]
+        )
+
+    async def _handle_auditor_campania_alcance(
+        self, payload: WhatsAppPayload, conv: Conversacion, meta_client: MetaClient
+    ) -> str:
+        cancel = await self._chequear_cancelacion_auditor_campania(payload, meta_client)
+        if cancel:
+            return cancel
+        context = self._safe_json_loads(conv.ultimo_mensaje)
+        texto = (payload.contenido or "").strip()
+
+        if context.get("substep_alcance") == "esperando_nombres":
+            return await self._resolver_sucursales_por_nombre(payload, meta_client, context, texto)
+
+        choice = texto.lower()
+        sucursales = self.sheets.get_sucursales_activas()
+
+        if choice == "todas":
+            return await self._confirmar_alcance_resuelto(
+                payload, meta_client, context, [s["id"] for s in sucursales], [s["nombre"] for s in sucursales]
+            )
+        if choice in {"cat_a", "cat_b", "cat_c"}:
+            categoria = choice.split("_")[1].upper()
+            filtradas = [s for s in sucursales if (s.get("categoria") or "").upper() == categoria]
+            if not filtradas:
+                await meta_client.send_text(payload.telefono, f"No hay sucursales cargadas con categoría {categoria}.")
+                return "auditor_campania_alcance_vacio"
+            return await self._confirmar_alcance_resuelto(
+                payload, meta_client, context, [s["id"] for s in filtradas], [s["nombre"] for s in filtradas]
+            )
+        if choice == "perfumeria":
+            filtradas = [s for s in sucursales if s.get("tiene_perfumeria")]
+            if not filtradas:
+                await meta_client.send_text(payload.telefono, "No hay sucursales marcadas con perfumería.")
+                return "auditor_campania_alcance_vacio"
+            return await self._confirmar_alcance_resuelto(
+                payload, meta_client, context, [s["id"] for s in filtradas], [s["nombre"] for s in filtradas]
+            )
+        if choice == "elegir":
+            context["substep_alcance"] = "esperando_nombres"
+            self.sheets.update_conversacion(
+                telefono=payload.telefono,
+                estado=ConversationState.AUDITOR_CAMPANIA_ALCANCE,
+                ultimo_mensaje=json.dumps(context),
+            )
+            await meta_client.send_text(payload.telefono, "Escribime los nombres de las sucursales separados por coma.")
+            return "auditor_campania_pidiendo_nombres_sucursales"
+
+        await meta_client.send_text(payload.telefono, "Elegí una opción de la lista.")
+        return "auditor_campania_alcance_invalido"
+
+    async def _handle_auditor_campania_plazo(
+        self, payload: WhatsAppPayload, conv: Conversacion, meta_client: MetaClient
+    ) -> str:
+        cancel = await self._chequear_cancelacion_auditor_campania(payload, meta_client)
+        if cancel:
+            return cancel
+        context = self._safe_json_loads(conv.ultimo_mensaje)
+        texto = (payload.contenido or "").strip()
+        try:
+            plazo_dias = int(texto)
+            if plazo_dias <= 0:
+                raise ValueError
+        except ValueError:
+            await meta_client.send_text(payload.telefono, "Decime un número de días (ej: 14).")
+            return "auditor_campania_plazo_invalido"
+        context["plazo_dias"] = plazo_dias
+        return await self._mostrar_confirmacion_campania(payload, meta_client, context)
+
+    async def _mostrar_confirmacion_campania(
+        self, payload: WhatsAppPayload, meta_client: MetaClient, context: Dict[str, Any]
+    ) -> str:
+        self.sheets.update_conversacion(
+            telefono=payload.telefono,
+            estado=ConversationState.AUDITOR_CAMPANIA_CONFIRMANDO,
+            ultimo_mensaje=json.dumps(context),
+        )
+        tipo = context.get("tipo")
+        acciones = context.get("acciones") or []
+        sucursal_nombres = context.get("sucursal_nombres") or []
+        acciones_desc = ", ".join(a.get("descripcion") or a.get("tipo") or "" for a in acciones)
+        lineas = [
+            f"{'📣' if tipo == 'comercial' else '🚶'} {context.get('nombre')}",
+            f"Marca: {context.get('marca_nombre')}" if tipo == "comercial" else "Tour de Farmacias (sin marca)",
+            f"{len(acciones)} acción(es): {acciones_desc}",
+            f"Plazo: {context.get('plazo_dias')} días",
+            # Se listan los nombres explícitos, no solo el conteo (hallazgo de UX v5) —
+            # es el paso de mayor blast radius del flujo (dispara WhatsApp real).
+            f"Sucursales ({len(sucursal_nombres)}): {', '.join(sucursal_nombres)}",
+            "",
+            "¿Lanzamos?",
+        ]
+        await meta_client.send_quick_reply(
+            payload.telefono,
+            "\n".join(lineas),
+            buttons=[{"id": "lanzar", "title": "🚀 Lanzar ahora"}, {"id": "cancelar", "title": "Cancelar"}],
+        )
+        return "auditor_campania_confirmando"
+
+    async def _handle_auditor_campania_confirmando(
+        self, payload: WhatsAppPayload, conv: Conversacion, meta_client: MetaClient
+    ) -> str:
+        context = self._safe_json_loads(conv.ultimo_mensaje)
+        choice = (payload.contenido or "").strip().lower()
+
+        if choice == "cancelar" or (payload.tipo == "text" and self._is_cancel_intent(payload.contenido or "")):
+            self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
+            await meta_client.send_text(payload.telefono, 'Cancelado, no se creó nada. Escribime "hola" para el menú.')
+            return "auditor_campania_cancelada"
+
+        if choice != "lanzar":
+            await meta_client.send_text(payload.telefono, 'Elegí "Lanzar ahora" o "Cancelar".')
+            return "auditor_campania_confirmacion_invalida"
+
+        try:
+            campania = self.sheets.create_campania_bot(
+                nombre=context.get("nombre") or "Campaña",
+                tipo=context.get("tipo") or "comercial",
+                marca_id=context.get("marca_id"),
+                creado_por_telefono=payload.telefono,
+            )
+            campania_id = campania.get("id")
+            if not campania_id:
+                raise RuntimeError("create_campania_bot no devolvió id")
+            self.sheets.create_campania_acciones_bot(campania_id, context.get("acciones") or [])
+            resultado = await activar_campania_core(
+                self.sheets.client,
+                meta_client,
+                campania_id,
+                context.get("sucursal_ids") or [],
+                context.get("plazo_dias") or 14,
+            )
+        except CampaniaActivarError as e:
+            logger.error(f"Error activando campania creada por bot: {e}", exc_info=True)
+            await meta_client.send_text(payload.telefono, "La campaña se creó pero no pude activarla. Revisala desde el panel web.")
+            self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
+            return "auditor_campania_error_activacion"
+        except Exception as e:
+            logger.error(f"Error creando campania desde WhatsApp: {e}", exc_info=True)
+            await meta_client.send_text(payload.telefono, "Algo falló creando la campaña. Intentá de nuevo o usá el panel web.")
+            self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
+            return "auditor_campania_error_creacion"
+
+        self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
+        await meta_client.send_text(
+            payload.telefono,
+            f"✅ Listo. Se creó \"{context.get('nombre')}\" con {resultado['tareas_creadas']} tareas en "
+            f"{len(context.get('sucursal_ids') or [])} sucursales.",
+        )
+        return "auditor_campania_lanzada"
 
     async def _handle_encargado_respuesta(
         self,

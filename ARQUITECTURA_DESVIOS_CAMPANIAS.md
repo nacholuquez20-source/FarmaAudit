@@ -55,6 +55,18 @@
 > el delta del tour, en vez de duplicar la lógica de mandar la foto de referencia + pedir evidencia. `creado_por_telefono`
 > (parte de la spec de Fase 8) se sacó de la migración de Fase 7 y quedó pendiente para cuando se implemente
 > Fase 8 — no tiene sentido agregar una columna sin nada que la use todavía.
+>
+> **v8 — 2026-08-24 (mismo día, más tarde todavía): Fase 8 (crear/lanzar Campañas y Tour desde WhatsApp)
+> también implementada** — 9 estados `AUDITOR_CAMPANIA_*` nuevos, menú de 3 opciones al saludar, matching
+> difuso para elegir sucursales por nombre, `campanias_service.py` nuevo con la función pura
+> `activar_campania_core` (compartible entre el bot y el wizard web). Migración `etapa-33-campania-creado-por-
+> telefono.sql`, verificada contra el listado real (llegaba a `etapa-32`). **Deliberadamente NO se tocó
+> `main.py`**: otra sesión lo estaba editando en simultáneo (verificado con `git diff`, no una suposición) —
+> el endpoint del wizard web sigue con su lógica inline por ahora, el bot ya usa el servicio compartido sin
+> duplicar nada nuevo. El job de timeout de flujo abandonado y el wireo de `main.py` al servicio compartido
+> quedan pendientes por el mismo motivo (ver detalle en Fase 8, §7). Con esto, **todo lo pedido en esta sesión
+> quedó implementado**: auditoría por WhatsApp (ya existía), campañas y tours creables desde el panel web y
+> desde WhatsApp, con foto de referencia opcional en ambos.
 
 ---
 
@@ -626,16 +638,38 @@ integración POS (reemplaza la carga manual de `campania_resultados`); rol logí
 
 **Fase 7 — Tour de Farmacias (v3)** ✅ **implementado 2026-08-24**: ver MÓDULO 3 completo (§3) — `campanias.tipo`/`marca_id` nullable, 6 acciones de checklist fijas (vidriera, iluminación, góndolas, piso, limpieza, cadena de frío, **v5**), guarda de integridad en `campania_resultados` vía trigger (**v5**, solo `tipo='comercial'`), delta del bot en `_handle_campania_listando_tareas` (saltea el chooser Completada/Falta insumo, vía un helper `_enviar_prompt_evidencia` compartido con el flujo comercial), wizard con selector de tipo + checklist precargado (`CampaniaWizard.tsx`), tablero oculta "venta real" cuando `tipo='tour_interno'` (`CampaniaDetail.tsx`), badge de tipo en el listado (`Campanias.tsx`). Sin templates nuevos de Meta. `creado_por_telefono` (**v5**) se difirió a la Fase 8 — no tiene consumidor hasta que exista creación por bot, agregarla ahora sería schema muerto. Migración: `frontend/docs/sql/etapa-32-tour-farmacias.sql`, verificada contra el listado real del directorio (llegaba a `etapa-31` en ese momento). Validado: `tsc -b`/`eslint` limpios, `python -m py_compile` limpio, smoke test manual (mismo patrón que Fase 6) confirmando que un tour saltea directo a "mandame la foto" y una campaña comercial sigue mostrando el chooser Completada/Falta insumo sin cambios. **Falta correr la migración en Supabase.**
 
-**Fase 8 — Crear y lanzar Campañas/Tour desde WhatsApp (v4)**: ver MÓDULO 4 completo — nuevo menú de entrada
-`AUDITOR_ELIGIENDO_MODULO` (3 botones: Auditar / Campaña / Tour, reemplaza el salto directo a selección de
-sucursal en el saludo — títulos acortados en v5 por el límite de 20 caracteres de Meta) + triggers de texto
-nuevos `"campaña"`/`"tour"` (**v5**: no existían, corregido del error de decir que ya existían) + estados
-`AUDITOR_CAMPANIA_*` en el dispatcher (`router.py`), con selección de tipo/alcance vía `send_list_message` en
-vez de `quick_reply` donde hay más de 3 opciones (**v5**, corrección de un truncado silencioso de Meta) +
-extensión de `_is_cancel_intent` (`router.py:1158-1201`, **v5**: ya existe, se reusa) a los estados nuevos +
-job de timeout de flujo abandonado (**v5**, mismo patrón que `check_incomplete_respuestas_timeout`,
-`main.py:1303`) + extracción de `activar_campania` a una función de servicio pura sin acoplar `HTTPException`
-(**v5**) + columna `creado_por_telefono` para trazabilidad de campañas creadas por bot (**v5**) + selección de
-alcance por texto libre con manejo explícito de "no encontrado"/ambiguo (**v5**) + subida de foto de
-referencia por WhatsApp. Depende de Fases 6/7 (mismo modelo de datos, sin tablas nuevas). Sin migración SQL
-propia salvo `creado_por_telefono` (**v7 — se movió de la migración de Fase 7 a la de esta fase, que es donde recién tiene un consumidor real** — número de migración a verificar contra el listado real de `frontend/docs/sql/` al momento de implementar, no asumir uno fijo; hoy el próximo libre es `etapa-33`).
+**Fase 8 — Crear y lanzar Campañas/Tour desde WhatsApp (v4)** ✅ **implementado 2026-08-24**: ver MÓDULO 4
+completo — menú de entrada `AUDITOR_ELIGIENDO_MODULO` (3 botones: Auditar / Campaña / Tour, reemplaza el salto
+directo a selección de sucursal en el saludo — títulos acortados por el límite de 20 caracteres de Meta) +
+triggers de texto nuevos `"campaña"`/`"tour"` + 9 estados `AUDITOR_CAMPANIA_*` en el dispatcher (`router.py`),
+con `send_list_message` en vez de `quick_reply` en cualquier paso con más de 3 opciones (tipo de acción, 5;
+alcance, 6) + cancelación reusando `_is_cancel_intent` en cada paso + `campanias_service.py` nuevo (función
+pura `activar_campania_core`, sin `HTTPException`/`Request`) + columna `campanias.creado_por_telefono`
+(migración `etapa-33-campania-creado-por-telefono.sql`, verificada contra el listado real — llegaba a
+`etapa-32`) + selección de alcance por texto libre con matching difuso (`difflib` + substring) y manejo
+explícito de ambiguo/no-encontrado + subida de foto de referencia por WhatsApp durante el loop de acciones.
+Validado: `python -m py_compile` limpio, smoke test manual con 5 casos (menú→auditar, campaña comercial
+completa con foto de referencia, tour completo con checklist de 6 ítems precargado, cancelar a mitad de
+flujo, alcance por nombre con ambigüedad y no-encontrado) — todos pasan sin DB real, mismo criterio que Fases
+6/7.
+
+**(v8 — simplificaciones deliberadas de esta fase, documentadas para no perderlas de vista)**:
+- **`main.py` NO se tocó.** Otra sesión estaba editando ese archivo en simultáneo cuando se implementó esta
+  fase (colisión real, no hipotética — confirmado con `git diff` antes de escribir una sola línea ahí). En vez
+  de arriesgar un merge silencioso que revirtiera el trabajo ajeno, el endpoint `POST
+  /api/campanias/{id}/activar` sigue con su lógica inline de siempre; el bot llama a
+  `campanias_service.activar_campania_core` directamente, así que no hay duplicación en el código NUEVO — pero
+  el endpoint del wizard web todavía no está migrado al servicio compartido. Wirearlo es trabajo pendiente de
+  bajo riesgo para cuando ese archivo se estabilice (ver `campanias_service.py`, ya escrito y listo para que
+  `main.py` lo importe).
+- **Job de timeout de flujo abandonado (§Módulo 4, hallazgo v5) no implementado.** Requiere registrar un job
+  nuevo en el scheduler de APScheduler, que vive en `main.py` — mismo motivo que el punto anterior. Un auditor
+  que abandona la creación a mitad de camino queda en el estado `AUDITOR_CAMPANIA_*` sin timeout hasta que se
+  agregue este job.
+- **Sin "Guardar como borrador".** La spec original (§Módulo 4) mencionaba `Borrador` como tercera opción en
+  la confirmación final; se implementó solo `Lanzar ahora`/`Cancelar` — guardar un borrador por WhatsApp sin
+  una forma de retomarlo después agregaba complejidad sin valor claro. Si hace falta, es una fase chica aparte.
+- **La confirmación final hace doble función**: además de pedir el "Lanzar ahora", muestra la lista completa
+  de sucursales resueltas — así se cubre en un solo paso tanto el refuerzo de UX de v5 ("mostrar sucursales
+  explícitas antes de lanzar, no solo un conteo") como la confirmación del matching difuso del paso "elegir
+  por nombre", en vez de agregar un paso intermedio extra solo para ese caso.
