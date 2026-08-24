@@ -16,10 +16,9 @@ const MAX_CHIPS = 6;
 // Tabla de auditorías cross-sucursal: reemplaza las bandejas "esperando" y
 // "cerrado" — el estado de cada auditoría ya se ve inline (chips + columnas
 // Respuesta/Demora), no hace falta separarlas en pestañas distintas.
-// Mismo patrón de datos que AuditFichesGallery.tsx (fichas, filtros por
-// sucursal/fecha) + el agrupamiento gestion-por-ficha de SucursalDetail.tsx,
-// pero cross-sucursal y en formato tabla en vez de card grid.
-export function AuditoriasDesviosTable() {
+// Filtros por sucursal/fecha sobre audit_fiches + el agrupamiento
+// gestion-por-ficha de SucursalDetail.tsx, pero cross-sucursal.
+export function AuditoriasDesviosTable({ initialSucursalId }: { initialSucursalId?: string }) {
   const navigate = useNavigate();
 
   const [fichas, setFichas] = useState<AuditFicha[]>([]);
@@ -29,7 +28,7 @@ export function AuditoriasDesviosTable() {
   const [sucursales, setSucursales] = useState<Sucursal[]>([]);
   const [gestionesPorFicha, setGestionesPorFicha] = useState<Map<string, Gestion[]>>(new Map());
 
-  const [sucursalId, setSucursalId] = useState('');
+  const [sucursalId, setSucursalId] = useState(() => initialSucursalId ?? '');
   const [fechaDesde, setFechaDesde] = useState('');
   const [fechaHasta, setFechaHasta] = useState('');
   const [page, setPage] = useState(0);
@@ -122,7 +121,7 @@ export function AuditoriasDesviosTable() {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
-    <div className="p-5 lg:p-8">
+    <div>
       {/* Filtros */}
       <div className="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">

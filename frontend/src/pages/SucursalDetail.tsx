@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
+  ArchiveIcon,
   ArrowRight,
   Calendar,
   CheckCircle2,
@@ -25,7 +26,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useControlStock } from '../hooks/useControlStock';
 import { useGestion } from '../hooks/useGestion';
 import { useReportes } from '../hooks/useReportes';
-import { getEstadoContactoSucursales, getFichaPdfUrl, getSucursal, getSucursalesDashboard } from '../lib/api';
+import { getEstadoContactoSucursales, getFichaPdfUrl, getSignedUrl, getSucursal, getSucursalesDashboard } from '../lib/api';
 import { supabase } from '../lib/supabase';
 import { SALUD_META } from '../lib/salud';
 import {
@@ -42,6 +43,12 @@ import {
 import type { AuditFicha, EstadoContactoSucursal, Gestion, Sucursal, SucursalDashboard } from '../types';
 
 type AuditFiche = AuditFicha;
+
+interface ArchivoHallazgos {
+  path: string;
+  fecha: string;
+  cantidad: number;
+}
 
 function diasLabel(dias: number | null): string {
   if (dias === null) return 'Sin auditar';
@@ -86,6 +93,7 @@ export default function SucursalDetail() {
   // quedarse en "Cargando..." para siempre.
   const [estadoContacto, setEstadoContacto] = useState<EstadoContactoSucursal | null | undefined>(undefined);
   const [dashboardRow, setDashboardRow] = useState<SucursalDashboard | null>(null);
+  const [archivados, setArchivados] = useState<ArchivoHallazgos[]>([]);
   const navigate = useNavigate();
 
   const canAudit = role === 'admin' || role === 'auditor';
@@ -115,6 +123,39 @@ export default function SucursalDetail() {
       active = false;
     };
   }, [id, canAudit]);
+
+  // Hallazgos de la IA nunca triados hace más de 30 días: el backend los
+  // archiva en un PDF por sucursal en vez de dejarlos flotando para siempre
+  // en "Requiere tu decisión" (ver archivar_hallazgos.py). Un mismo PDF
+  // puede cubrir varios hallazgos — se agrupan por path.
+  useEffect(() => {
+    if (!id) return;
+    let active = true;
+    supabase
+      .from('desvios_borrador')
+      .select('metadata_json, created_at')
+      .eq('id_sucursal', id)
+      .not('metadata_json->>archivo_historico_path', 'is', null)
+      .order('created_at', { ascending: false })
+      .then(({ data }) => {
+        if (!active || !data) return;
+        const porPath = new Map<string, ArchivoHallazgos>();
+        for (const row of data as { metadata_json: Record<string, unknown>; created_at: string }[]) {
+          const path = row.metadata_json?.archivo_historico_path as string | undefined;
+          if (!path) continue;
+          const existente = porPath.get(path);
+          if (existente) {
+            existente.cantidad += 1;
+          } else {
+            porPath.set(path, { path, fecha: row.created_at, cantidad: 1 });
+          }
+        }
+        setArchivados(Array.from(porPath.values()));
+      });
+    return () => {
+      active = false;
+    };
+  }, [id]);
 
   // Salud y "días desde la última auditoría" vienen de la misma vista SQL
   // que usan /dashboard y /hoy (sucursales_dashboard) — antes esta pantalla
@@ -590,11 +631,11 @@ export default function SucursalDetail() {
           <h2 className="text-sm font-semibold text-gray-800">Historial de auditorías</h2>
           <button
             type="button"
-            onClick={() => navigate(`/sucursales?tab=fichas&sucursal_id=${id}`)}
+            onClick={() => navigate(`/sucursales?sucursal_id=${id}`)}
             className="inline-flex items-center gap-1.5 text-xs font-medium text-primary-navy hover:text-primary-navy/80"
           >
             <ExternalLink className="h-3.5 w-3.5" />
-            Ver todas en galería
+            Ver todas las auditorías
           </button>
         </div>
 
@@ -832,6 +873,41 @@ export default function SucursalDetail() {
           </div>
         )}
       </div>
+
+      {archivados.length > 0 && (
+        <div className="mt-6 rounded-lg bg-white shadow">
+          <div className="border-b border-gray-100 px-4 py-3">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+              <ArchiveIcon className="h-4 w-4 text-gray-400" />
+              Hallazgos archivados
+            </h2>
+            <p className="mt-0.5 text-xs text-gray-500">
+              Hallazgos de la IA sin revisar por más de 30 días, archivados automáticamente.
+            </p>
+          </div>
+          <ul className="divide-y divide-gray-100">
+            {archivados.map((archivo) => (
+              <li key={archivo.path} className="flex items-center justify-between px-4 py-3 text-sm">
+                <span className="text-gray-700">
+                  {formatDate(archivo.fecha)} · {archivo.cantidad} hallazgo{archivo.cantidad === 1 ? '' : 's'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void getSignedUrl(archivo.path, 'desvio-evidencias').then(
+                      (url) => url && window.open(url, '_blank', 'noopener'),
+                    )
+                  }
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-primary-navy hover:text-primary-navy/80"
+                >
+                  <FileText className="h-3.5 w-3.5" />
+                  Ver PDF
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </AppLayout>
   );
 }

@@ -663,7 +663,7 @@ export function DashboardPanel() {
                   <CalendarDays className="h-5 w-5 text-primary-navy" />
                   Auditorías de Perfumería
                 </h2>
-                <Link to="/sucursales?tab=fichas" className="text-sm font-medium text-blue-600 hover:text-blue-800">
+                <Link to="/sucursales" className="text-sm font-medium text-blue-600 hover:text-blue-800">
                   Ver todas →
                 </Link>
               </div>

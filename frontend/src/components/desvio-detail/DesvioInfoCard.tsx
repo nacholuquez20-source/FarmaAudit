@@ -76,7 +76,7 @@ export function DesvioInfoCard({ gestion, reporte, ficha, dueState, reporteFotoU
           <div className="text-sm text-gray-500">Auditoría</div>
           <div className="font-medium">
             {ficha ? (
-              <a href={`/auditorias?ficha=${ficha.id}`} className="text-primary-navy hover:underline">
+              <a href={`/sucursales/${ficha.sucursal_id}/auditorias/${ficha.id}`} className="text-primary-navy hover:underline">
                 Ver ficha ·{' '}
                 {ficha.puntuacion_promedio != null ? `${ficha.puntuacion_promedio.toFixed(1)}/5` : 'sin puntaje'}
               </a>

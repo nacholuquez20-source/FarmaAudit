@@ -552,10 +552,18 @@ export async function marcarNotificacionLeida(id: string): Promise<void> {
   if (error) throw new Error(handleApiError(error));
 }
 
+// Acotado a 30 dias: sin esto la cola "Requiere tu decision" trae la tabla
+// entera desde que existe la funcion (backlog nunca triado se acumula ahi
+// para siempre). Lo que queda mas viejo lo archiva el backend en un PDF por
+// sucursal (ver archivar_hallazgos.py) — no desaparece, se muda de lugar.
+const DESVIOS_BORRADOR_DIAS = 30;
+
 export async function getDesviosBorrador(): Promise<DesvioBorrador[]> {
+  const cutoff = new Date(Date.now() - DESVIOS_BORRADOR_DIAS * 24 * 60 * 60 * 1000).toISOString();
   const { data, error } = await supabase
     .from('desvios_borrador')
     .select('*')
+    .gte('created_at', cutoff)
     .order('created_at', { ascending: false });
 
   if (error) {
@@ -918,6 +926,24 @@ export async function runInformesRespuesta(): Promise<void> {
     const body = await response.json().catch(() => null);
     throw new Error(body?.detail || 'No se pudo ejecutar el job de informes.');
   }
+}
+
+// Dispara a demanda el archivado de hallazgos de desvios_borrador sin
+// revisar hace más de 30 días (ver archivar_hallazgos.py). Corre solo una
+// vez al día — este botón lo dispara ahora, sin esperar.
+export async function runArchivarHallazgos(): Promise<{ sucursales_procesadas: number; hallazgos_archivados: number; fallidos: number }> {
+  const apiUrl = getBotApiUrl();
+  if (!apiUrl) throw new Error('Falta configurar VITE_API_URL con la URL del bot.');
+
+  const response = await fetch(`${apiUrl}/admin/archivar-hallazgos/run`, {
+    method: 'POST',
+    headers: await getAuthHeaders(),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail || 'No se pudo ejecutar el job de archivado.');
+  }
+  return response.json();
 }
 
 function getGestionDate(gestion: Gestion): string | null {

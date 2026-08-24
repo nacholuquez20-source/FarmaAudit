@@ -29,6 +29,7 @@ from init_supabase import init_supabase_schema
 from audit_session import AuditState, get_session
 from identity import resolve_responsable_by_sucursal, resolve_whatsapp_user, ventana_abierta
 from informes_respuesta import enviar_informes_respuesta
+from archivar_hallazgos import archivar_hallazgos_antiguos
 from gestion_revision import ACCIONES_VALIDAS, aplicar_revision_gestion
 
 # Configure logging
@@ -471,6 +472,15 @@ async def startup_event():
         hour=11,  # UTC (08:00 ART)
         minute=0,
         id="weekly_resumen_sucursales",
+        timezone=pytz.UTC,
+        max_instances=1,  # Prevent concurrent executions
+    )
+    scheduler.add_job(
+        archivar_hallazgos_antiguos,
+        "cron",
+        hour=6,  # UTC (03:00 ART, fuera de horario de atencion)
+        minute=0,
+        id="archivar_hallazgos_antiguos",
         timezone=pytz.UTC,
         max_instances=1,  # Prevent concurrent executions
     )
@@ -1895,6 +1905,21 @@ async def run_informes_respuesta_endpoint(request: Request):
         return {"status": "ok"}
     except Exception as e:
         logger.error(f"Error running informes_respuesta job manually: {e}")
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
+
+
+@app.post("/admin/archivar-hallazgos/run")
+async def run_archivar_hallazgos_endpoint(request: Request):
+    """Dispara a demanda el archivado de hallazgos de desvios_borrador
+    abandonados hace mas de 30 dias (ver archivar_hallazgos.py). Requiere
+    admin. Util para procesar el backlog acumulado sin esperar la corrida
+    diaria del scheduler."""
+    await _require_admin(request)
+    try:
+        resultado = await archivar_hallazgos_antiguos()
+        return {"status": "ok", **resultado}
+    except Exception as e:
+        logger.error(f"Error running archivar_hallazgos job manually: {e}")
         raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 

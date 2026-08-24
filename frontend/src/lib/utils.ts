@@ -154,8 +154,8 @@ export function esMesActual(fecha: string | null | undefined): boolean {
   return d.getFullYear() === hoy.getFullYear() && d.getMonth() === hoy.getMonth();
 }
 
-// Compartido entre SucursalDetail, AuditFichaDetail y AuditFichesGallery: los
-// 4 bloques que puntúa una auditoría de perfumería. Mismo orden y nombres que
+// Compartido entre SucursalDetail y AuditFichaDetail: los 4 bloques que
+// puntúa una auditoría de perfumería. Mismo orden y nombres que
 // BLOQUE_ORDER/BLOQUE_LABELS en audit_session.py (backend) — bloques_json
 // guarda las claves en mayúsculas tal cual salen de ahí.
 export const BLOQUES_FICHA: { key: string; label: string }[] = [

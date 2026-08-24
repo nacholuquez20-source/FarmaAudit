@@ -6,8 +6,9 @@ import { Navigate, useSearchParams } from 'react-router-dom';
 // (DesvioInfoCard.tsx, SucursalDetail.tsx) — perderlos rompería esos links
 // en silencio.
 
-// /auditorias -> /sucursales?tab=fichas, preservando `ficha` (abre el modal
-// de una ficha puntual) y `sucursal_id` (preselecciona el filtro).
+// /auditorias -> /sucursales, preservando `ficha` (SucursalesModule.tsx
+// resuelve la sucursal de esa ficha y navega directo a su detalle) y
+// `sucursal_id` (preselecciona el filtro de la tabla de auditorías).
 export function RedirectAuditoriasToSucursales() {
   const [params] = useSearchParams();
   const forwarded = new URLSearchParams();
@@ -15,8 +16,8 @@ export function RedirectAuditoriasToSucursales() {
   const sucursalId = params.get('sucursal_id');
   if (ficha) forwarded.set('ficha', ficha);
   if (sucursalId) forwarded.set('sucursal_id', sucursalId);
-  forwarded.set('tab', 'fichas');
-  return <Navigate to={`/sucursales?${forwarded.toString()}`} replace />;
+  const query = forwarded.toString();
+  return <Navigate to={query ? `/sucursales?${query}` : '/sucursales'} replace />;
 }
 
 // /desvios -> /hoy?s=pendientes, preservando `v` (bandeja activa). El `v`

@@ -109,7 +109,11 @@ export function DesviosBandejaPanel() {
         )}
       </div>
       <div style={{ display: activeTab === 'auditorias' ? 'block' : 'none' }}>
-        {isMounted('auditorias') && <AuditoriasDesviosTable />}
+        {isMounted('auditorias') && (
+          <div className="p-5 lg:p-8">
+            <AuditoriasDesviosTable />
+          </div>
+        )}
       </div>
     </div>
   );

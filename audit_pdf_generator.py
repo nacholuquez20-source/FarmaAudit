@@ -747,6 +747,132 @@ def generate_respuestas_pdf(
     return result
 
 
+def generate_hallazgos_archivados_pdf(sucursal_nombre: str, items: List[Dict[str, Any]]) -> bytes:
+    """Listado de hallazgos propuestos por la IA (desvios_borrador) que nunca
+    se triaron y se archivan por antigüedad (ver archivar_hallazgos.py).
+
+    A diferencia de generate_respuestas_pdf, acá no hay nada que "responder"
+    todavía — es un registro de lo que quedó sin revisar, no una comparación
+    detectado/respondido. Cada item de `items`:
+        descripcion: str
+        severidad: 'Alta' | 'Media' | 'Baja'
+        bloque_nombre: str o None
+        creado_at: str ISO o None
+        foto_bytes: bytes o None
+    """
+    buf = BytesIO()
+    page_w, page_h = A4
+    margin = 1.5 * cm
+    usable_w = page_w - 2 * margin
+
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        rightMargin=margin,
+        leftMargin=margin,
+        topMargin=margin,
+        bottomMargin=margin,
+    )
+
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("H1", parent=styles["Normal"],
+                        fontSize=18, fontName="Helvetica-Bold",
+                        textColor=NAVY, alignment=TA_CENTER, spaceAfter=2)
+    sub = ParagraphStyle("Sub", parent=styles["Normal"],
+                         fontSize=10, textColor=GREY, alignment=TA_CENTER, spaceAfter=8)
+    body = ParagraphStyle("Body", parent=styles["Normal"], fontSize=9, leading=13, textColor=colors.black)
+    small = ParagraphStyle("Small", parent=styles["Normal"], fontSize=8, textColor=GREY)
+
+    story = []
+    story.append(Paragraph("FarmaAudit", h1))
+    story.append(Paragraph("Hallazgos sin revisar — archivo histórico", sub))
+
+    bar = Table([[""]], colWidths=[usable_w], rowHeights=[4])
+    bar.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), NAVY)]))
+    story.append(bar)
+    story.append(Spacer(1, 10))
+
+    col1 = 3.8 * cm
+    col2 = usable_w - col1
+    info_table = Table(
+        [
+            ["Sucursal", sucursal_nombre],
+            ["Generado", datetime.now().strftime("%d/%m/%Y %H:%M")],
+            ["Hallazgos archivados", str(len(items))],
+        ],
+        colWidths=[col1, col2],
+    )
+    info_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, -1), LIGHT_BLUE),
+        ("FONTNAME",   (0, 0), (0, -1), "Helvetica-Bold"),
+        ("FONTSIZE",   (0, 0), (-1, -1), 9),
+        ("TOPPADDING",    (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.5, LINE),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    story.append(info_table)
+    story.append(Spacer(1, 14))
+
+    max_img_w = usable_w - 1.6 * cm
+    max_img_h = 8 * cm
+
+    for idx, item in enumerate(items, start=1):
+        severidad = item.get("severidad")
+        sc = _severidad_color(severidad)
+        bg = _severidad_bg(severidad)
+
+        item_flowables = []
+
+        hdr_data = [[
+            Paragraph(
+                f'<font color="white"><b>#{idx} — {severidad or "Sin severidad"}</b></font>',
+                ParagraphStyle("DH", parent=styles["Normal"], fontSize=9,
+                               fontName="Helvetica-Bold", textColor=colors.white),
+            ),
+        ]]
+        hdr = Table(hdr_data, colWidths=[usable_w])
+        hdr.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, -1), sc),
+            ("TOPPADDING",    (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+        ]))
+        item_flowables.append(hdr)
+
+        body_cell = [
+            Paragraph(item.get("descripcion") or "—", body),
+            Spacer(1, 3),
+            Paragraph(
+                f"{item.get('bloque_nombre') or 'Sin bloque'} · Detectado {_fmt_fecha(item.get('creado_at'))}",
+                small,
+            ),
+        ]
+        img = _rl_image(item["foto_bytes"], max_img_w, max_img_h) if item.get("foto_bytes") else None
+        if img:
+            body_cell.append(Spacer(1, 6))
+            body_cell.append(img)
+
+        body_table = Table([[body_cell]], colWidths=[usable_w])
+        body_table.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, -1), bg),
+            ("TOPPADDING",    (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 8),
+        ]))
+        item_flowables.append(body_table)
+
+        story.append(KeepTogether(item_flowables))
+        story.append(Spacer(1, 12))
+
+    doc.build(story)
+    result = buf.getvalue()
+    buf.close()
+    return result
+
+
 _SALUD_ORDER = ["critica", "atencion", "ok", "sin_datos"]
 
 
