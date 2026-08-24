@@ -313,6 +313,22 @@ export interface AuditFicha {
   bloques_json: Record<string, number> | null;
 }
 
+// Circuito de vuelta auditor <- encargado (etapa-26). Un registro por cada
+// PDF de "respuestas del encargado" generado (job debounced o disparo
+// inmediato al terminar el recorrido de desvíos por WhatsApp). Solo
+// admin/auditor pueden leerla (RLS) — auditor_telefono es dato personal.
+export interface InformeRespuesta {
+  id: string;
+  id_sucursal: string;
+  auditor_telefono: string;
+  corte_at: string;
+  gestion_ids: string[];
+  estado: 'enviado' | 'sin_ventana' | 'fallido' | 'sin_auditor';
+  pdf_path: string | null;
+  generado_at: string;
+  enviado_at: string | null;
+}
+
 // ============ Identidad de WhatsApp (etapa-21) ============
 // Reemplaza auditores + profiles.telefono + sucursales.tel_responsable como
 // fuente única de "quién es este teléfono y qué puede hacer".

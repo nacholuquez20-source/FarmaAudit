@@ -25,12 +25,11 @@ import { useAuth } from '../hooks/useAuth';
 import { useControlStock } from '../hooks/useControlStock';
 import { useGestion } from '../hooks/useGestion';
 import { useReportes } from '../hooks/useReportes';
-import { getEstadoContactoSucursales, getFichaPdfUrl, getSucursal } from '../lib/api';
+import { getEstadoContactoSucursales, getFichaPdfUrl, getSucursal, getSucursalesDashboard } from '../lib/api';
 import { supabase } from '../lib/supabase';
 import { SALUD_META } from '../lib/salud';
 import {
   BLOQUES_FICHA,
-  diasDesde,
   esMesActual,
   formatDate,
   gestionStateLabel,
@@ -40,22 +39,9 @@ import {
   whatsappAuditLink,
   whatsappLink,
 } from '../lib/utils';
-import type { AuditFicha, EstadoContactoSucursal, EstadoSalud, Gestion, Sucursal } from '../types';
+import type { AuditFicha, EstadoContactoSucursal, Gestion, Sucursal, SucursalDashboard } from '../types';
 
 type AuditFiche = AuditFicha;
-
-// Mismo criterio que la vista sucursales_dashboard (4 estados). "sin_datos"
-// (nunca auditada y sin desvíos pendientes) se distingue de una crítica real.
-function calcSalud(vencidos: number, dias: number | null, score: number | null, abiertos: number): EstadoSalud {
-  if (vencidos > 0) return 'critica';
-  if (dias !== null && dias > 30) return 'critica';
-  if (score !== null && score < 3) return 'critica';
-  if (abiertos > 0) return 'atencion';
-  if (dias !== null && dias >= 15 && dias <= 30) return 'atencion';
-  if (score !== null && score < 4) return 'atencion';
-  if (dias === null) return 'sin_datos';
-  return 'ok';
-}
 
 function diasLabel(dias: number | null): string {
   if (dias === null) return 'Sin auditar';
@@ -99,6 +85,7 @@ export default function SucursalDetail() {
   // esta sucursal no aparecio) — debe degradar a "Asignar encargado", nunca
   // quedarse en "Cargando..." para siempre.
   const [estadoContacto, setEstadoContacto] = useState<EstadoContactoSucursal | null | undefined>(undefined);
+  const [dashboardRow, setDashboardRow] = useState<SucursalDashboard | null>(null);
   const navigate = useNavigate();
 
   const canAudit = role === 'admin' || role === 'auditor';
@@ -128,6 +115,27 @@ export default function SucursalDetail() {
       active = false;
     };
   }, [id, canAudit]);
+
+  // Salud y "días desde la última auditoría" vienen de la misma vista SQL
+  // que usan /dashboard y /hoy (sucursales_dashboard) — antes esta pantalla
+  // recalculaba ambos valores a mano (calcSalud + diasDesde con la hora del
+  // navegador), lo que podía divergir del resto del panel justo en los
+  // bordes de mes/zona horaria. Fetch de las 23 filas es el mismo patrón que
+  // ya usan Dashboard.tsx y useSucursalesPrioridad.
+  useEffect(() => {
+    if (!id) return;
+    let active = true;
+    getSucursalesDashboard()
+      .then((rows) => {
+        if (active) setDashboardRow(rows.find((r) => r.id === id) ?? null);
+      })
+      .catch(() => {
+        if (active) setDashboardRow(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [id]);
 
   React.useEffect(() => {
     const loadSucursal = async () => {
@@ -219,7 +227,11 @@ export default function SucursalDetail() {
     [stockItems, periodo],
   );
 
-  // Métricas derivadas para el header (mismo criterio que la vista SQL).
+  // Métricas derivadas para el header. Salud y "dias" vienen de
+  // sucursales_dashboard (dashboardRow) — la misma vista que usan
+  // /dashboard y /hoy, para que las tres pantallas concuerden siempre. El
+  // resto (abiertos/vencidos/enRevision/score) se deriva de los datos ya
+  // cargados en esta página.
   const resumen = useMemo(() => {
     const isOpen = (estado: string) => estado !== 'Resuelta' && estado !== 'Cerrada';
     const now = new Date();
@@ -234,14 +246,14 @@ export default function SucursalDetail() {
 
     const ultima = fichas[0] ?? null;
     const ultimaFechaStr = ultima ? ultima.fecha_auditoria || ultima.created_at : null;
-    const dias = diasDesde(ultimaFechaStr);
+    const dias = dashboardRow?.dias_desde_auditoria ?? null;
     const score = ultima?.puntuacion_promedio ?? null;
-    const salud = calcSalud(vencidos, dias, score, abiertos);
+    const salud = dashboardRow?.estado_salud ?? 'sin_datos';
 
     const auditadaEsteMes = esMesActual(ultimaFechaStr);
 
     return { abiertos, vencidos, enRevision, ultima, dias, score, salud, auditadaEsteMes };
-  }, [gestiones, fichas]);
+  }, [gestiones, fichas, dashboardRow]);
 
   if (loading) {
     return (

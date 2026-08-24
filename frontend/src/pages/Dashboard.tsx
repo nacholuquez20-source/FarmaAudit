@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
-import { CalendarDays, ClipboardCheck } from 'lucide-react';
+import { CalendarDays, ClipboardCheck, FileText } from 'lucide-react';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { KPICard } from '../components/KPICard';
@@ -8,10 +8,18 @@ import { SaludLegend } from '../components/SaludLegend';
 import { SucursalesMap } from '../components/SucursalesMap';
 import { useDashboardStats } from '../hooks/useDashboardStats';
 import { useAuth } from '../hooks/useAuth';
-import { getSucursalesDashboard } from '../lib/api';
+import { getSucursalesDashboard, getInformesRespuesta, getFichaPdfUrl, getSignedUrl } from '../lib/api';
 import { supabase } from '../lib/supabase';
 import { SALUD_META } from '../lib/salud';
-import type { DashboardView, EstadoSalud } from '../types';
+import { formatDate } from '../lib/utils';
+import type { DashboardView, EstadoSalud, InformeRespuesta } from '../types';
+
+interface UltimaFichaSucursal {
+  id: string;
+  fecha_auditoria: string | null;
+  url_pdf: string | null;
+  google_drive_id: string | null;
+}
 
 interface AuditKPIs {
   hoy: number;
@@ -26,6 +34,10 @@ interface AuditKPIs {
     puntuacion_promedio: number | null;
     desvios_count: number;
   }>;
+  // Última ficha por sucursal, para el link "PDF auditor" de la tabla de
+  // abajo — se deriva de la misma query que ya trae `ultimas` (ordenada por
+  // fecha desc), en vez de pedirle a Supabase una consulta aparte.
+  fichaPorSucursal: Map<string, UltimaFichaSucursal>;
 }
 
 function useAuditKPIs(scopedSucursal: string | null) {
@@ -43,7 +55,9 @@ function useAuditKPIs(scopedSucursal: string | null) {
         const [sucursalesRes, fichesRes] = await Promise.all([
           supabase.from('sucursales').select('id, nombre'),
           (() => {
-            let q = supabase.from('audit_fiches').select('id, sucursal_id, auditor_nombre, fecha_auditoria, puntuacion_promedio, desvios_count');
+            let q = supabase
+              .from('audit_fiches')
+              .select('id, sucursal_id, auditor_nombre, fecha_auditoria, puntuacion_promedio, desvios_count, url_pdf, google_drive_id');
             if (scopedSucursal) q = q.eq('sucursal_id', scopedSucursal);
             return q.order('fecha_auditoria', { ascending: false }).limit(200);
           })(),
@@ -68,7 +82,20 @@ function useAuditKPIs(scopedSucursal: string | null) {
           sucursal_nombre: nombreMap.get(f.sucursal_id) ?? f.sucursal_id,
         }));
 
-        setKpis({ hoy, semana, puntajePromedio, ultimas });
+        // data ya viene ordenada por fecha_auditoria desc: la primera
+        // aparición de cada sucursal_id es su ficha más reciente.
+        const fichaPorSucursal = new Map<string, UltimaFichaSucursal>();
+        data.forEach((f) => {
+          if (!f.sucursal_id || fichaPorSucursal.has(f.sucursal_id)) return;
+          fichaPorSucursal.set(f.sucursal_id, {
+            id: f.id,
+            fecha_auditoria: f.fecha_auditoria,
+            url_pdf: f.url_pdf,
+            google_drive_id: f.google_drive_id,
+          });
+        });
+
+        setKpis({ hoy, semana, puntajePromedio, ultimas, fichaPorSucursal });
       } catch {
         // non-critical
       }
@@ -123,6 +150,47 @@ function useEstadoSaludPorSucursal() {
   return mapa;
 }
 
+interface InformesResumen {
+  ultimo: InformeRespuesta;
+  total: number;
+}
+
+// informes_respuesta solo es legible por admin/auditor (RLS, etapa-26) — se
+// pide gateado por rol para no disparar una consulta que la base va a
+// rechazar para un encargado de sucursal.
+function useInformesPorSucursal(habilitado: boolean) {
+  const [mapa, setMapa] = useState<Map<string, InformesResumen>>(new Map());
+
+  useEffect(() => {
+    if (!habilitado) return;
+    let cancelled = false;
+    getInformesRespuesta()
+      .then((rows) => {
+        if (cancelled) return;
+        const next = new Map<string, InformesResumen>();
+        // rows ya viene ordenado por corte_at desc: la primera aparición de
+        // cada sucursal es su informe más reciente.
+        rows.forEach((row) => {
+          const actual = next.get(row.id_sucursal);
+          if (actual) {
+            actual.total += 1;
+          } else {
+            next.set(row.id_sucursal, { ultimo: row, total: 1 });
+          }
+        });
+        setMapa(next);
+      })
+      .catch(() => {
+        // No crítico: la columna degrada a "sin informes".
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [habilitado]);
+
+  return mapa;
+}
+
 function formatTime(date: Date | null): string {
   if (!date) return 'Sin actualizar';
   return date.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -147,6 +215,11 @@ export function DashboardPanel() {
   const mostrarVistaZona = role === 'admin' || role === 'auditor';
   const auditKpis = useAuditKPIs(scopedSucursal);
   const estadoSaludPorSucursal = useEstadoSaludPorSucursal();
+  const informesPorSucursal = useInformesPorSucursal(mostrarVistaZona);
+
+  const abrirPdf = (url: string | null) => {
+    if (url) window.open(url, '_blank', 'noopener');
+  };
 
   const gestionStateData = stats
     ? [
@@ -408,7 +481,7 @@ export function DashboardPanel() {
                 />
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[760px]">
+                  <table className="w-full min-w-[820px]">
                     <thead className="border-b bg-gray-100">
                       <tr>
                         <th className="px-4 py-3 text-left text-sm font-semibold">Sucursal</th>
@@ -416,17 +489,20 @@ export function DashboardPanel() {
                           <th className="px-4 py-3 text-left text-sm font-semibold">Zona</th>
                         )}
                         <th className="px-4 py-3 text-left text-sm font-semibold">Estado</th>
-                        <th className="px-4 py-3 text-right text-sm font-semibold">Puntaje</th>
-                        <th className="px-4 py-3 text-right text-sm font-semibold">Abiertos</th>
+                        <th className="px-4 py-3 text-left text-sm font-semibold">Pendientes / Resueltos</th>
                         <th className="px-4 py-3 text-right text-sm font-semibold">Vencidos</th>
                         <th className="px-4 py-3 text-right text-sm font-semibold">Críticos</th>
-                        <th className="px-4 py-3 text-right text-sm font-semibold">Altas (hist.)</th>
-                        <th className="px-4 py-3 text-right text-sm font-semibold">Total</th>
+                        <th className="px-4 py-3 text-left text-sm font-semibold">PDF auditor</th>
+                        {mostrarVistaZona && (
+                          <th className="px-4 py-3 text-left text-sm font-semibold">Respuesta encargado</th>
+                        )}
                       </tr>
                     </thead>
                     <tbody>
                       {stats.sucursales_estado.map((sucursal) => {
                         const salud = SALUD_META[estadoSaludPorSucursal.get(sucursal.id_sucursal) ?? 'sin_datos'];
+                        const ficha = auditKpis?.fichaPorSucursal.get(sucursal.id_sucursal);
+                        const informes = informesPorSucursal.get(sucursal.id_sucursal);
                         return (
                         <tr key={sucursal.id_sucursal || sucursal.sucursal} className="border-b hover:bg-gray-50">
                           <td className="px-4 py-4 text-sm font-medium text-gray-900">
@@ -443,12 +519,51 @@ export function DashboardPanel() {
                               {salud.label}
                             </span>
                           </td>
-                          <td className="px-4 py-4 text-right text-sm font-semibold text-emerald-800">{sucursal.puntaje}</td>
-                          <td className="px-4 py-4 text-right text-sm">{sucursal.abiertos}</td>
+                          <td className="px-4 py-4 text-sm">
+                            <div className="font-semibold text-gray-900">{sucursal.abiertos + sucursal.vencidos} pendiente{sucursal.abiertos + sucursal.vencidos === 1 ? '' : 's'}</div>
+                            <div className="text-xs text-gray-500">{sucursal.resueltos + sucursal.cerrados} resuelto{sucursal.resueltos + sucursal.cerrados === 1 ? '' : 's'}</div>
+                          </td>
                           <td className="px-4 py-4 text-right text-sm font-semibold text-red-700">{sucursal.vencidos}</td>
                           <td className="px-4 py-4 text-right text-sm font-semibold text-red-800">{sucursal.criticos_activos}</td>
-                          <td className="px-4 py-4 text-right text-sm">{sucursal.altas}</td>
-                          <td className="px-4 py-4 text-right text-sm">{sucursal.total}</td>
+                          <td className="px-4 py-4 text-sm">
+                            {ficha ? (
+                              <button
+                                type="button"
+                                onClick={() => void getFichaPdfUrl(ficha).then(abrirPdf)}
+                                className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 hover:underline"
+                              >
+                                <FileText className="h-3.5 w-3.5" />
+                                {ficha.fecha_auditoria ? formatDate(ficha.fecha_auditoria) : 'Ver PDF'}
+                              </button>
+                            ) : (
+                              <span className="text-gray-400">Sin auditorías</span>
+                            )}
+                          </td>
+                          {mostrarVistaZona && (
+                            <td className="px-4 py-4 text-sm">
+                              {informes ? (
+                                <button
+                                  type="button"
+                                  disabled={!informes.ultimo.pdf_path}
+                                  onClick={() =>
+                                    informes.ultimo.pdf_path
+                                      && void getSignedUrl(informes.ultimo.pdf_path).then(abrirPdf)
+                                  }
+                                  className="inline-flex items-center gap-1.5 text-blue-600 hover:text-blue-800 hover:underline disabled:cursor-default disabled:text-gray-400 disabled:no-underline"
+                                >
+                                  <FileText className="h-3.5 w-3.5" />
+                                  {formatDate(informes.ultimo.enviado_at || informes.ultimo.corte_at)}
+                                  {informes.total > 1 && (
+                                    <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[11px] font-bold text-blue-700">
+                                      {informes.total}
+                                    </span>
+                                  )}
+                                </button>
+                              ) : (
+                                <span className="text-gray-400">Sin respuestas</span>
+                              )}
+                            </td>
+                          )}
                         </tr>
                         );
                       })}

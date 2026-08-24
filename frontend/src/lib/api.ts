@@ -7,6 +7,7 @@ import type {
   Reporte,
   Gestion,
   AuditFicha,
+  InformeRespuesta,
   ResponsableActivo,
   EstadoContactoSucursal,
   RecordatorioSucursalResponse,
@@ -188,6 +189,19 @@ export async function getFichaById(id: string): Promise<AuditFicha | null> {
     .maybeSingle();
   if (error) throw new Error(handleApiError(error));
   return data;
+}
+
+// Solo trae filas para admin/auditor (RLS de informes_respuesta, etapa-26);
+// para cualquier otro rol devuelve vacío sin error, no hace falta chequear
+// el rol acá antes de llamarla.
+export async function getInformesRespuesta(): Promise<InformeRespuesta[]> {
+  const { data, error } = await supabase
+    .from('informes_respuesta')
+    .select('*')
+    .order('corte_at', { ascending: false })
+    .limit(500);
+  if (error) throw new Error(handleApiError(error));
+  return data || [];
 }
 
 export async function getGestionesByFicha(fichaId: string): Promise<Gestion[]> {
