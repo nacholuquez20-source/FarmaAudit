@@ -206,7 +206,7 @@ export default function CampaniaDetail() {
       <div className="mb-6 rounded-lg bg-white p-5 shadow">
         <div className="flex flex-wrap items-center gap-3">
           <span className="rounded bg-primary-orange/10 px-2.5 py-1 text-xs font-semibold text-primary-orange">
-            {campania.marcas?.nombre || 'Sin marca'}
+            {campania.tipo === 'tour_interno' ? 'Tour de Farmacias' : campania.marcas?.nombre || 'Sin marca'}
           </span>
           <span className="rounded bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-800">{campania.estado}</span>
           {campania.acuerdo_hasta && (
@@ -336,59 +336,61 @@ export default function CampaniaDetail() {
         </table>
       </div>
 
-      <div className="rounded-lg bg-white p-5 shadow">
-        <h2 className="mb-1 flex items-center gap-2 text-sm font-bold text-gray-900">
-          <TrendingUp className="h-4 w-4" />
-          Venta real (sell-out)
-        </h2>
-        <p className="mb-4 text-xs text-gray-500">
-          El % de tareas completadas mide cumplimiento, no si la campania vendio. Carga manual: venta del periodo de
-          campania vs. periodo base.
-        </p>
-        <form onSubmit={(e) => void handleSaveResultado(e)} className="grid grid-cols-1 gap-3 sm:grid-cols-4">
-          <Select
-            options={bySucursal.map((g) => ({ value: g.id_sucursal, label: g.nombre }))}
-            placeholder="Sucursal"
-            value={ventaSucursal}
-            onChange={(e) => setVentaSucursal(e.target.value)}
-          />
-          <Input type="number" placeholder="Venta periodo campania" value={ventaCampania} onChange={(e) => setVentaCampania(e.target.value)} />
-          <Input type="number" placeholder="Venta periodo base" value={ventaBase} onChange={(e) => setVentaBase(e.target.value)} />
-          <div className="flex gap-2">
+      {campania.tipo === 'comercial' && (
+        <div className="rounded-lg bg-white p-5 shadow">
+          <h2 className="mb-1 flex items-center gap-2 text-sm font-bold text-gray-900">
+            <TrendingUp className="h-4 w-4" />
+            Venta real (sell-out)
+          </h2>
+          <p className="mb-4 text-xs text-gray-500">
+            El % de tareas completadas mide cumplimiento, no si la campania vendio. Carga manual: venta del periodo de
+            campania vs. periodo base.
+          </p>
+          <form onSubmit={(e) => void handleSaveResultado(e)} className="grid grid-cols-1 gap-3 sm:grid-cols-4">
             <Select
-              options={[{ value: 'unidades', label: 'Unidades' }, { value: 'pesos', label: 'Pesos' }]}
-              value={ventaUnidad}
-              onChange={(e) => setVentaUnidad(e.target.value as 'unidades' | 'pesos')}
+              options={bySucursal.map((g) => ({ value: g.id_sucursal, label: g.nombre }))}
+              placeholder="Sucursal"
+              value={ventaSucursal}
+              onChange={(e) => setVentaSucursal(e.target.value)}
             />
-            <Button type="submit" disabled={!ventaSucursal || savingResultado} isLoading={savingResultado}>Guardar</Button>
-          </div>
-        </form>
+            <Input type="number" placeholder="Venta periodo campania" value={ventaCampania} onChange={(e) => setVentaCampania(e.target.value)} />
+            <Input type="number" placeholder="Venta periodo base" value={ventaBase} onChange={(e) => setVentaBase(e.target.value)} />
+            <div className="flex gap-2">
+              <Select
+                options={[{ value: 'unidades', label: 'Unidades' }, { value: 'pesos', label: 'Pesos' }]}
+                value={ventaUnidad}
+                onChange={(e) => setVentaUnidad(e.target.value as 'unidades' | 'pesos')}
+              />
+              <Button type="submit" disabled={!ventaSucursal || savingResultado} isLoading={savingResultado}>Guardar</Button>
+            </div>
+          </form>
 
-        {resultados.length > 0 && (
-          <table className="mt-4 w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs uppercase text-gray-400">
-                <th className="py-1">Sucursal</th>
-                <th className="py-1">Campania</th>
-                <th className="py-1">Base</th>
-                <th className="py-1">Unidad</th>
-                <th className="py-1">Cargado</th>
-              </tr>
-            </thead>
-            <tbody>
-              {resultados.map((resultado) => (
-                <tr key={resultado.id} className="border-t border-gray-100">
-                  <td className="py-1.5">{bySucursal.find((g) => g.id_sucursal === resultado.id_sucursal)?.nombre || resultado.id_sucursal}</td>
-                  <td className="py-1.5">{resultado.venta_periodo_campania ?? '-'}</td>
-                  <td className="py-1.5">{resultado.venta_periodo_base ?? '-'}</td>
-                  <td className="py-1.5">{resultado.unidad}</td>
-                  <td className="py-1.5 text-gray-400">{formatDateTime(resultado.created_at)}</td>
+          {resultados.length > 0 && (
+            <table className="mt-4 w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase text-gray-400">
+                  <th className="py-1">Sucursal</th>
+                  <th className="py-1">Campania</th>
+                  <th className="py-1">Base</th>
+                  <th className="py-1">Unidad</th>
+                  <th className="py-1">Cargado</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+              </thead>
+              <tbody>
+                {resultados.map((resultado) => (
+                  <tr key={resultado.id} className="border-t border-gray-100">
+                    <td className="py-1.5">{bySucursal.find((g) => g.id_sucursal === resultado.id_sucursal)?.nombre || resultado.id_sucursal}</td>
+                    <td className="py-1.5">{resultado.venta_periodo_campania ?? '-'}</td>
+                    <td className="py-1.5">{resultado.venta_periodo_base ?? '-'}</td>
+                    <td className="py-1.5">{resultado.unidad}</td>
+                    <td className="py-1.5 text-gray-400">{formatDateTime(resultado.created_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
     </AppLayout>
   );
 }

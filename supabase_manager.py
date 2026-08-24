@@ -1429,7 +1429,7 @@ class SupabaseManager:
         try:
             response = (
                 self.client.table("campania_tareas")
-                .select("*, campania_acciones(*), campanias(nombre, estado)")
+                .select("*, campania_acciones(*), campanias(nombre, estado, tipo)")
                 .eq("id", tarea_id)
                 .execute()
             )

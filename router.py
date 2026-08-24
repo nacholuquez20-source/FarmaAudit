@@ -762,14 +762,23 @@ class ConversationRouter:
 
         accion = tarea.get("campania_acciones") or {}
         campania = tarea.get("campanias") or {}
+        label = accion.get("descripcion") or accion.get("tipo") or "Tarea"
         context["tarea_id"] = tarea_id
+
+        # Tour de Farmacias (Módulo 3): no hay concepto de "insumo faltante", así que se
+        # saltea el chooser Completada/Falta insumo y se va directo a pedir la foto — el
+        # encargado reporta un problema escribiéndolo junto con la misma foto (el caption
+        # ya se guarda como comentario del evento, ver _handle_campania_esperando_evidencia).
+        if campania.get("tipo") == "tour_interno":
+            texto = f"Sacá una foto de: {label}. Si encontrás algo para reportar, escribilo junto con la foto."
+            return await self._enviar_prompt_evidencia(payload, meta_client, tarea_id, accion, context, texto)
+
         self.sheets.update_conversacion(
             telefono=payload.telefono,
             estado=ConversationState.CAMPANIA_TAREA_ACTIVA,
             id_pendiente=tarea_id,
             ultimo_mensaje=json.dumps(context),
         )
-        label = accion.get("descripcion") or accion.get("tipo") or "Tarea"
         await meta_client.send_quick_reply(
             payload.telefono,
             f"{campania.get('nombre') or 'Campaña'}: {label}\n¿Qué querés hacer?",
@@ -779,6 +788,34 @@ class ConversationRouter:
             ],
         )
         return "campania_tarea_activa"
+
+    async def _enviar_prompt_evidencia(
+        self,
+        payload: WhatsAppPayload,
+        meta_client: MetaClient,
+        tarea_id: str,
+        accion: Dict[str, Any],
+        context: Dict[str, Any],
+        texto: str,
+    ) -> str:
+        """Pasa la conversación a CAMPANIA_ESPERANDO_EVIDENCIA y manda la foto de
+        referencia (si la acción tiene una) antes del texto que pide la foto real.
+        Compartido entre el flujo comercial (`_handle_campania_tarea_activa`, elección
+        "Completada") y el delta del Tour (`_handle_campania_listando_tareas`)."""
+        context["tarea_id"] = str(tarea_id)
+        self.sheets.update_conversacion(
+            telefono=payload.telefono,
+            estado=ConversationState.CAMPANIA_ESPERANDO_EVIDENCIA,
+            id_pendiente=str(tarea_id),
+            ultimo_mensaje=json.dumps(context),
+        )
+        referencia_path = accion.get("imagen_referencia_path")
+        if referencia_path:
+            referencia_url = self.sheets.get_campania_referencia_signed_url(referencia_path)
+            if referencia_url:
+                await meta_client.send_image_by_url(payload.telefono, referencia_url, caption="Así debería quedar:")
+        await meta_client.send_text(payload.telefono, texto)
+        return "campania_esperando_evidencia"
 
     async def _handle_campania_tarea_activa(
         self,
@@ -805,20 +842,9 @@ class ConversationRouter:
 
         if choice == "completada":
             if accion.get("verificable_por_foto", True):
-                context["tarea_id"] = str(tarea_id)
-                self.sheets.update_conversacion(
-                    telefono=payload.telefono,
-                    estado=ConversationState.CAMPANIA_ESPERANDO_EVIDENCIA,
-                    id_pendiente=str(tarea_id),
-                    ultimo_mensaje=json.dumps(context),
+                return await self._enviar_prompt_evidencia(
+                    payload, meta_client, str(tarea_id), accion, context, "Mandame una foto de evidencia."
                 )
-                referencia_path = accion.get("imagen_referencia_path")
-                if referencia_path:
-                    referencia_url = self.sheets.get_campania_referencia_signed_url(referencia_path)
-                    if referencia_url:
-                        await meta_client.send_image_by_url(payload.telefono, referencia_url, caption="Así debería quedar:")
-                await meta_client.send_text(payload.telefono, "Mandame una foto de evidencia.")
-                return "campania_esperando_evidencia"
 
             self.sheets.update_campania_tarea_fields(str(tarea_id), {
                 "estado": "Completada",

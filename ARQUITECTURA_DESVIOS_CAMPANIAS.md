@@ -48,6 +48,13 @@
 > momento de escribirla, no contra lo que decía cualquier versión anterior de este documento. Fase 6 queda
 > **implementada** (código + migración escrita, falta correrla en Supabase). Lección para las fases que
 > vengan: no asumir un número de `etapa-N` por lo que diga el doc — listar el directorio real primero.
+>
+> **Mismo día, más tarde: Fase 7 (Tour de Farmacias) también implementada**, aplicando esa lección — migración
+> verificada contra el listado real (`etapa-32-tour-farmacias.sql`). Refactor de paso: se extrajo
+> `_enviar_prompt_evidencia()` en `router.py` como helper compartido entre el flujo comercial ("Completada") y
+> el delta del tour, en vez de duplicar la lógica de mandar la foto de referencia + pedir evidencia. `creado_por_telefono`
+> (parte de la spec de Fase 8) se sacó de la migración de Fase 7 y quedó pendiente para cuando se implemente
+> Fase 8 — no tiene sentido agregar una columna sin nada que la use todavía.
 
 ---
 
@@ -617,7 +624,7 @@ integración POS (reemplaza la carga manual de `campania_resultados`); rol logí
 
 **Fase 6 — Foto de referencia (v3/v6)** ✅ **implementado 2026-08-24**: columna `imagen_referencia_path` en `campania_acciones` (habilitada también para tour, v6) + input opcional en el wizard (`CampaniaWizard.tsx`, paso 2) + envío por el bot antes de pedir evidencia (`_handle_campania_tarea_activa`, `router.py`) + visible en `MisCampaniaDetail.tsx`. Migración: `frontend/docs/sql/etapa-31-campania-referencia.sql` — **(v7 — corrección de numeración)** ni `etapa-17`/`etapa-18` (propuesta original) ni `etapa-20`/`etapa-21` (corrección v5) estaban libres: el repo real llega hasta `etapa-30-sucursales-geo.sql`, verificado al momento de escribir la migración. Validado con smoke test manual (mismo criterio que `test_respuesta_recolectora.py`: fakes de `SupabaseManager`/`MetaClient`, sin DB real) — cubre el caso con foto de referencia (se manda `send_image_by_url` con caption "Así debería quedar:" ANTES del texto de evidencia) y sin ella (no se llama `send_image_by_url`, solo el texto). `tsc -b` y `eslint` limpios en los archivos tocados. **Falta correr la migración en Supabase** — acción del dueño, no técnica.
 
-**Fase 7 — Tour de Farmacias (v3)**: ver MÓDULO 3 completo (§3) — `campanias.tipo`/`marca_id` nullable, 6 acciones de checklist fijas (vidriera, iluminación, góndolas, piso, limpieza, cadena de frío condicional, **v5**), guarda de integridad en `campania_resultados` (**v5**, solo `tipo='comercial'`), columna `creado_por_telefono` (**v5**, ver Fase 8), reusa el bot y el tablero de campañas con deltas mínimos (saltea el chooser Completada/Falta insumo, oculta venta real). Sin templates nuevos de Meta. **(v7 — número de migración a confirmar recién al implementar esta fase)**: NO es `etapa-17`/`etapa-18` (propuesta original) ni `etapa-20`/`etapa-21` (corrección v5) — ambos rangos ya estaban tomados, según se descubrió recién al implementar la Fase 6 (que terminó en `etapa-31`, ver arriba). Verificar el listado real de `frontend/docs/sql/` al momento de crear esta migración en vez de asumir un número fijo — el próximo libre hoy es `etapa-32`, pero puede haber cambiado.
+**Fase 7 — Tour de Farmacias (v3)** ✅ **implementado 2026-08-24**: ver MÓDULO 3 completo (§3) — `campanias.tipo`/`marca_id` nullable, 6 acciones de checklist fijas (vidriera, iluminación, góndolas, piso, limpieza, cadena de frío, **v5**), guarda de integridad en `campania_resultados` vía trigger (**v5**, solo `tipo='comercial'`), delta del bot en `_handle_campania_listando_tareas` (saltea el chooser Completada/Falta insumo, vía un helper `_enviar_prompt_evidencia` compartido con el flujo comercial), wizard con selector de tipo + checklist precargado (`CampaniaWizard.tsx`), tablero oculta "venta real" cuando `tipo='tour_interno'` (`CampaniaDetail.tsx`), badge de tipo en el listado (`Campanias.tsx`). Sin templates nuevos de Meta. `creado_por_telefono` (**v5**) se difirió a la Fase 8 — no tiene consumidor hasta que exista creación por bot, agregarla ahora sería schema muerto. Migración: `frontend/docs/sql/etapa-32-tour-farmacias.sql`, verificada contra el listado real del directorio (llegaba a `etapa-31` en ese momento). Validado: `tsc -b`/`eslint` limpios, `python -m py_compile` limpio, smoke test manual (mismo patrón que Fase 6) confirmando que un tour saltea directo a "mandame la foto" y una campaña comercial sigue mostrando el chooser Completada/Falta insumo sin cambios. **Falta correr la migración en Supabase.**
 
 **Fase 8 — Crear y lanzar Campañas/Tour desde WhatsApp (v4)**: ver MÓDULO 4 completo — nuevo menú de entrada
 `AUDITOR_ELIGIENDO_MODULO` (3 botones: Auditar / Campaña / Tour, reemplaza el salto directo a selección de
@@ -631,4 +638,4 @@ job de timeout de flujo abandonado (**v5**, mismo patrón que `check_incomplete_
 (**v5**) + columna `creado_por_telefono` para trazabilidad de campañas creadas por bot (**v5**) + selección de
 alcance por texto libre con manejo explícito de "no encontrado"/ambiguo (**v5**) + subida de foto de
 referencia por WhatsApp. Depende de Fases 6/7 (mismo modelo de datos, sin tablas nuevas). Sin migración SQL
-propia salvo `creado_por_telefono`, que se agrega a la migración de Fase 7 (número a confirmar, ver nota v7 en Fase 7 arriba).
+propia salvo `creado_por_telefono` (**v7 — se movió de la migración de Fase 7 a la de esta fase, que es donde recién tiene un consumidor real** — número de migración a verificar contra el listado real de `frontend/docs/sql/` al momento de implementar, no asumir uno fijo; hoy el próximo libre es `etapa-33`).

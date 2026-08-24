@@ -519,7 +519,20 @@ export interface TendenciaDia {
 // ============ Modulo Campanias (ver ARQUITECTURA_DESVIOS_CAMPANIAS.md, Modulo 2) ============
 
 export type CampaniaEstado = 'Borrador' | 'Activa' | 'En_seguimiento' | 'Finalizada' | 'Cancelada';
-export type CampaniaAccionTipo = 'exhibicion' | 'material_pop' | 'burbuja_precio' | 'descuento_caja' | 'custom';
+export type CampaniaTipo = 'comercial' | 'tour_interno';
+export type CampaniaAccionTipo =
+  | 'exhibicion'
+  | 'material_pop'
+  | 'burbuja_precio'
+  | 'descuento_caja'
+  | 'custom'
+  // Tour de Farmacias (Modulo 3, sin marca) — ver ARQUITECTURA_DESVIOS_CAMPANIAS.md
+  | 'vidriera'
+  | 'iluminacion'
+  | 'gondola_orden'
+  | 'piso'
+  | 'limpieza'
+  | 'heladera_cadena_frio';
 export type CampaniaTareaEstado = 'Pendiente' | 'Completada' | 'Bloqueada_por_insumo' | 'Verificada';
 export type CampaniaEventoTipo = 'creacion' | 'vista' | 'completada' | 'evidencia' | 'bloqueo_insumo' | 'rechazo' | 'verificacion' | 'nota';
 export type SolicitudInsumoProveedor = 'laboratorio_apm' | 'cadena';
@@ -529,7 +542,9 @@ export type SolicitudInsumoTipo = 'carteleria' | 'material_pop' | 'stock' | 'otr
 export interface Campania {
   id: string;
   nombre: string;
-  marca_id: string;
+  tipo: CampaniaTipo;
+  /** NULL cuando tipo === 'tour_interno' (un tour no tiene marca/laboratorio detras). */
+  marca_id: string | null;
   estado: CampaniaEstado;
   fecha_inicio: string | null;
   fecha_fin: string | null;

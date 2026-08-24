@@ -33,6 +33,7 @@ import type {
   GestionRevisionAccion,
   Marca,
   Campania,
+  CampaniaTipo,
   CampaniaAccion,
   CampaniaAccionTipo,
   CampaniaTarea,
@@ -1215,7 +1216,9 @@ export async function getCampaniaById(id: string): Promise<Campania | null> {
 
 export async function createCampania(input: {
   nombre: string;
-  marca_id: string;
+  /** NULL para tipo='tour_interno' — un tour no tiene marca/laboratorio detras. */
+  marca_id: string | null;
+  tipo?: CampaniaTipo;
   acuerdo_desde?: string | null;
   acuerdo_hasta?: string | null;
   contraprestacion?: string | null;

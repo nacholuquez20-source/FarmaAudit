@@ -10,7 +10,7 @@ import { Textarea } from '../components/Textarea';
 import { useAuth } from '../hooks/useAuth';
 import { useSucursales } from '../hooks/useSucursales';
 import { getMarcas, createCampania, createCampaniaAcciones, uploadCampaniaReferencia, activarCampania } from '../lib/api';
-import type { CampaniaAccionTipo, Marca } from '../types';
+import type { CampaniaAccionTipo, CampaniaTipo, Marca } from '../types';
 
 type Step = 1 | 2 | 3;
 
@@ -19,6 +19,18 @@ const ACCION_OPTIONS: { tipo: CampaniaAccionTipo; label: string; hint: string }[
   { tipo: 'material_pop', label: 'Material POP / cartel', hint: 'Afiche, banner, stopper de gondola' },
   { tipo: 'burbuja_precio', label: 'Burbuja de precio', hint: 'Cartel de precio en el mueble (foto obligatoria)' },
   { tipo: 'descuento_caja', label: 'Descuento en caja', hint: 'Activacion en el sistema de caja (no requiere foto)' },
+];
+
+// Tour de Farmacias (Modulo 3): checklist fijo pero editable, precargado y
+// seleccionado por completo al elegir tipo='tour_interno'. Sin marca/acuerdo
+// detras -- es una auditoria interna de infraestructura, no una campania comercial.
+const TOUR_ACCION_OPTIONS: { tipo: CampaniaAccionTipo; label: string; hint: string }[] = [
+  { tipo: 'vidriera', label: 'Vidriera', hint: 'Exhibicion de fachada' },
+  { tipo: 'iluminacion', label: 'Iluminacion', hint: 'Techo / iluminacion general' },
+  { tipo: 'gondola_orden', label: 'Orden de gondolas', hint: 'Orden y limpieza de gondolas' },
+  { tipo: 'piso', label: 'Piso', hint: 'Estado del piso' },
+  { tipo: 'limpieza', label: 'Limpieza', hint: 'Limpieza general del local' },
+  { tipo: 'heladera_cadena_frio', label: 'Cadena de frio', hint: 'Heladeras con refrigerados (si aplica)' },
 ];
 
 export default function CampaniaWizard() {
@@ -31,6 +43,7 @@ export default function CampaniaWizard() {
   const [loadingMarcas, setLoadingMarcas] = useState(true);
 
   // Paso 1
+  const [tipo, setTipo] = useState<CampaniaTipo>('comercial');
   const [nombre, setNombre] = useState('');
   const [marcaId, setMarcaId] = useState('');
   const [acuerdoDesde, setAcuerdoDesde] = useState('');
@@ -77,17 +90,35 @@ export default function CampaniaWizard() {
     [sucursales, categoriaFilter, soloPerfumeria],
   );
 
-  const toggleAccion = (tipo: CampaniaAccionTipo) => {
+  const accionOptions = tipo === 'tour_interno' ? TOUR_ACCION_OPTIONS : ACCION_OPTIONS;
+
+  const handleSetTipo = (next: CampaniaTipo) => {
+    setTipo(next);
+    if (next === 'tour_interno') {
+      // Un tour no tiene marca/laboratorio ni acuerdo comercial detras.
+      setMarcaId('');
+      setAcuerdoDesde('');
+      setAcuerdoHasta('');
+      setContraprestacion('');
+      // Checklist precargado y seleccionado por completo (editable: se puede sacar).
+      setAccionesSeleccionadas(new Set(TOUR_ACCION_OPTIONS.map((opcion) => opcion.tipo)));
+    } else {
+      setAccionesSeleccionadas(new Set());
+    }
+    setReferenciaFiles({});
+  };
+
+  const toggleAccion = (accionTipo: CampaniaAccionTipo) => {
     setAccionesSeleccionadas((current) => {
       const next = new Set(current);
-      if (next.has(tipo)) next.delete(tipo);
-      else next.add(tipo);
+      if (next.has(accionTipo)) next.delete(accionTipo);
+      else next.add(accionTipo);
       return next;
     });
   };
 
-  const setReferenciaFile = (tipo: CampaniaAccionTipo, file: File | undefined) => {
-    setReferenciaFiles((current) => ({ ...current, [tipo]: file }));
+  const setReferenciaFile = (accionTipo: CampaniaAccionTipo, file: File | undefined) => {
+    setReferenciaFiles((current) => ({ ...current, [accionTipo]: file }));
   };
 
   const toggleSucursal = (id: string) => {
@@ -108,7 +139,7 @@ export default function CampaniaWizard() {
     });
   };
 
-  const canGoStep2 = nombre.trim().length > 0 && marcaId.length > 0;
+  const canGoStep2 = nombre.trim().length > 0 && (tipo === 'tour_interno' || marcaId.length > 0);
   const canGoStep3 = accionesSeleccionadas.size > 0 || accionCustom.trim().length > 0;
   const canSubmit = sucursalesSeleccionadas.size > 0;
 
@@ -121,14 +152,15 @@ export default function CampaniaWizard() {
     try {
       const campania = await createCampania({
         nombre: nombre.trim(),
-        marca_id: marcaId,
-        acuerdo_desde: acuerdoDesde || null,
-        acuerdo_hasta: acuerdoHasta || null,
-        contraprestacion: contraprestacion.trim() || null,
+        tipo,
+        marca_id: tipo === 'tour_interno' ? null : marcaId,
+        acuerdo_desde: tipo === 'tour_interno' ? null : acuerdoDesde || null,
+        acuerdo_hasta: tipo === 'tour_interno' ? null : acuerdoHasta || null,
+        contraprestacion: tipo === 'tour_interno' ? null : contraprestacion.trim() || null,
         creado_por: user?.id || null,
       });
 
-      const acciones = ACCION_OPTIONS.filter((opcion) => accionesSeleccionadas.has(opcion.tipo)).map((opcion) => ({
+      const acciones = accionOptions.filter((opcion) => accionesSeleccionadas.has(opcion.tipo)).map((opcion) => ({
         tipo: opcion.tipo,
         descripcion: opcion.label,
       }));
@@ -175,7 +207,13 @@ export default function CampaniaWizard() {
           </div>
         ))}
         <span className="ml-3 text-sm font-semibold text-gray-600">
-          {step === 1 ? 'Marca y acuerdo' : step === 2 ? 'Acciones sugeridas' : 'Alcance y envio'}
+          {step === 1
+            ? tipo === 'tour_interno'
+              ? 'Datos del tour'
+              : 'Marca y acuerdo'
+            : step === 2
+              ? 'Acciones sugeridas'
+              : 'Alcance y envio'}
         </span>
       </div>
 
@@ -187,67 +225,104 @@ export default function CampaniaWizard() {
 
       {step === 1 && (
         <div className="max-w-2xl rounded-lg bg-white p-6 shadow">
-          <label className="mb-4 block text-sm font-medium text-gray-700">
-            Nombre de la campania
-            <Input
-              value={nombre}
-              onChange={(e) => setNombre(e.target.value)}
-              placeholder="Ej: Unilever Verano 2026"
-              className="mt-1"
-            />
-          </label>
-
           <div className="mb-4">
-            <div className="mb-2 text-sm font-medium text-gray-700">Marca</div>
-            {loadingMarcas ? (
-              <FeedbackState title="Cargando marcas..." tone="loading" />
-            ) : marcas.length === 0 ? (
-              <FeedbackState
-                title="No hay marcas activas."
-                description="Carga una marca en Admin > Marcas (campanas) antes de continuar."
-                tone="warning"
-              />
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {marcas.map((marca) => (
-                  <button
-                    key={marca.id}
-                    type="button"
-                    onClick={() => setMarcaId(marca.id)}
-                    className={`rounded-lg border px-4 py-2 text-sm font-semibold transition ${
-                      marcaId === marca.id
-                        ? 'border-primary-navy bg-primary-navy text-white'
-                        : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
-                    }`}
-                  >
-                    {marca.nombre}
-                  </button>
-                ))}
-              </div>
+            <div className="mb-2 text-sm font-medium text-gray-700">Tipo</div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => handleSetTipo('comercial')}
+                className={`rounded-lg border px-4 py-2 text-sm font-semibold transition ${
+                  tipo === 'comercial'
+                    ? 'border-primary-navy bg-primary-navy text-white'
+                    : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                Campania comercial
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSetTipo('tour_interno')}
+                className={`rounded-lg border px-4 py-2 text-sm font-semibold transition ${
+                  tipo === 'tour_interno'
+                    ? 'border-primary-navy bg-primary-navy text-white'
+                    : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                Tour de Farmacias
+              </button>
+            </div>
+            {tipo === 'tour_interno' && (
+              <p className="mt-2 text-xs text-gray-500">
+                Auditoria interna de infraestructura (iluminacion, gondolas, piso, limpieza) — sin marca ni acuerdo comercial.
+              </p>
             )}
           </div>
 
-          <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <label className="text-sm font-medium text-gray-700">
-              Acuerdo vigente desde
-              <Input type="date" value={acuerdoDesde} onChange={(e) => setAcuerdoDesde(e.target.value)} className="mt-1" />
-            </label>
-            <label className="text-sm font-medium text-gray-700">
-              Acuerdo vigente hasta
-              <Input type="date" value={acuerdoHasta} onChange={(e) => setAcuerdoHasta(e.target.value)} className="mt-1" />
-            </label>
-          </div>
-
-          <label className="mb-2 block text-sm font-medium text-gray-700">
-            Contraprestacion (opcional)
-            <Textarea
-              value={contraprestacion}
-              onChange={(e) => setContraprestacion(e.target.value)}
-              rows={2}
-              placeholder="Que recibe la cadena a cambio del espacio (descuento en sell-in, pago directo, etc.)"
+          <label className="mb-4 block text-sm font-medium text-gray-700">
+            Nombre de la {tipo === 'tour_interno' ? 'tour' : 'campania'}
+            <Input
+              value={nombre}
+              onChange={(e) => setNombre(e.target.value)}
+              placeholder={tipo === 'tour_interno' ? 'Ej: Tour de Farmacias - Agosto 2026' : 'Ej: Unilever Verano 2026'}
               className="mt-1"
             />
           </label>
+
+          {tipo === 'comercial' && (
+            <>
+              <div className="mb-4">
+                <div className="mb-2 text-sm font-medium text-gray-700">Marca</div>
+                {loadingMarcas ? (
+                  <FeedbackState title="Cargando marcas..." tone="loading" />
+                ) : marcas.length === 0 ? (
+                  <FeedbackState
+                    title="No hay marcas activas."
+                    description="Carga una marca en Admin > Marcas (campanas) antes de continuar."
+                    tone="warning"
+                  />
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {marcas.map((marca) => (
+                      <button
+                        key={marca.id}
+                        type="button"
+                        onClick={() => setMarcaId(marca.id)}
+                        className={`rounded-lg border px-4 py-2 text-sm font-semibold transition ${
+                          marcaId === marca.id
+                            ? 'border-primary-navy bg-primary-navy text-white'
+                            : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                        }`}
+                      >
+                        {marca.nombre}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <label className="text-sm font-medium text-gray-700">
+                  Acuerdo vigente desde
+                  <Input type="date" value={acuerdoDesde} onChange={(e) => setAcuerdoDesde(e.target.value)} className="mt-1" />
+                </label>
+                <label className="text-sm font-medium text-gray-700">
+                  Acuerdo vigente hasta
+                  <Input type="date" value={acuerdoHasta} onChange={(e) => setAcuerdoHasta(e.target.value)} className="mt-1" />
+                </label>
+              </div>
+
+              <label className="mb-2 block text-sm font-medium text-gray-700">
+                Contraprestacion (opcional)
+                <Textarea
+                  value={contraprestacion}
+                  onChange={(e) => setContraprestacion(e.target.value)}
+                  rows={2}
+                  placeholder="Que recibe la cadena a cambio del espacio (descuento en sell-in, pago directo, etc.)"
+                  className="mt-1"
+                />
+              </label>
+            </>
+          )}
 
           <div className="mt-6 flex justify-end">
             <Button disabled={!canGoStep2} onClick={() => setStep(2)}>Continuar</Button>
@@ -258,11 +333,12 @@ export default function CampaniaWizard() {
       {step === 2 && (
         <div className="max-w-2xl rounded-lg bg-white p-6 shadow">
           <p className="mb-4 text-sm text-gray-600">
-            Elegi las acciones que tienen que ejecutar los responsables de sucursal. "Burbuja de precio" es carteleria
-            fisica (se verifica con foto); "Descuento en caja" es una activacion administrativa, no depende del encargado.
+            {tipo === 'tour_interno'
+              ? 'Checklist precargado con los puntos estandar del tour. Podes sacar los que no apliquen a esta sucursal.'
+              : 'Elegi las acciones que tienen que ejecutar los responsables de sucursal. "Burbuja de precio" es carteleria fisica (se verifica con foto); "Descuento en caja" es una activacion administrativa, no depende del encargado.'}
           </p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {ACCION_OPTIONS.map((opcion) => {
+            {accionOptions.map((opcion) => {
               const active = accionesSeleccionadas.has(opcion.tipo);
               const admiteReferencia = opcion.tipo !== 'descuento_caja';
               const referenciaFile = referenciaFiles[opcion.tipo];
