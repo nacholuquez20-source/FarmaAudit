@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Check, MessageCircle } from 'lucide-react';
+import { Check, ImagePlus, MessageCircle, X } from 'lucide-react';
 import { AppLayout } from '../components/AppLayout';
 import { FeedbackState } from '../components/FeedbackState';
 import { Button } from '../components/Button';
@@ -9,7 +9,7 @@ import { Input } from '../components/Input';
 import { Textarea } from '../components/Textarea';
 import { useAuth } from '../hooks/useAuth';
 import { useSucursales } from '../hooks/useSucursales';
-import { getMarcas, createCampania, createCampaniaAcciones, activarCampania } from '../lib/api';
+import { getMarcas, createCampania, createCampaniaAcciones, uploadCampaniaReferencia, activarCampania } from '../lib/api';
 import type { CampaniaAccionTipo, Marca } from '../types';
 
 type Step = 1 | 2 | 3;
@@ -40,6 +40,9 @@ export default function CampaniaWizard() {
   // Paso 2
   const [accionesSeleccionadas, setAccionesSeleccionadas] = useState<Set<CampaniaAccionTipo>>(new Set());
   const [accionCustom, setAccionCustom] = useState('');
+  // Foto de referencia ("asi debe quedar") opcional por accion, keyeada por tipo
+  // ('custom' para la accion personalizada). No aplica a descuento_caja (sin foto).
+  const [referenciaFiles, setReferenciaFiles] = useState<Partial<Record<CampaniaAccionTipo, File>>>({});
 
   // Paso 3
   const [categoriaFilter, setCategoriaFilter] = useState<'' | 'A' | 'B' | 'C'>('');
@@ -81,6 +84,10 @@ export default function CampaniaWizard() {
       else next.add(tipo);
       return next;
     });
+  };
+
+  const setReferenciaFile = (tipo: CampaniaAccionTipo, file: File | undefined) => {
+    setReferenciaFiles((current) => ({ ...current, [tipo]: file }));
   };
 
   const toggleSucursal = (id: string) => {
@@ -128,7 +135,19 @@ export default function CampaniaWizard() {
       if (accionCustom.trim()) {
         acciones.push({ tipo: 'custom' as CampaniaAccionTipo, descripcion: accionCustom.trim() });
       }
-      await createCampaniaAcciones(campania.id, acciones);
+
+      // Subir las fotos de referencia (opcionales) antes de crear las acciones: el path
+      // se arma con el id de campania + el indice, no con el id de la accion (todavia no existe).
+      const accionesConReferencia = await Promise.all(
+        acciones.map(async (accion, index) => {
+          const file = referenciaFiles[accion.tipo];
+          if (!file) return accion;
+          const path = await uploadCampaniaReferencia(campania.id, index, file);
+          return { ...accion, imagen_referencia_path: path };
+        }),
+      );
+
+      await createCampaniaAcciones(campania.id, accionesConReferencia);
 
       const result = await activarCampania(campania.id, Array.from(sucursalesSeleccionadas));
       toast.success(`Campania activada: ${result.tareas_creadas} tareas creadas en ${sucursalesSeleccionadas.size} sucursales.`);
@@ -245,21 +264,54 @@ export default function CampaniaWizard() {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {ACCION_OPTIONS.map((opcion) => {
               const active = accionesSeleccionadas.has(opcion.tipo);
+              const admiteReferencia = opcion.tipo !== 'descuento_caja';
+              const referenciaFile = referenciaFiles[opcion.tipo];
               return (
-                <button
+                <div
                   key={opcion.tipo}
-                  type="button"
-                  onClick={() => toggleAccion(opcion.tipo)}
                   className={`rounded-lg border p-4 text-left transition ${
                     active ? 'border-primary-navy bg-primary-navy/5' : 'border-gray-300 bg-white hover:bg-gray-50'
                   }`}
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-gray-900">{opcion.label}</span>
-                    {active && <Check className="h-4 w-4 text-primary-navy" />}
-                  </div>
-                  <p className="mt-1 text-xs text-gray-500">{opcion.hint}</p>
-                </button>
+                  <button type="button" onClick={() => toggleAccion(opcion.tipo)} className="block w-full text-left">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-gray-900">{opcion.label}</span>
+                      {active && <Check className="h-4 w-4 text-primary-navy" />}
+                    </div>
+                    <p className="mt-1 text-xs text-gray-500">{opcion.hint}</p>
+                  </button>
+
+                  {active && admiteReferencia && (
+                    <div className="mt-3 border-t border-primary-navy/10 pt-3">
+                      {referenciaFile ? (
+                        <div className="flex items-center justify-between text-xs text-gray-600">
+                          <span className="truncate">📎 {referenciaFile.name}</span>
+                          <button
+                            type="button"
+                            onClick={() => setReferenciaFile(opcion.tipo, undefined)}
+                            className="ml-2 shrink-0 text-gray-400 hover:text-red-600"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs font-semibold text-primary-navy">
+                          <ImagePlus className="h-3.5 w-3.5" />
+                          Foto de referencia (opcional)
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => setReferenciaFile(opcion.tipo, e.target.files?.[0])}
+                          />
+                        </label>
+                      )}
+                      <p className="mt-1 text-[11px] text-gray-400">
+                        Se le manda al encargado antes de pedirle su foto ("Así debería quedar").
+                      </p>
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>
@@ -273,6 +325,34 @@ export default function CampaniaWizard() {
               className="mt-1"
             />
           </label>
+
+          {accionCustom.trim() && (
+            <div className="mt-2">
+              {referenciaFiles.custom ? (
+                <div className="flex items-center justify-between text-xs text-gray-600">
+                  <span className="truncate">📎 {referenciaFiles.custom.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => setReferenciaFile('custom', undefined)}
+                    className="ml-2 shrink-0 text-gray-400 hover:text-red-600"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs font-semibold text-primary-navy">
+                  <ImagePlus className="h-3.5 w-3.5" />
+                  Foto de referencia (opcional)
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => setReferenciaFile('custom', e.target.files?.[0])}
+                  />
+                </label>
+              )}
+            </div>
+          )}
 
           <div className="mt-6 flex justify-between">
             <Button variant="outline" onClick={() => setStep(1)}>Atras</Button>

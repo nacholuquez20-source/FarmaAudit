@@ -550,6 +550,8 @@ export interface CampaniaAccion {
   descripcion: string | null;
   requiere_foto: boolean;
   verificable_por_foto: boolean;
+  /** Foto opcional de "asi debe quedar" que el bot manda antes de pedir la evidencia del encargado. */
+  imagen_referencia_path: string | null;
   created_at?: string;
 }
 

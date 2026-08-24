@@ -1264,6 +1264,21 @@ class SupabaseManager:
             logger.warning(f"Failed to create signed informe URL for {path}: {e}")
             return ""
 
+    def upload_borrador_archivado_pdf(self, id_sucursal: str, content: bytes) -> Dict[str, str]:
+        """Upload the archived-findings PDF for a group of stale desvios_borrador
+        rows (ver archivar_hallazgos.py) to the same private bucket used for
+        every other generated report. El path se guarda en metadata_json de
+        cada fila archivada — el frontend re-firma con getSignedUrl (mismo
+        mecanismo que ficha.google_drive_id), no hace falta una función de
+        firmado dedicada acá."""
+        path = f"archivados/{id_sucursal}/{uuid.uuid4().hex}.pdf"
+        self.client.storage.from_("desvio-evidencias").upload(
+            path,
+            content,
+            {"content-type": "application/pdf", "upsert": "false"},
+        )
+        return {"path": path, "bucket": "desvio-evidencias"}
+
     def regenerate_missing_thumbnails(self) -> Dict[str, int]:
         """
         Find evidences without thumbnails in desvios_borrador and regenerate them.
@@ -1486,6 +1501,19 @@ class SupabaseManager:
                     thumb_path = None
 
         return {"path": path, "thumb_path": thumb_path, "bucket": "desvio-evidencias"}
+
+    def get_campania_referencia_signed_url(self, path: str, expires_seconds: int = 3600) -> str:
+        """Sign the reference-photo path uploaded from the web wizard (campania-referencias/
+        prefix, same desvio-evidencias bucket as the rest of campania evidence) so the bot
+        can forward it to the encargado via send_image_by_url."""
+        try:
+            response = self.client.storage.from_("desvio-evidencias").create_signed_url(path, expires_seconds)
+            if isinstance(response, dict):
+                return response.get("signedURL") or response.get("signedUrl") or ""
+            return getattr(response, "signed_url", "") or getattr(response, "signedURL", "")
+        except Exception as e:
+            logger.warning(f"Failed to create signed campania referencia URL for {path}: {e}")
+            return ""
 
     def create_solicitud_insumo(
         self,

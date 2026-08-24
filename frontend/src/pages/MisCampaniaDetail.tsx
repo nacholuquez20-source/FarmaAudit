@@ -13,6 +13,7 @@ import {
   updateCampaniaTarea,
   createCampaniaEvento,
   createSolicitudInsumo,
+  getSignedUrl,
 } from '../lib/api';
 import type { CampaniaTarea, SolicitudInsumoProveedor, SolicitudInsumoTipo } from '../types';
 
@@ -22,6 +23,33 @@ const TIPO_INSUMO_OPTIONS: { value: SolicitudInsumoTipo; label: string }[] = [
   { value: 'stock', label: 'Stock / producto' },
   { value: 'otro', label: 'Otro' },
 ];
+
+/** Foto de "asi debe quedar" cargada por el auditor en el wizard, si la accion tiene una. */
+function ReferenciaImage({ path }: { path: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getSignedUrl(path)
+      .then((signed) => {
+        if (!cancelled) setUrl(signed);
+      })
+      .catch(() => {
+        /* Sin referencia visible si falla la firma; no bloquea el resto de la tarjeta. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
+
+  if (!url) return null;
+  return (
+    <div className="mt-3 rounded-lg border border-gray-200 p-2">
+      <p className="mb-1.5 text-xs font-semibold text-gray-500">Así debería quedar</p>
+      <img src={url} alt="Referencia" className="max-h-40 rounded-md object-cover" />
+    </div>
+  );
+}
 
 export default function MisCampaniaDetail() {
   const { id: campaniaId } = useParams<{ id: string }>();
@@ -167,13 +195,17 @@ export default function MisCampaniaDetail() {
                     {!verificablePorFoto && <div className="text-xs text-gray-400">Accion administrativa, sin foto</div>}
                   </div>
                   <span
-                    className={`rounded px-2.5 py-1 text-xs font-semibold ${
+                    className={`shrink-0 rounded px-2.5 py-1 text-xs font-semibold ${
                       done ? 'bg-emerald-100 text-emerald-800' : tarea.estado === 'Bloqueada_por_insumo' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'
                     }`}
                   >
                     {tarea.estado === 'Pendiente' ? 'Pendiente' : tarea.estado === 'Bloqueada_por_insumo' ? 'Falta insumo' : tarea.estado === 'Completada' ? 'Hecho, a verificar' : 'Verificada'}
                   </span>
                 </div>
+
+                {tarea.campania_acciones?.imagen_referencia_path && (
+                  <ReferenciaImage path={tarea.campania_acciones.imagen_referencia_path} />
+                )}
 
                 {tarea.estado === 'Pendiente' && (
                   <div className="mt-3 flex flex-wrap gap-2">

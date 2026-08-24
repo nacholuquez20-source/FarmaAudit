@@ -1232,7 +1232,13 @@ export async function createCampania(input: {
 
 export async function createCampaniaAcciones(
   campaniaId: string,
-  acciones: { tipo: CampaniaAccionTipo; descripcion?: string; requiere_foto?: boolean; verificable_por_foto?: boolean }[],
+  acciones: {
+    tipo: CampaniaAccionTipo;
+    descripcion?: string;
+    requiere_foto?: boolean;
+    verificable_por_foto?: boolean;
+    imagen_referencia_path?: string | null;
+  }[],
 ): Promise<CampaniaAccion[]> {
   const rows = acciones.map((accion) => ({
     campania_id: campaniaId,
@@ -1241,10 +1247,28 @@ export async function createCampaniaAcciones(
     requiere_foto: accion.requiere_foto ?? true,
     // descuento_caja depende del sistema de caja, no de una foto del encargado (ver arquitectura).
     verificable_por_foto: accion.verificable_por_foto ?? accion.tipo !== 'descuento_caja',
+    imagen_referencia_path: accion.imagen_referencia_path || null,
   }));
   const { data, error } = await supabase.from('campania_acciones').insert(rows).select();
   if (error) throw new Error(handleApiError(error));
   return data || [];
+}
+
+/**
+ * Foto de referencia ("asi debe quedar") que el auditor adjunta a una accion en el wizard.
+ * Se sube antes de crear la fila de campania_acciones (no tiene id todavia), por eso el path
+ * se arma con campaniaId + un indice de orden en vez del id de la accion.
+ */
+export async function uploadCampaniaReferencia(campaniaId: string, index: number, file: File): Promise<string> {
+  const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg';
+  const path = `campania-referencias/${campaniaId}-${index}-${crypto.randomUUID()}.${ext}`;
+
+  const { error } = await supabase.storage
+    .from('desvio-evidencias')
+    .upload(path, file, { contentType: file.type, upsert: false });
+
+  if (error) throw new Error(handleApiError(error));
+  return path;
 }
 
 export async function activarCampania(campaniaId: string, sucursalIds: string[]): Promise<{ status: string; tareas_creadas: number }> {

@@ -812,6 +812,11 @@ class ConversationRouter:
                     id_pendiente=str(tarea_id),
                     ultimo_mensaje=json.dumps(context),
                 )
+                referencia_path = accion.get("imagen_referencia_path")
+                if referencia_path:
+                    referencia_url = self.sheets.get_campania_referencia_signed_url(referencia_path)
+                    if referencia_url:
+                        await meta_client.send_image_by_url(payload.telefono, referencia_url, caption="Así debería quedar:")
                 await meta_client.send_text(payload.telefono, "Mandame una foto de evidencia.")
                 return "campania_esperando_evidencia"
 
