@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { RevisionDesviosPanel } from '../../pages/RevisionDesvios';
-import { DesviosGestionPanel } from '../../pages/DesviosGestion';
+import { AuditoriasDesviosTable } from './AuditoriasDesviosTable';
+import { PendientesAnalizarTable } from './PendientesAnalizarTable';
 import { getDesviosBandejaCounts } from '../../lib/api';
 import { useMountedTabs } from '../../hooks/useMountedTabs';
 import type { DesvioBandeja } from '../../types';
@@ -12,8 +13,7 @@ import type { DesvioBandeja } from '../../types';
 // pestaña "pendientes" de Hoy.tsx, que le da el contentClassName sin padding.
 const BANDEJAS: { key: DesvioBandeja; label: string; hint: string }[] = [
   { key: 'decidir', label: 'Requiere tu decision', hint: 'Borradores por aprobar y correcciones por revisar' },
-  { key: 'esperando', label: 'Esperando al responsable', hint: 'Abiertos, en proceso y vencidos' },
-  { key: 'cerrado', label: 'Resueltos / no corresponde', hint: 'Resueltos, cerrados y en gestion de terceros' },
+  { key: 'auditorias', label: 'Auditorías', hint: 'Todas las auditorías con sus desvíos, respuesta y demora' },
 ];
 
 function isBandeja(value: string | null): value is DesvioBandeja {
@@ -24,9 +24,14 @@ export function DesviosBandejaPanel() {
   const [params, setParams] = useSearchParams();
   const raw = params.get('v');
 
-  // Los enlaces viejos (?v=revision / ?v=gestion) siguen entrando a algo
-  // sensato en vez de romperse.
-  const legacy: Record<string, DesvioBandeja> = { revision: 'decidir', gestion: 'esperando' };
+  // Los enlaces viejos (?v=revision / ?v=gestion / ?v=esperando / ?v=cerrado)
+  // siguen entrando a algo sensato en vez de romperse.
+  const legacy: Record<string, DesvioBandeja> = {
+    revision: 'decidir',
+    gestion: 'auditorias',
+    esperando: 'auditorias',
+    cerrado: 'auditorias',
+  };
   const activeTab: DesvioBandeja = isBandeja(raw) ? raw : (legacy[raw ?? ''] ?? 'decidir');
 
   const [counts, setCounts] = useState<Record<DesvioBandeja, number> | null>(null);
@@ -99,15 +104,12 @@ export function DesviosBandejaPanel() {
               title="Correcciones enviadas por responsables"
               description="El responsable ya respondio por WhatsApp; aprobar cierra el desvio."
             />
-            <DesviosGestionPanel bandeja="decidir" />
+            <PendientesAnalizarTable />
           </>
         )}
       </div>
-      <div style={{ display: activeTab === 'esperando' ? 'block' : 'none' }}>
-        {isMounted('esperando') && <DesviosGestionPanel bandeja="esperando" />}
-      </div>
-      <div style={{ display: activeTab === 'cerrado' ? 'block' : 'none' }}>
-        {isMounted('cerrado') && <DesviosGestionPanel bandeja="cerrado" />}
+      <div style={{ display: activeTab === 'auditorias' ? 'block' : 'none' }}>
+        {isMounted('auditorias') && <AuditoriasDesviosTable />}
       </div>
     </div>
   );

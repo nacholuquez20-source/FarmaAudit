@@ -22,7 +22,7 @@ export type DashboardView = 'general' | 'zona' | 'mapa';
  * Bandejas del panel de desvios. El eje es de quien es el turno, no en que
  * estado esta el desvio (ver ARQUITECTURA_PANEL_DESVIOS.md seccion 5).
  */
-export type DesvioBandeja = 'decidir' | 'esperando' | 'cerrado';
+export type DesvioBandeja = 'decidir' | 'auditorias';
 export type SucursalEditableField = 'nombre' | 'direccion' | 'zona' | 'responsable' | 'tel_responsable';
 export type AutosaveStatus = 'idle' | 'pending' | 'saving' | 'saved' | 'error';
 

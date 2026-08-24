@@ -189,7 +189,7 @@ export default function App() {
 
           {/* Legacy: apuntan directo a /hoy en vez de por RedirectDesviosToHoy,
               para no encadenar dos redirects. */}
-          <Route path="/gestion-desvios" element={<Navigate to="/hoy?s=pendientes&v=esperando" replace />} />
+          <Route path="/gestion-desvios" element={<Navigate to="/hoy?s=pendientes&v=auditorias" replace />} />
           <Route path="/revision-desvios" element={<Navigate to="/hoy?s=pendientes&v=decidir" replace />} />
 
           <Route

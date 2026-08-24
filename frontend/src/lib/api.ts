@@ -583,13 +583,12 @@ export async function getDesviosBandejaCounts(): Promise<Record<DesvioBandeja, n
       ? 0
       : (borradorResult.data?.length ?? 0);
 
-  const counts: Record<DesvioBandeja, number> = { decidir: borradores, esperando: 0, cerrado: 0 };
+  const counts: Record<DesvioBandeja, number> = { decidir: borradores, auditorias: 0 };
 
   for (const row of gestionResult.data ?? []) {
     const estado = (row as { estado: GestionState }).estado;
     if (estado === 'En_revision') counts.decidir += 1;
-    else if (estado === 'Abierta' || estado === 'En_proceso' || estado === 'Vencida') counts.esperando += 1;
-    else counts.cerrado += 1;
+    else if (estado === 'Abierta' || estado === 'En_proceso' || estado === 'Vencida') counts.auditorias += 1;
   }
 
   return counts;
