@@ -271,6 +271,32 @@ class SupabaseManager:
             logger.error(f"Failed to get conversation for {telefono}: {e}")
             return None
 
+    def get_conversaciones_en_estados(self, estados: List[ConversationState]) -> List[Conversacion]:
+        """Todas las conversaciones sentadas hoy en alguno de los estados dados — lo usa
+        el job de timeout de la Fase 8 (`AUDITOR_CAMPANIA_*` abandonados, ver
+        ARQUITECTURA_DESVIOS_CAMPANIAS.md Modulo 4, hallazgo v5). Mismo patron que
+        `get_conversacion`: trae todas las filas y filtra en Python, no hay índice por
+        estado en `conversaciones`."""
+        try:
+            valores = {estado.value for estado in estados}
+            response = self.client.table("conversaciones").select("*").execute()
+            resultado: List[Conversacion] = []
+            for row in response.data or []:
+                estado_raw = str(row.get("estado_actual") or row.get("estado") or "idle")
+                if estado_raw not in valores:
+                    continue
+                resultado.append(Conversacion(
+                    telefono=self._first_value(row, "telefono", "telefono_auditor", default=""),
+                    estado_actual=self._parse_conversation_state(estado_raw),
+                    id_pendiente=row.get("id_pendiente") or row.get("hallazgo_temp") or "",
+                    ultimo_mensaje=row.get("ultimo_mensaje") or "",
+                    timestamp=self._parse_datetime(row.get("timestamp") or row.get("timestamp_creacion") or ""),
+                ))
+            return resultado
+        except Exception as e:
+            logger.error(f"Failed to get conversaciones en estados {estados}: {e}")
+            return []
+
     def update_conversacion(
         self,
         telefono: str,

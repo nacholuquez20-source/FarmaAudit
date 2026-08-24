@@ -31,6 +31,12 @@ from identity import resolve_responsable_by_sucursal, resolve_whatsapp_user, ven
 from informes_respuesta import enviar_informes_respuesta
 from archivar_hallazgos import archivar_hallazgos_antiguos
 from gestion_revision import ACCIONES_VALIDAS, aplicar_revision_gestion
+from campanias_service import (
+    activar_campania_core,
+    CampaniaNoEncontradaError,
+    CampaniaSinAccionesError,
+    SinSucursalesValidasError,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -443,6 +449,13 @@ async def startup_event():
         max_instances=1,  # Prevent concurrent executions
     )
     scheduler.add_job(
+        check_auditor_campania_timeout,
+        "interval",
+        hours=1,
+        id="auditor_campania_timeout_check",
+        max_instances=1,  # Prevent concurrent executions
+    )
+    scheduler.add_job(
         remind_responsable_desvios_pendientes,
         "cron",
         hour=13,  # UTC (10:00 ART)
@@ -801,89 +814,29 @@ async def revisar_gestion(id_gestion: str, payload: GestionRevisionRequest, requ
 @app.post("/api/campanias/{campania_id}/activar")
 async def activar_campania(campania_id: str, payload: CampaniaActivarRequest, request: Request):
     """Genera las tareas de campania (accion x sucursal) para las sucursales elegidas
-    y activa la campania. El envio de WhatsApp es best-effort: requiere templates
-    aprobados en Meta Business Manager (ver ARQUITECTURA_DESVIOS_CAMPANIAS.md,
-    seccion 2.4 bis) que todavia pueden no estar registrados, asi que se intenta
-    y se ignora el fallo sin bloquear la activacion (mismo criterio que el resto
-    del bot, p. ej. send_alerta_coordinador)."""
+    y activa la campania. Delegado a `campanias_service.activar_campania_core` (Fase 8,
+    ver ARQUITECTURA_DESVIOS_CAMPANIAS.md Modulo 4) para que el bot de WhatsApp use la
+    misma logica de fan-out sin duplicarla -- este endpoint solo resuelve auth y mapea
+    las excepciones de dominio a HTTPException."""
     await _require_admin_or_auditor(request)
     client = _get_supabase_client()
     if client is None:
         raise HTTPException(status_code=503, detail="Supabase is not configured")
 
-    if not payload.sucursal_ids:
-        raise HTTPException(status_code=400, detail="Selecciona al menos una sucursal")
-
-    campania_response = client.table("campanias").select("*").eq("id", campania_id).maybe_single().execute()
-    campania = campania_response.data
-    if not campania:
+    try:
+        resultado = await activar_campania_core(
+            client, MetaClient(), campania_id, payload.sucursal_ids, payload.plazo_dias or 14
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except CampaniaNoEncontradaError:
         raise HTTPException(status_code=404, detail="Campania not found")
-
-    acciones_response = client.table("campania_acciones").select("*").eq("campania_id", campania_id).execute()
-    acciones = acciones_response.data or []
-    if not acciones:
+    except CampaniaSinAccionesError:
         raise HTTPException(status_code=400, detail="La campania no tiene acciones cargadas")
-
-    sucursales_response = (
-        client.table("sucursales")
-        .select("id, nombre, responsable, tel_responsable")
-        .in_("id", payload.sucursal_ids)
-        .execute()
-    )
-    sucursales = {row["id"]: row for row in (sucursales_response.data or [])}
-
-    plazo_dias = payload.plazo_dias or 14
-    plazo_fecha = (datetime.now(timezone.utc) + timedelta(days=plazo_dias)).strftime("%Y-%m-%d")
-
-    tareas_nuevas = []
-    for sucursal_id in payload.sucursal_ids:
-        sucursal = sucursales.get(sucursal_id)
-        if not sucursal:
-            continue
-        for accion in acciones:
-            tareas_nuevas.append({
-                "campania_id": campania_id,
-                "accion_id": accion["id"],
-                "id_sucursal": sucursal_id,
-                "responsable": sucursal.get("responsable"),
-                "tel_responsable": sucursal.get("tel_responsable"),
-                "estado": "Pendiente",
-                "plazo_fecha": plazo_fecha,
-            })
-
-    if not tareas_nuevas:
+    except SinSucursalesValidasError:
         raise HTTPException(status_code=400, detail="No se encontraron sucursales validas")
 
-    client.table("campanias").update({
-        "estado": "Activa",
-        "fecha_inicio": campania.get("fecha_inicio") or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-    }).eq("id", campania_id).execute()
-
-    client.table("campania_tareas").insert(tareas_nuevas).execute()
-
-    tareas_por_sucursal: dict[str, int] = {}
-    for tarea in tareas_nuevas:
-        tareas_por_sucursal[tarea["id_sucursal"]] = tareas_por_sucursal.get(tarea["id_sucursal"], 0) + 1
-
-    meta_client = MetaClient()
-    campania_nombre = campania.get("nombre") or "campania"
-    for sucursal_id, cantidad in tareas_por_sucursal.items():
-        sucursal = sucursales.get(sucursal_id) or {}
-        telefono = "".join(ch for ch in str(sucursal.get("tel_responsable") or "") if ch.isdigit())
-        if not telefono:
-            continue
-        sent = await meta_client.send_template(
-            telefono,
-            "campana_nueva_sucursal",
-            body_params=[sucursal.get("nombre") or "", campania_nombre, str(cantidad)],
-        )
-        if not sent:
-            logger.warning(
-                f"No se pudo enviar el template de campania a la sucursal {sucursal_id} "
-                f"(campania {campania_id}) — probablemente el template no esta aprobado aun en Meta."
-            )
-
-    return {"status": "ok", "tareas_creadas": len(tareas_nuevas)}
+    return {"status": "ok", **resultado}
 
 
 @app.get("/api/admin/panel-users")
@@ -1414,6 +1367,49 @@ async def check_incomplete_respuestas_timeout():
                 )
     except Exception as e:
         logger.error(f"Error in check_incomplete_respuestas_timeout: {e}", exc_info=True)
+
+
+# Horas sin actividad antes de descartar un borrador de campaña/tour armado por
+# WhatsApp (Fase 8) que el auditor abandonó a mitad de camino. Ver
+# ARQUITECTURA_DESVIOS_CAMPANIAS.md, Módulo 4 (hallazgo v5) — sin este job el
+# auditor queda trabado en el estado AUDITOR_CAMPANIA_* indefinidamente.
+AUDITOR_CAMPANIA_TIMEOUT_HORAS = 24
+
+AUDITOR_CAMPANIA_ESTADOS_FLUJO = [
+    ConversationState.AUDITOR_CAMPANIA_ELIGIENDO_TIPO,
+    ConversationState.AUDITOR_CAMPANIA_ELIGIENDO_MARCA,
+    ConversationState.AUDITOR_CAMPANIA_NOMBRE,
+    ConversationState.AUDITOR_CAMPANIA_AGREGANDO_ACCION,
+    ConversationState.AUDITOR_CAMPANIA_ESPERANDO_REFERENCIA,
+    ConversationState.AUDITOR_CAMPANIA_ALCANCE,
+    ConversationState.AUDITOR_CAMPANIA_PLAZO,
+    ConversationState.AUDITOR_CAMPANIA_CONFIRMANDO,
+]
+
+
+async def check_auditor_campania_timeout():
+    """Background job: resetea a IDLE un borrador de campaña/tour (Fase 8) que el
+    auditor dejó a mitad de camino por más de AUDITOR_CAMPANIA_TIMEOUT_HORAS, y le
+    avisa. No hay tabla propia para esto: reusa `conversaciones.timestamp`, que ya se
+    actualiza en cada paso del flujo (`update_conversacion`)."""
+    try:
+        sheets = get_sheets()
+        meta_client = MetaClient()
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=AUDITOR_CAMPANIA_TIMEOUT_HORAS)
+        for conv in sheets.get_conversaciones_en_estados(AUDITOR_CAMPANIA_ESTADOS_FLUJO):
+            if not conv.timestamp:
+                continue
+            last_activity = conv.timestamp if conv.timestamp.tzinfo else conv.timestamp.replace(tzinfo=timezone.utc)
+            if last_activity > cutoff:
+                continue
+            sheets.update_conversacion(conv.telefono, ConversationState.IDLE)
+            await meta_client.send_text(
+                conv.telefono,
+                'Se venció el borrador de campaña/tour que estabas armando por inactividad — no se creó nada. '
+                'Escribime "hola" para empezar de nuevo.',
+            )
+    except Exception as e:
+        logger.error(f"Error in check_auditor_campania_timeout: {e}", exc_info=True)
 
 
 # Horas sin actividad antes de recordarle al auditor que dejó una auditoría a

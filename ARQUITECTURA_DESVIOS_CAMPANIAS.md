@@ -67,6 +67,15 @@
 > quedan pendientes por el mismo motivo (ver detalle en Fase 8, §7). Con esto, **todo lo pedido en esta sesión
 > quedó implementado**: auditoría por WhatsApp (ya existía), campañas y tours creables desde el panel web y
 > desde WhatsApp, con foto de referencia opcional en ambos.
+>
+> **v9 — 2026-08-24 (mismo día, la otra sesión ya comiteó).** Con `main.py` limpio otra vez (`c0b02c4`), se
+> completaron los dos pendientes que quedaban abiertos por la colisión: el endpoint `POST
+> /api/campanias/{id}/activar` ahora usa `campanias_service.activar_campania_core` en vez de su lógica inline
+> (mismo cambio que ya estaba preparado, aplicado recién cuando fue seguro) — el wizard web y el bot de
+> WhatsApp comparten la misma lógica de fan-out, cero duplicación. Se agregó el job de timeout
+> `check_auditor_campania_timeout` (24h, reusa `conversaciones.timestamp`, sin tabla nueva). Ambos validados
+> con smoke tests nuevos, incluyendo uno que ejercita `activar_campania_core` contra un fake client con la
+> forma real de supabase-py (no solo un stub). **Fases 6-8 quedan 100% completas, sin deuda pendiente.**
 
 ---
 
@@ -654,18 +663,20 @@ flujo, alcance por nombre con ambigüedad y no-encontrado) — todos pasan sin D
 6/7.
 
 **(v8 — simplificaciones deliberadas de esta fase, documentadas para no perderlas de vista)**:
-- **`main.py` NO se tocó.** Otra sesión estaba editando ese archivo en simultáneo cuando se implementó esta
-  fase (colisión real, no hipotética — confirmado con `git diff` antes de escribir una sola línea ahí). En vez
-  de arriesgar un merge silencioso que revirtiera el trabajo ajeno, el endpoint `POST
-  /api/campanias/{id}/activar` sigue con su lógica inline de siempre; el bot llama a
-  `campanias_service.activar_campania_core` directamente, así que no hay duplicación en el código NUEVO — pero
-  el endpoint del wizard web todavía no está migrado al servicio compartido. Wirearlo es trabajo pendiente de
-  bajo riesgo para cuando ese archivo se estabilice (ver `campanias_service.py`, ya escrito y listo para que
-  `main.py` lo importe).
-- **Job de timeout de flujo abandonado (§Módulo 4, hallazgo v5) no implementado.** Requiere registrar un job
-  nuevo en el scheduler de APScheduler, que vive en `main.py` — mismo motivo que el punto anterior. Un auditor
-  que abandona la creación a mitad de camino queda en el estado `AUDITOR_CAMPANIA_*` sin timeout hasta que se
-  agregue este job.
+- ~~`main.py` NO se tocó~~ — **RESUELTO (v9, 2026-08-24, mismo día).** La otra sesión comiteó su trabajo
+  (`c0b02c4`); una vez que `main.py` quedó limpio otra vez se hizo el wireo pendiente: el endpoint `POST
+  /api/campanias/{id}/activar` ahora delega en `campanias_service.activar_campania_core` (mismo cambio
+  quirúrgico que ya estaba preparado, aplicado recién cuando fue seguro). Validado con un smoke test nuevo que
+  ejercita `activar_campania_core` contra un fake client con la forma real de supabase-py (`.table().select()
+  .eq()/.in_()/.execute()`), no solo mockeado como en los smoke tests de router.py — cubre el camino feliz y
+  las 3 excepciones de dominio (`CampaniaNoEncontradaError`/`CampaniaSinAccionesError`/`SinSucursalesValidasError`).
+- ~~Job de timeout de flujo abandonado no implementado~~ — **RESUELTO (v9)**, mismo motivo. Job nuevo
+  `check_auditor_campania_timeout` (`main.py`, interval 1h, `AUDITOR_CAMPANIA_TIMEOUT_HORAS = 24`) + método
+  `SupabaseManager.get_conversaciones_en_estados()` (mismo patrón que `get_conversacion`: trae todas las filas
+  de `conversaciones` y filtra en Python, no hay índice por estado). Reusa `conversaciones.timestamp`, que ya
+  se actualiza en cada paso del flujo — no hizo falta tabla ni columna nueva. Validado con smoke test: resetea
+  a `IDLE` solo la conversación vencida (>24h sin actividad en estado `AUDITOR_CAMPANIA_*`), deja intacta una
+  reciente y una en un estado no relacionado (`EN_AUDITORIA`).
 - **Sin "Guardar como borrador".** La spec original (§Módulo 4) mencionaba `Borrador` como tercera opción en
   la confirmación final; se implementó solo `Lanzar ahora`/`Cancelar` — guardar un borrador por WhatsApp sin
   una forma de retomarlo después agregaba complejidad sin valor claro. Si hace falta, es una fase chica aparte.
