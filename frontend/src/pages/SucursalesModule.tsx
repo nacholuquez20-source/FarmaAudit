@@ -14,6 +14,17 @@ function formatTime(date: Date | null): string {
   return date.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
 }
 
+const PERIOD_OPTIONS: { value: string; days: number | null; label: string }[] = [
+  { value: '7', days: 7, label: 'Últimos 7 días' },
+  { value: '14', days: 14, label: 'Últimos 14 días' },
+  { value: '30', days: 30, label: 'Últimos 30 días' },
+  { value: 'all', days: null, label: 'Todo el histórico' },
+];
+
+function periodSuffix(days: number | null): string {
+  return days ? `${days}d` : 'histórico';
+}
+
 // Módulo "Sucursales": un solo panel (KPIs + tabla de Auditorías), sin
 // pestañas — reemplaza la vieja Analítica (semáforo + ranking crítico) y la
 // galería de fichas de perfumería, que se solapaban en contenido. La vista
@@ -24,7 +35,9 @@ export default function SucursalesModule() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const [refreshSeconds, setRefreshSeconds] = useState(0);
-  const { stats, loading, refreshing, error, lastUpdated, refresh } = useDashboardStats(refreshSeconds * 1000, null);
+  const [periodValue, setPeriodValue] = useState('14');
+  const periodDays = PERIOD_OPTIONS.find((option) => option.value === periodValue)?.days ?? 14;
+  const { stats, loading, refreshing, error, lastUpdated, refresh } = useDashboardStats(refreshSeconds * 1000, null, periodDays);
 
   // Deep-link legacy desde DesvioInfoCard/legacyRedirects: ?ficha=X abría un
   // modal en la vieja galería. Ahora se resuelve la sucursal de la ficha y se
@@ -73,6 +86,20 @@ export default function SucursalesModule() {
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <label className="text-sm font-medium text-gray-700">
+            Período
+            <select
+              value={periodValue}
+              onChange={(event) => setPeriodValue(event.target.value)}
+              className="ml-2 rounded-lg border border-gray-300 px-3 py-2 font-normal focus:border-transparent focus:ring-2 focus:ring-blue-500"
+            >
+              {PERIOD_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-sm font-medium text-gray-700">
             Auto-refresh
             <select
               value={refreshSeconds}
@@ -115,14 +142,14 @@ export default function SucursalesModule() {
       ) : (
         stats && (
           <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
-            <KPICard title="Total desvíos" value={stats.total_desvios} color="blue" />
+            <KPICard title={`Desvíos nuevos (${periodSuffix(periodDays)})`} value={stats.total_desvios} color="blue" />
             <KPICard title="Gestión abierta/en curso" value={stats.gestiones_abiertas} color="yellow" />
             <KPICard title="Vencidos (todos)" value={stats.gestiones_vencidas} color="red" />
             <KPICard title="Críticos altas activos" value={stats.criticos_activos} color="red" />
             <KPICard title="Críticos altas vencidos" value={stats.criticos_vencidos} color="red" />
-            <KPICard title="Resueltos" value={stats.gestiones_resueltas} color="green" />
-            <KPICard title="Cerrados" value={stats.gestiones_cerradas} color="green" />
-            <KPICard title="Tasa cierre" value={`${stats.tasa_cierre.toFixed(1)}%`} color="blue" />
+            <KPICard title={`Resueltos (${periodSuffix(periodDays)})`} value={stats.gestiones_resueltas} color="green" />
+            <KPICard title={`Cerrados (${periodSuffix(periodDays)})`} value={stats.gestiones_cerradas} color="green" />
+            <KPICard title={`Tasa cierre (${periodSuffix(periodDays)})`} value={`${stats.tasa_cierre.toFixed(1)}%`} color="blue" />
           </div>
         )
       )}

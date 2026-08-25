@@ -986,7 +986,7 @@ function computeBranchScore(row: {
   return Math.max(0, Math.round(score));
 }
 
-export async function getDashboardStats(sucursalId?: string | null): Promise<DashboardStats> {
+export async function getDashboardStats(sucursalId?: string | null, periodDays?: number | null): Promise<DashboardStats> {
   try {
     let reportesQuery = supabase.from('reportes').select('*');
     let gestionQuery = supabase.from('gestion').select('*');
@@ -1017,20 +1017,38 @@ export async function getDashboardStats(sucursalId?: string | null): Promise<Das
     const nombrePorSucursal = new Map(sucursalesRows.map((s) => [s.id as string, String(s.nombre || '')]));
 
     const total_reportes = reportes.length;
-    const total_desvios = gestiones.length;
+
+    // Las gestiones abiertas/vencidas/críticas son estado ACTUAL — un desvío
+    // vencido de hace un mes sigue siendo un problema hoy, así que esos
+    // gauges miran siempre el histórico completo. Total/resueltos/cerrados/
+    // tasa de cierre y la distribución por severidad, en cambio, son
+    // actividad reciente: si periodDays viene seteado, se acotan a los
+    // desvíos reportados en esa ventana (por fecha de creación) para que no
+    // se lean como un acumulado histórico que solo crece.
+    const periodStart = periodDays ? new Date(Date.now() - periodDays * 24 * 60 * 60 * 1000) : null;
+    const gestionesPeriodo = periodStart
+      ? gestiones.filter((g) => {
+          const dateValue = getGestionDate(g);
+          if (!dateValue) return false;
+          const date = new Date(dateValue);
+          return !Number.isNaN(date.getTime()) && date >= periodStart;
+        })
+      : gestiones;
+
+    const total_desvios = gestionesPeriodo.length;
     const gestiones_abiertas = gestiones.filter((g) => g.estado === 'Abierta' || g.estado === 'En_proceso').length;
     const gestiones_vencidas = gestiones.filter((g) => g.estado === 'Vencida').length;
-    const gestiones_resueltas = gestiones.filter((g) => g.estado === 'Resuelta').length;
-    const gestiones_cerradas = gestiones.filter((g) => g.estado === 'Cerrada').length;
-    const tasa_cierre = gestiones.length > 0 ? Math.round((gestiones_cerradas / gestiones.length) * 100) : 0;
+    const gestiones_resueltas = gestionesPeriodo.filter((g) => g.estado === 'Resuelta').length;
+    const gestiones_cerradas = gestionesPeriodo.filter((g) => g.estado === 'Cerrada').length;
+    const tasa_cierre = gestionesPeriodo.length > 0 ? Math.round((gestiones_cerradas / gestionesPeriodo.length) * 100) : 0;
 
     const criticos_activos = gestiones.filter((g) => isCriticoActivo(g.severidad, g.estado)).length;
     const criticos_vencidos = gestiones.filter((g) => g.severidad === 'Alta' && g.estado === 'Vencida').length;
 
     const severidad = {
-      alta: gestiones.filter((g) => g.severidad === 'Alta').length,
-      media: gestiones.filter((g) => g.severidad === 'Media').length,
-      baja: gestiones.filter((g) => g.severidad === 'Baja').length,
+      alta: gestionesPeriodo.filter((g) => g.severidad === 'Alta').length,
+      media: gestionesPeriodo.filter((g) => g.severidad === 'Media').length,
+      baja: gestionesPeriodo.filter((g) => g.severidad === 'Baja').length,
     };
 
     const sucursalesMap = new Map<string, BranchAgg>();
