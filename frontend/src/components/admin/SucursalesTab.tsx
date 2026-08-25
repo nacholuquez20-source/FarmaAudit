@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ClipboardCheck, MapPin } from 'lucide-react';
+import { AlertCircle, Archive, ArchiveRestore, Check, Eye, Loader2, MapPin } from 'lucide-react';
 import { Button } from '../Button';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { FeedbackState } from '../FeedbackState';
 import { Input } from '../Input';
 import { SucursalMapPicker } from '../SucursalMapPicker';
-import { whatsappAuditLink } from '../../lib/utils';
 import { createSucursal, listUsuariosWhatsapp, setSucursalActiva, updateSucursal } from '../../lib/api';
 import { useSucursales } from '../../hooks/useSucursales';
 import type { AutosaveStatus, Sucursal, SucursalCreate, SucursalEditableField, SucursalUpdate, UsuarioWhatsapp } from '../../types';
@@ -54,22 +53,6 @@ function normalizeSucursal(sucursal: Sucursal): Sucursal {
     responsable: sucursal.responsable || '',
     tel_responsable: sucursal.tel_responsable || '',
   };
-}
-
-function getStatusLabel(status: AutosaveStatus | undefined): string {
-  if (status === 'pending') return 'Pendiente';
-  if (status === 'saving') return 'Guardando';
-  if (status === 'saved') return 'Guardado';
-  if (status === 'error') return 'Error';
-  return '';
-}
-
-function getStatusClasses(status: AutosaveStatus | undefined): string {
-  if (status === 'pending') return 'border-amber-300 bg-amber-50 text-amber-800';
-  if (status === 'saving') return 'border-blue-300 bg-blue-50 text-blue-800';
-  if (status === 'saved') return 'border-emerald-300 bg-emerald-50 text-emerald-800';
-  if (status === 'error') return 'border-red-300 bg-red-50 text-red-800';
-  return 'border-transparent bg-transparent text-transparent';
 }
 
 // sucursales.id es text con formato SUC002. Propone el siguiente libre,
@@ -194,11 +177,6 @@ export function SucursalesTab() {
     }, SAVE_DELAY_MS);
   };
 
-  const getRowActiveStatus = (sucursal: Sucursal): AutosaveStatus | undefined => {
-    const rowStatuses = EDITABLE_COLUMNS.map((column) => saveStatus[getCellKey(sucursal.id, column.field)]);
-    return rowStatuses.find((status) => status && status !== 'idle');
-  };
-
   const handleUbicacionSaved = (updated: Sucursal) => {
     setRows((current) => current.map((row) => (row.id === updated.id ? normalizeSucursal(updated) : row)));
     setRowFlash((current) => ({ ...current, [updated.id]: true }));
@@ -266,6 +244,35 @@ export function SucursalesTab() {
     }
   };
 
+  function AutosaveInput({ sucursal, column }: { sucursal: Sucursal; column: EditableColumn }) {
+    const cellKey = getCellKey(sucursal.id, column.field);
+    const status = saveStatus[cellKey];
+    const error = saveErrors[cellKey];
+    return (
+      <div className="relative">
+        <input
+          type="text"
+          value={sucursal[column.field]}
+          onChange={(event) => handleFieldChange(sucursal.id, column.field, event.target.value)}
+          title={error || column.label}
+          className={`w-full rounded-md border bg-transparent px-2.5 py-1.5 text-sm text-gray-900 transition focus:bg-white focus:outline-none focus:ring-2 ${
+            error
+              ? 'border-red-300 bg-red-50 focus:border-red-400 focus:ring-red-500/30'
+              : 'border-transparent hover:border-gray-200 hover:bg-gray-50 focus:border-primary-navy/40 focus:ring-primary-navy/20'
+          } ${status && status !== 'idle' ? 'pr-7' : ''}`}
+        />
+        {status === 'saving' || status === 'pending' ? (
+          <Loader2 className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-blue-500" />
+        ) : status === 'saved' ? (
+          <Check className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-emerald-500" />
+        ) : status === 'error' ? (
+          <AlertCircle className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-red-500" />
+        ) : null}
+        {error && <p className="mt-1 text-xs text-red-700">{error}</p>}
+      </div>
+    );
+  }
+
   function ResponsableBadge({ sucursal }: { sucursal: Sucursal }) {
     const responsable = responsableWhatsappPorSucursal.get(sucursal.id);
     if (responsable) {
@@ -288,43 +295,51 @@ export function SucursalesTab() {
   }
 
   function AccionesSucursal({ sucursal }: { sucursal: Sucursal }) {
+    const chip = 'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition disabled:opacity-50';
+    const isToggling = togglingId === sucursal.id;
     return (
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <a
-          href={whatsappAuditLink()}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-1.5 rounded-md bg-primary-navy px-3 py-2 text-sm font-medium text-white transition hover:bg-primary-navy/90"
+      <div className="flex flex-wrap items-center justify-end gap-1.5">
+        <button
+          type="button"
+          onClick={() => navigate(`/sucursales/${sucursal.id}`)}
+          className={`${chip} border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50 hover:text-gray-900`}
         >
-          <ClipboardCheck className="h-3.5 w-3.5" />
-          Auditar
-        </a>
+          <Eye className="h-3.5 w-3.5" />
+          Ver
+        </button>
         <button
           type="button"
           onClick={() => setUbicando(sucursal)}
           title={sucursal.lat != null ? 'Ya ubicada — click para reubicar' : 'Sin ubicar en el mapa'}
-          className={`flex items-center gap-1.5 rounded-md border px-3 py-2 text-sm font-medium transition hover:bg-gray-100 ${
-            sucursal.lat != null ? 'border-emerald-300 text-emerald-700' : 'border-amber-300 text-amber-700'
+          className={`${chip} ${
+            sucursal.lat != null
+              ? 'border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50 hover:text-gray-900'
+              : 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100'
           }`}
         >
           <MapPin className="h-3.5 w-3.5" />
           Ubicar
         </button>
-        <button
-          type="button"
-          onClick={() => navigate(`/sucursales/${sucursal.id}`)}
-          className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-100"
-        >
-          Ver
-        </button>
         {sucursal.activo ? (
-          <Button type="button" variant="outline" size="sm" disabled={togglingId === sucursal.id} onClick={() => setConfirmArchive(sucursal)}>
+          <button
+            type="button"
+            disabled={isToggling}
+            onClick={() => setConfirmArchive(sucursal)}
+            className={`${chip} border-gray-200 text-gray-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600`}
+          >
+            <Archive className="h-3.5 w-3.5" />
             Archivar
-          </Button>
+          </button>
         ) : (
-          <Button type="button" variant="secondary" size="sm" isLoading={togglingId === sucursal.id} onClick={() => handleReactivate(sucursal)}>
+          <button
+            type="button"
+            disabled={isToggling}
+            onClick={() => handleReactivate(sucursal)}
+            className={`${chip} border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100`}
+          >
+            {isToggling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArchiveRestore className="h-3.5 w-3.5" />}
             Reactivar
-          </Button>
+          </button>
         )}
       </div>
     );
@@ -383,22 +398,27 @@ export function SucursalesTab() {
         />
       </div>
 
-      <div className="hidden overflow-hidden rounded-lg bg-white shadow xl:block">
+      <div className="hidden overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm xl:block">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1080px] table-fixed">
-            <thead className="border-b bg-gray-100">
-              <tr>
+          <table className="w-full min-w-[940px] table-fixed">
+            <thead>
+              <tr className="border-b border-gray-200 bg-gray-50">
                 {EDITABLE_COLUMNS.map((column) => (
-                  <th key={column.field} className={`px-4 py-3 text-left text-sm font-semibold ${column.className || ''}`}>
+                  <th
+                    key={column.field}
+                    className={`px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 ${column.className || ''}`}
+                  >
                     {column.label}
                   </th>
                 ))}
-                <th className="px-4 py-3 text-left text-sm font-semibold min-w-[160px]">Responsable (WhatsApp)</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold">Estado</th>
-                <th className="px-4 py-3 text-right text-sm font-semibold">Acciones</th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 min-w-[160px]">
+                  Responsable (WhatsApp)
+                </th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 min-w-[100px]">Estado</th>
+                <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-gray-500 min-w-[220px]">Acciones</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-gray-100">
               {filteredSucursales.length === 0 ? (
                 <tr>
                   <td colSpan={EDITABLE_COLUMNS.length + 3} className="px-6 py-8 text-center text-gray-500">
@@ -406,61 +426,35 @@ export function SucursalesTab() {
                   </td>
                 </tr>
               ) : (
-                filteredSucursales.map((sucursal) => {
-                  const activeStatus = getRowActiveStatus(sucursal);
-                  return (
-                    <tr
-                      key={sucursal.id}
-                      className={`border-b transition-colors duration-500 ${
-                        rowFlash[sucursal.id] ? 'bg-emerald-50' : sucursal.activo ? 'hover:bg-gray-50' : 'opacity-60 hover:bg-gray-50'
-                      }`}
-                    >
-                      {EDITABLE_COLUMNS.map((column) => {
-                        const cellKey = getCellKey(sucursal.id, column.field);
-                        const status = saveStatus[cellKey];
-                        const hasError = status === 'error';
-                        return (
-                          <td key={column.field} className="px-4 py-3 align-top">
-                            <input
-                              type="text"
-                              value={sucursal[column.field]}
-                              onChange={(event) => handleFieldChange(sucursal.id, column.field, event.target.value)}
-                              title={saveErrors[cellKey] || column.label}
-                              className={`w-full rounded-md border px-3 py-2 text-sm transition focus:border-transparent focus:ring-2 disabled:bg-gray-50 disabled:text-gray-600 ${
-                                hasError
-                                  ? 'border-red-300 bg-red-50 focus:ring-red-500'
-                                  : status === 'saved'
-                                    ? 'border-emerald-300 bg-emerald-50 focus:ring-emerald-500'
-                                    : status === 'saving' || status === 'pending'
-                                      ? 'border-blue-300 bg-blue-50 focus:ring-blue-500'
-                                      : 'border-gray-300 bg-white focus:ring-blue-500'
-                              }`}
-                            />
-                            {hasError && <p className="mt-1 text-xs text-red-700">{saveErrors[cellKey]}</p>}
-                          </td>
-                        );
-                      })}
-                      <td className="px-4 py-3 align-top">
-                        <ResponsableBadge sucursal={sucursal} />
+                filteredSucursales.map((sucursal) => (
+                  <tr
+                    key={sucursal.id}
+                    className={`transition-colors duration-500 ${
+                      rowFlash[sucursal.id] ? 'bg-emerald-50' : sucursal.activo ? 'hover:bg-gray-50/70' : 'opacity-60 hover:bg-gray-50/70'
+                    }`}
+                  >
+                    {EDITABLE_COLUMNS.map((column) => (
+                      <td key={column.field} className="px-4 py-2 align-top">
+                        <AutosaveInput sucursal={sucursal} column={column} />
                       </td>
-                      <td className="px-4 py-3 align-top">
-                        <div className="flex flex-col items-start gap-1.5">
-                          <span className={`rounded px-3 py-1 text-xs font-semibold ${sucursal.activo ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-700'}`}>
-                            {sucursal.activo ? 'Activa' : 'Archivada'}
-                          </span>
-                          <span
-                            className={`inline-flex min-w-[80px] justify-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold transition ${getStatusClasses(activeStatus)}`}
-                          >
-                            {getStatusLabel(activeStatus)}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 align-top text-right">
-                        <AccionesSucursal sucursal={sucursal} />
-                      </td>
-                    </tr>
-                  );
-                })
+                    ))}
+                    <td className="px-4 py-2 align-top">
+                      <ResponsableBadge sucursal={sucursal} />
+                    </td>
+                    <td className="px-4 py-2 align-top">
+                      <span
+                        className={`inline-flex rounded px-2.5 py-1 text-xs font-semibold ${
+                          sucursal.activo ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-700'
+                        }`}
+                      >
+                        {sucursal.activo ? 'Activa' : 'Archivada'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 align-top text-right">
+                      <AccionesSucursal sucursal={sucursal} />
+                    </td>
+                  </tr>
+                ))
               )}
             </tbody>
           </table>
@@ -468,72 +462,42 @@ export function SucursalesTab() {
       </div>
 
       <div className="grid gap-4 xl:hidden">
-        {filteredSucursales.map((sucursal) => {
-          const activeStatus = getRowActiveStatus(sucursal);
-          return (
-            <section
-              key={sucursal.id}
-              className={`rounded-lg border border-gray-200 bg-white p-4 shadow-sm transition-colors duration-500 ${
-                rowFlash[sucursal.id] ? 'bg-emerald-50' : sucursal.activo ? '' : 'opacity-60'
-              }`}
-            >
-              <div className="mb-4 flex items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-base font-semibold text-gray-900">{sucursal.nombre || 'Sucursal sin nombre'}</h2>
-                  <p className="text-sm text-gray-500">{sucursal.zona || 'Sin zona'}</p>
-                </div>
-                <div className="flex flex-col items-end gap-1.5">
-                  <span className={`rounded px-3 py-1 text-xs font-semibold ${sucursal.activo ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-700'}`}>
-                    {sucursal.activo ? 'Activa' : 'Archivada'}
-                  </span>
-                  <span
-                    className={`inline-flex min-w-[80px] justify-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold transition ${getStatusClasses(activeStatus)}`}
-                  >
-                    {getStatusLabel(activeStatus)}
-                  </span>
-                </div>
+        {filteredSucursales.map((sucursal) => (
+          <section
+            key={sucursal.id}
+            className={`rounded-lg border border-gray-200 bg-white p-4 shadow-sm transition-colors duration-500 ${
+              rowFlash[sucursal.id] ? 'bg-emerald-50' : sucursal.activo ? '' : 'opacity-60'
+            }`}
+          >
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">{sucursal.nombre || 'Sucursal sin nombre'}</h2>
+                <p className="text-sm text-gray-500">{sucursal.zona || 'Sin zona'}</p>
               </div>
+              <span className={`rounded px-2.5 py-1 text-xs font-semibold ${sucursal.activo ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-700'}`}>
+                {sucursal.activo ? 'Activa' : 'Archivada'}
+              </span>
+            </div>
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                {EDITABLE_COLUMNS.map((column) => {
-                  const cellKey = getCellKey(sucursal.id, column.field);
-                  const status = saveStatus[cellKey];
-                  const hasError = status === 'error';
-                  return (
-                    <label key={column.field} className={column.field === 'direccion' ? 'sm:col-span-2' : ''}>
-                      <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">{column.label}</span>
-                      <input
-                        type="text"
-                        value={sucursal[column.field]}
-                        onChange={(event) => handleFieldChange(sucursal.id, column.field, event.target.value)}
-                        title={saveErrors[cellKey] || column.label}
-                        className={`w-full rounded-md border px-3 py-2 text-sm transition focus:border-transparent focus:ring-2 disabled:bg-gray-50 disabled:text-gray-600 ${
-                          hasError
-                            ? 'border-red-300 bg-red-50 focus:ring-red-500'
-                            : status === 'saved'
-                              ? 'border-emerald-300 bg-emerald-50 focus:ring-emerald-500'
-                              : status === 'saving' || status === 'pending'
-                                ? 'border-blue-300 bg-blue-50 focus:ring-blue-500'
-                                : 'border-gray-300 bg-white focus:ring-blue-500'
-                        }`}
-                      />
-                      {hasError && <p className="mt-1 text-xs text-red-700">{saveErrors[cellKey]}</p>}
-                    </label>
-                  );
-                })}
-              </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {EDITABLE_COLUMNS.map((column) => (
+                <label key={column.field} className={column.field === 'direccion' ? 'sm:col-span-2' : ''}>
+                  <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">{column.label}</span>
+                  <AutosaveInput sucursal={sucursal} column={column} />
+                </label>
+              ))}
+            </div>
 
-              <div className="mt-3">
-                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Responsable (WhatsApp)</span>
-                <ResponsableBadge sucursal={sucursal} />
-              </div>
+            <div className="mt-3">
+              <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Responsable (WhatsApp)</span>
+              <ResponsableBadge sucursal={sucursal} />
+            </div>
 
-              <div className="mt-4">
-                <AccionesSucursal sucursal={sucursal} />
-              </div>
-            </section>
-          );
-        })}
+            <div className="mt-4">
+              <AccionesSucursal sucursal={sucursal} />
+            </div>
+          </section>
+        ))}
         {filteredSucursales.length === 0 && (
           <FeedbackState
             title={rows.length === 0 ? 'No hay sucursales cargadas.' : 'Ninguna sucursal coincide con la búsqueda.'}
