@@ -6,13 +6,14 @@ import logging
 from datetime import datetime, timedelta, timezone
 import json
 import asyncio
+import time
 import uuid
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, JSONResponse
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import pytz
 from pydantic import BaseModel
@@ -511,11 +512,52 @@ async def shutdown_event():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
+    """Health check liviano. Devuelve 200 SIEMPRE a proposito: Railway lo usa
+    para decidir si reinicia el contenedor, y un reinicio a destiempo mata las
+    auditorias en curso. El diagnostico de verdad vive en /health/deep."""
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
     }
+
+
+@app.get("/health/deep")
+async def health_check_deep():
+    """Diagnostico real, para mirar a mano o desde un monitor externo.
+
+    `locks_held`/`oldest_lock_age_s` son la senal que distingue "el bot esta
+    ocupado" de "hay una conversacion trabada": un lock de minutos siempre es
+    un sintoma. `loop_lag_ms` alto significa que algo esta bloqueando el hilo
+    principal (todas las consultas a Supabase son sincronicas hoy).
+    """
+    inicio = time.monotonic()
+    await asyncio.sleep(0)  # una vuelta del event loop
+    loop_lag_ms = round((time.monotonic() - inicio) * 1000, 1)
+
+    locks = ConversationRouter.lock_stats()
+    settings_actual = get_settings()
+    webhook_check = (
+        "activo"
+        if settings_actual.meta_app_id and settings_actual.meta_app_secret
+        else "APAGADO (falta META_APP_ID/META_APP_SECRET)"
+    )
+
+    problemas = []
+    if locks["oldest_age_s"] > 120:
+        problemas.append(f"lock tomado hace {locks['oldest_age_s']}s")
+    if loop_lag_ms > 2000:
+        problemas.append(f"event loop trabado {loop_lag_ms}ms")
+
+    cuerpo = {
+        "status": "degraded" if problemas else "healthy",
+        "problemas": problemas,
+        "locks_held": locks["held"],
+        "oldest_lock_age_s": locks["oldest_age_s"],
+        "loop_lag_ms": loop_lag_ms,
+        "webhook_check": webhook_check,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+    return JSONResponse(status_code=503 if problemas else 200, content=cuerpo)
 
 
 @app.post("/api/gestion/{id_gestion}/mensajes")
@@ -1038,6 +1080,25 @@ def _verify_meta_signature(body: bytes, signature_header: str) -> bool:
     return hmac.compare_digest(signature_header, expected)
 
 
+MENSAJE_LENTO_SEGUNDOS = 12
+
+
+async def _avisar_mensaje_lento(correlation_id: str, telefono: str) -> None:
+    """Loguea si un mensaje sigue en curso pasados MENSAJE_LENTO_SEGUNDOS.
+    Avisa ANTES de que se agoten los timeouts del router (90s), asi el cuelgue
+    se ve mientras pasa. Se cancela solo cuando el mensaje termina."""
+    try:
+        await asyncio.sleep(MENSAJE_LENTO_SEGUNDOS)
+        stats = ConversationRouter.lock_stats()
+        logger.error(
+            f"🚨 [{correlation_id}] MENSAJE LENTO >{MENSAJE_LENTO_SEGUNDOS}s "
+            f"phone={telefono} — todavía corriendo. "
+            f"locks_tomados={stats['held']} lock_mas_viejo={stats['oldest_age_s']}s"
+        )
+    except asyncio.CancelledError:
+        pass  # El mensaje termino a tiempo: es el caso normal.
+
+
 @app.post("/webhook")
 async def webhook(request: Request):
     """Meta WhatsApp Cloud API webhook entry point."""
@@ -1045,6 +1106,13 @@ async def webhook(request: Request):
     message_id = ""
     message_claimed = False
     processed_successfully = False
+    # Cronometro + resultado para el log de FIN. Van acá arriba para que el
+    # `finally` los tenga aunque el mensaje explote o se cuelgue: hasta hoy el
+    # log de resultado estaba en el camino feliz, así que un cuelgue no dejaba
+    # NINGUNA linea y el log cortaba en seco (bug de produccion 2026-08-26).
+    _t0 = time.monotonic()
+    result = "sin_resultado"
+    watchdog = None
     try:
         body_bytes = await request.body()
         sig = request.headers.get("x-hub-signature-256", "")
@@ -1173,6 +1241,12 @@ async def webhook(request: Request):
             except Exception as exc:
                 logger.warning(f"[{correlation_id}] Failed to update ultimo_mensaje_entrante: {exc}")
 
+            # Avisa MIENTRAS el mensaje se cuelga, no despues: sin esto un
+            # cuelgue solo se nota cuando una auditora llama por telefono.
+            watchdog = asyncio.create_task(
+                _avisar_mensaje_lento(correlation_id, payload.telefono)
+            )
+
             # Route to v2 handler while there is any active v2 session (including DONE state,
             # which still expects responsable name and ficha-download answer)
             session = get_session(payload.telefono)
@@ -1194,6 +1268,11 @@ async def webhook(request: Request):
         logger.error(f"[{correlation_id}] Traceback: {traceback.format_exc()}")
         return {"status": "error", "message": str(e)}
     finally:
+        if watchdog is not None:
+            watchdog.cancel()
+        logger.info(
+            f"[{correlation_id}] FIN result={result} dur={time.monotonic() - _t0:.2f}s"
+        )
         if message_id and message_claimed and not processed_successfully:
             await _release_message_claim(message_id)
 

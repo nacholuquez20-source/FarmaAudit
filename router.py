@@ -10,6 +10,8 @@ import uuid
 
 import asyncio
 
+import time
+
 import unicodedata
 
 from datetime import datetime, timedelta, timezone
@@ -42,7 +44,7 @@ from meta_client import MetaClient
 
 # NEW: Imports for perfumery audit v2 (structured flow)
 from audit_session import (
-    AuditSession, AuditState, create_session, get_session, save_session,
+    AuditSession, AuditState, create_session, get_session, save_session, delete_session,
     BloqueType, BrandType, BLOQUE_ORDER, BRAND_ORDER,
     BLOQUE_LABELS, BLOQUE_DESCRIPTIONS
 )
@@ -83,6 +85,12 @@ LOCK_HOLD_TIMEOUT_SECONDS = 90
 # numero esta trabado se cuelga sin techo (el `async with lock` no admite timeout).
 LOCK_ACQUIRE_TIMEOUT_SECONDS = 15
 
+# Ids de los botones de la salida de emergencia. Van prefijados y NO son
+# palabras del idioma a proposito: solo pueden llegar si el bot mando los
+# botones, asi que la confirmacion no necesita persistir ningun estado.
+ESCAPE_CONFIRM_ID = "escape_confirmar"
+ESCAPE_ABORT_ID = "escape_seguir"
+
 # Checklist fijo del Tour de Farmacias (Modulo 3, v5/v6) — mismo set que el wizard web.
 TOUR_ACCIONES_DEFAULT = [
     ("vidriera", "Vidriera"),
@@ -106,6 +114,10 @@ class ConversationRouter:
     # Class-level locks per phone number to prevent concurrent message processing
 
     _conversation_locks: Dict[str, asyncio.Lock] = {}
+
+    # Cuando se tomo el lock de cada telefono. Solo para diagnostico: un lock
+    # tomado hace minutos es la firma de una conversacion trabada.
+    _lock_taken_at: Dict[str, float] = {}
 
     _locks_lock = asyncio.Lock()
 
@@ -218,7 +230,20 @@ class ConversationRouter:
             )
             return "timeout_lock_released"
         finally:
+            self._lock_taken_at.pop(payload.telefono, None)
             lock.release()
+
+    @classmethod
+    def lock_stats(cls) -> Dict[str, Any]:
+        """Cuantos locks estan tomados y hace cuanto el mas viejo. Es la senal
+        que distingue 'el bot esta ocupado' de 'hay una conversacion trabada':
+        un lock de minutos es siempre un sintoma, nunca uso normal."""
+        ahora = time.monotonic()
+        edades = [ahora - t for t in cls._lock_taken_at.values()]
+        return {
+            "held": len(edades),
+            "oldest_age_s": round(max(edades), 1) if edades else 0,
+        }
 
     async def _acquire_lock(self, payload: WhatsAppPayload, meta_client: MetaClient) -> bool:
         """Toma el lock del teléfono CON timeout. Sin esto, un mensaje que llega
@@ -227,6 +252,7 @@ class ConversationRouter:
         lock = await self._get_conversation_lock(payload.telefono)
         try:
             await asyncio.wait_for(lock.acquire(), timeout=LOCK_ACQUIRE_TIMEOUT_SECONDS)
+            self._lock_taken_at[payload.telefono] = time.monotonic()
             return True
         except asyncio.TimeoutError:
             logger.error(
@@ -271,6 +297,7 @@ class ConversationRouter:
             )
             return "timeout_lock_released"
         finally:
+            self._lock_taken_at.pop(payload.telefono, None)
             lock.release()
 
     async def _handle_perfumeria_locked(
@@ -279,6 +306,12 @@ class ConversationRouter:
         meta_client: MetaClient,
     ) -> str:
         """Cuerpo real del flujo v2, SIN tomar el lock — asume que el caller ya lo tiene."""
+        # Salida de emergencia. Va acá y no en main.py porque este es el único
+        # punto por el que pasan los 3 caminos al flujo v2 (main.py cuando hay
+        # sesión activa, y las dos ramas de _handle_message_locked).
+        escape = await self._universal_escape(payload, meta_client)
+        if escape:
+            return escape
         try:
             return await AuditConversationHandler.handle_message(payload, meta_client)
         except Exception as e:
@@ -301,6 +334,12 @@ class ConversationRouter:
     ) -> str:
 
         """Internal handler with lock acquired."""
+
+        # Salida de emergencia antes de cualquier ruteo por estado: si no,
+        # un usuario parado en un estado que solo acepta fotos queda mudo.
+        escape = await self._universal_escape(payload, meta_client)
+        if escape:
+            return escape
 
         try:
 
@@ -601,6 +640,13 @@ class ConversationRouter:
         conversation (that needs a Meta template that isn't approved yet), the
         encargado always writes first and the bot offers whatever is pending.
         """
+        # Salida de emergencia. El encargado la necesita incluso mas que el
+        # auditor: hay estados que rechazan TODO texto ("Mandame una foto para
+        # continuar") y lo dejaban mudo, sin forma de salir.
+        escape = await self._universal_escape(payload, meta_client)
+        if escape:
+            return escape
+
         conv = self.sheets.get_conversacion(payload.telefono)
         if not conv:
             conv = Conversacion(
@@ -1920,7 +1966,108 @@ class ConversationRouter:
         return normalized in {
             "ayuda", "help", "comandos", "opciones",
             "que puedo hacer", "como sigo", "como continuo",
+            # "hola" entra ACA y no en el escape a proposito: es lo que mas se
+            # escribe por reflejo, y no puede borrar una auditoria en curso.
+            "hola", "buenas", "no entiendo", "estoy trabado", "que hago",
         }
+
+    @classmethod
+    def _is_escape_intent(cls, text: str) -> bool:
+        """Intencion de SALIR de donde sea que este parado. A diferencia de
+        _is_help_intent, esto si puede descartar trabajo — por eso cuando hay
+        una auditoria con fotos cargadas se pide confirmacion por boton
+        (ver _universal_escape) en vez de borrar de una."""
+        normalized = cls._normalize_intent_text(text)
+        if not normalized:
+            return False
+        return normalized in {
+            "salir", "salime", "sacame", "basta", "stop", "reiniciar", "reinicia",
+            "empezar de nuevo", "arrancar de nuevo", "menu", "volver al menu",
+            "start over", "cancelar todo",
+        } or cls._is_cancel_intent(text)
+
+    def _escape_cleanup(self, telefono: str) -> None:
+        """Deja el telefono en cero: sin sesion de auditoria y en IDLE."""
+        try:
+            delete_session(telefono)
+        except Exception as e:
+            logger.warning(f"No se pudo borrar la sesion de {telefono} en el escape: {e}")
+        self.sheets.update_conversacion(telefono, ConversationState.IDLE)
+
+    @staticmethod
+    def _escape_status_text(session: Optional[AuditSession]) -> str:
+        """Le dice al usuario DONDE esta parado. Es la respuesta a 'hola'/'ayuda'
+        cuando hay una auditoria en curso: destraba sin destruir nada."""
+        if not session:
+            return (
+                'No tenés nada en curso. Escribí *hola* para ver el menú.'
+            )
+        fotos = len(session.fotos or [])
+        desvios = len(session.desvios or [])
+        return (
+            f"📋 Estás en una auditoría en curso.\n"
+            f"Llevás {fotos} foto(s) y {desvios} hallazgo(s) cargados.\n\n"
+            f"Seguí mandando fotos o datos para continuar.\n"
+            f"Si querés salir y descartar todo, escribí *SALIR*."
+        )
+
+    async def _universal_escape(
+        self, payload: WhatsAppPayload, meta_client: MetaClient
+    ) -> Optional[str]:
+        """Salida de emergencia disponible en CUALQUIER estado. Devuelve un
+        result string si atendio el mensaje, o None para que siga el flujo normal.
+
+        Regla de oro: nunca descartar trabajo sin confirmacion explicita. Una
+        auditora con 11 fotos cargadas no puede perderlas por escribir 'hola'.
+        La confirmacion no persiste estado: se acepta unicamente el id del boton,
+        que solo puede llegar si el bot mando los botones."""
+        if payload.tipo != "text" or not payload.contenido:
+            return None
+
+        texto = payload.contenido.strip()
+        session = get_session(payload.telefono)
+        hay_trabajo = bool(session and (session.fotos or session.desvios))
+
+        if texto == ESCAPE_ABORT_ID:
+            await meta_client.send_text(
+                payload.telefono,
+                "Dale, seguimos donde estábamos. Mandá la foto o el dato que faltaba.",
+            )
+            return "escape_abortado"
+
+        if texto == ESCAPE_CONFIRM_ID:
+            self._escape_cleanup(payload.telefono)
+            await meta_client.send_text(
+                payload.telefono,
+                "Listo, descarté la auditoría en curso. Escribí *hola* para el menú.",
+            )
+            return "escape_confirmado"
+
+        # Ayuda: NUNCA borra nada, solo informa donde esta parado.
+        if self._is_help_intent(texto) and session:
+            await meta_client.send_text(payload.telefono, self._escape_status_text(session))
+            return "escape_ayuda"
+
+        if self._is_escape_intent(texto):
+            if hay_trabajo:
+                await meta_client.send_quick_reply(
+                    payload.telefono,
+                    f"Tenés {len(session.fotos or [])} foto(s) cargadas en esta auditoría.\n"
+                    "¿Salgo y descarto todo?",
+                    buttons=[
+                        {"id": ESCAPE_ABORT_ID, "title": "↩️ No, seguir"},
+                        {"id": ESCAPE_CONFIRM_ID, "title": "🗑️ Sí, descartar"},
+                    ],
+                )
+                return "escape_pide_confirmacion"
+            self._escape_cleanup(payload.telefono)
+            await meta_client.send_text(
+                payload.telefono,
+                "Listo, te saqué de donde estabas. Escribí *hola* para el menú.",
+            )
+            return "escape_directo"
+
+        return None
 
     @classmethod
     def _is_summary_intent(cls, text: str) -> bool:

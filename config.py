@@ -72,12 +72,22 @@ class Settings:
         missing = [key for key in required if not getattr(self, key)]
         if missing:
             raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+        import logging
+        _log = logging.getLogger(__name__)
         if not self.meta_app_secret:
-            import logging
-            logging.getLogger(__name__).warning(
+            _log.warning(
                 "META_APP_SECRET no configurado: /webhook acepta requests SIN "
                 "verificar firma X-Hub-Signature-256 (cualquiera puede falsificar "
                 "mensajes de WhatsApp). Configuralo en Railway ASAP."
+            )
+        # Sin estas dos, check_webhook_health() hace `return` en silencio y
+        # nadie se entera de que Meta dejo de entregar mensajes hasta que una
+        # auditora avisa por telefono (paso dos veces el 2026-08-26).
+        if not self.meta_app_id or not self.meta_app_secret:
+            _log.error(
+                "🚨 CONFIG: falta META_APP_ID y/o META_APP_SECRET — el chequeo "
+                "automatico del webhook esta APAGADO. Si Meta deja de mandar "
+                "mensajes, el bot queda mudo y nadie se entera. Cargalas en Railway."
             )
 
 
