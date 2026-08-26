@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from io import BytesIO
 
 from PIL import Image
-from supabase import create_client, Client
+from supabase import create_client, Client, ClientOptions
 from config import get_settings
 from models import (
     Auditor, Sucursal, AreaSubitem, Conversacion, Pendiente, Reporte,
@@ -39,7 +39,17 @@ class SupabaseManager:
         try:
             if not settings.supabase_url or not settings.supabase_service_key:
                 raise ValueError("Supabase credentials not configured")
-            self.client: Client = create_client(settings.supabase_url, settings.supabase_service_key)
+            # supabase-py es sincronico (bloquea el event loop mientras espera la
+            # respuesta) y su timeout por defecto es de 120s por consulta -- si una
+            # sola conexion del pool queda colgada (conexion muerta reciclada, hiccup
+            # de red), esa consulta puede tardar hasta 2 minutos, y como bloquea,
+            # congela TODO el proceso mientras tanto, no solo esa conversacion. Bug
+            # real de produccion detectado 2026-08-26 (una conversacion quedaba
+            # trabada varios minutos sin ningun error en los logs). Bajarlo a 15s
+            # acota el peor caso sin afectar el uso normal (las consultas reales
+            # tardan <200ms segun los logs).
+            options = ClientOptions(postgrest_client_timeout=15, storage_client_timeout=15)
+            self.client: Client = create_client(settings.supabase_url, settings.supabase_service_key, options=options)
             logger.info("Supabase client initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize Supabase: {e}")
