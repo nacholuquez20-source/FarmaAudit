@@ -72,6 +72,22 @@ def _es_asentimiento(texto: str) -> bool:
     return bool(t) and t <= _ASENTIMIENTOS
 
 
+# Palabras que en el bloque OFERTAS son COMANDOS, nunca datos. Sin este guard,
+# escribir "siguiente" cuando el bot pregunta "¿que marca es?" registraba una
+# marca fantasma llamada "siguiente", con comentario "siguiente" (bug real de
+# produccion, 2026-08-26). El comando ya estaba contemplado en el paso de la
+# foto (handle_ofertas_marca_evidence) pero no en los dos pasos siguientes.
+_COMANDOS_OFERTAS = {
+    "siguiente", "next", "listo", "terminar", "fin", "seguir", "continuar",
+}
+
+
+def _es_comando_ofertas(texto: str) -> bool:
+    """True si el texto es una orden de avanzar, no el nombre de una marca ni
+    un comentario sobre ella."""
+    return (texto or "").strip().lower() in _COMANDOS_OFERTAS
+
+
 SCORE_OPTIONS = [
     {"id": "1", "title": "Muy malo", "description": "Crítico, acción inmediata"},
     {"id": "2", "title": "Malo", "description": "Problemas significativos"},
@@ -1994,7 +2010,7 @@ class AuditConversationHandler:
                 await meta_client.send_list_message(
                     payload.telefono,
                     header="¿Qué marca es?",
-                    body="Elegí una marca de la lista. Si es otra, escribí directamente su nombre.",
+                    body="Decila en un audio o escribí el nombre — no hace falta buscarla en la lista.",
                     footer="",
                     button_text="Selecciona una opción",
                     options=marca_options,
@@ -2023,14 +2039,46 @@ class AuditConversationHandler:
         (llega como texto con el id de BRAND_ORDER) o el nombre escrito a
         mano para una marca no contemplada — ambos casos se aceptan por
         igual, sin un paso extra de "otra marca"."""
-        if payload.tipo != "text" or not payload.contenido.strip():
+        current_bloque = BloqueType.OFERTAS.value
+        bloque_label = BLOQUE_LABELS.get(current_bloque, current_bloque)
+
+        # La auditora puede DECIR la marca en un audio en vez de escribirla o
+        # buscarla en la lista — es lo mas rapido con el celular en la mano.
+        raw_text = ""
+        if payload.tipo == "audio" and payload.media_id:
+            try:
+                media_bytes, mime_type = await meta_client.download_media_with_metadata(payload.media_id)
+                raw_text = (await AudioTranscriber().transcribe_bytes(media_bytes, mime_type) or "").strip()
+            except Exception as e:
+                logger.warning(f"No se pudo transcribir la marca dictada {payload.media_id}: {e}")
+            if not raw_text:
+                await meta_client.send_text(
+                    payload.telefono,
+                    "No te llegué a entender. Decime la marca de nuevo, o escribila."
+                )
+                return "marca_audio_sin_transcripcion"
+        elif payload.tipo == "text" and payload.contenido.strip():
+            raw_text = payload.contenido.strip()
+        else:
             await meta_client.send_text(
                 payload.telefono,
-                "Decime qué marca es: elegí una de la lista, o escribí el nombre."
+                "Decime qué marca es: mandá un audio diciéndola, escribí el nombre, o elegí una de la lista."
             )
             return "invalid_input"
 
-        raw_text = payload.contenido.strip()
+        # "siguiente" es una orden de avanzar, NO el nombre de una marca.
+        if _es_comando_ofertas(raw_text):
+            session.pending_marca = None
+            session.current_foto_id = None
+            save_session(session)
+            await meta_client.send_text(
+                payload.telefono,
+                "Dale, cierro Ofertas. La última foto quedó sin marca asignada, así que no la registré."
+            )
+            return await AuditConversationHandler._finish_bloque_evidence(
+                meta_client, session, payload.telefono, current_bloque, bloque_label
+            )
+
         marca_id = raw_text.lower()
 
         if marca_id in BRAND_ORDER:
@@ -2078,6 +2126,27 @@ class AuditConversationHandler:
                     f"Contame algo sobre cómo está {marca_label} (texto o audio) para guardar el hallazgo."
                 )
                 return "acknowledgement_ignored"
+
+            # "siguiente" acá es una orden de avanzar, no el comentario de la
+            # marca: antes se guardaba literalmente como el hallazgo.
+            if _es_comando_ofertas(raw_text):
+                session.add_desvio(
+                    bloque=current_bloque,
+                    descripcion="Sin comentario",
+                    fotos=[session.current_foto_id] if session.current_foto_id else None,
+                    marca=session.pending_marca,
+                )
+                session.pending_marca = None
+                session.current_foto_id = None
+                save_session(session)
+                await meta_client.send_text(
+                    payload.telefono,
+                    f"✓ {marca_label} registrada con foto, sin comentario. Cierro Ofertas."
+                )
+                return await AuditConversationHandler._finish_bloque_evidence(
+                    meta_client, session, payload.telefono, current_bloque,
+                    BLOQUE_LABELS.get(current_bloque, current_bloque),
+                )
 
             session.add_desvio(
                 bloque=current_bloque,
