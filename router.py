@@ -67,6 +67,16 @@ COMERCIAL_ACCION_LABELS = {
     "descuento_caja": "Descuento en caja",
     "custom": "Otra (personalizada)",
 }
+# Techo de cuanto puede tardar procesar UN mensaje mientras se tiene tomado el lock
+# por telefono (_get_conversation_lock). Sin esto, si algo interno se cuelga sin
+# levantar excepcion (una llamada externa sin timeout, un deadlock), el lock queda
+# tomado PARA SIEMPRE y ese telefono deja de poder hablarle al bot hasta reiniciar
+# el proceso — bug real detectado en produccion 2026-08-26 (mensajes de texto que
+# nunca terminaban de procesarse, sin error en los logs, dejando el numero
+# permanentemente trabado). asyncio.wait_for garantiza que el lock SIEMPRE se
+# libera dentro de este tiempo, pase lo que pase adentro.
+LOCK_HOLD_TIMEOUT_SECONDS = 90
+
 # Checklist fijo del Tour de Farmacias (Modulo 3, v5/v6) — mismo set que el wizard web.
 TOUR_ACCIONES_DEFAULT = [
     ("vidriera", "Vidriera"),
@@ -184,8 +194,22 @@ class ConversationRouter:
         lock = await self._get_conversation_lock(payload.telefono)
 
         async with lock:
-
-            return await self._handle_message_locked(payload, meta_client)
+            try:
+                return await asyncio.wait_for(
+                    self._handle_message_locked(payload, meta_client),
+                    timeout=LOCK_HOLD_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                logger.error(
+                    f"Procesamiento de mensaje de {payload.telefono} superó "
+                    f"{LOCK_HOLD_TIMEOUT_SECONDS}s — se cortó para no dejar el lock "
+                    "tomado para siempre. Revisar qué llamada externa se colgó."
+                )
+                await meta_client.send_text(
+                    payload.telefono,
+                    "⏱️ Esto tardó más de la cuenta. Escribime de nuevo, por favor.",
+                )
+                return "timeout_lock_released"
 
 
     async def handle_perfumeria_audit(
@@ -200,10 +224,22 @@ class ConversationRouter:
 
         async with lock:
             try:
-                result = await AuditConversationHandler.handle_message(
-                    payload, meta_client
+                result = await asyncio.wait_for(
+                    AuditConversationHandler.handle_message(payload, meta_client),
+                    timeout=LOCK_HOLD_TIMEOUT_SECONDS,
                 )
                 return result
+            except asyncio.TimeoutError:
+                logger.error(
+                    f"Procesamiento de auditoría v2 de {payload.telefono} superó "
+                    f"{LOCK_HOLD_TIMEOUT_SECONDS}s — se cortó para no dejar el lock "
+                    "tomado para siempre. Revisar qué llamada externa se colgó."
+                )
+                await meta_client.send_text(
+                    payload.telefono,
+                    "⏱️ Esto tardó más de la cuenta. Escribime de nuevo, por favor.",
+                )
+                return "timeout_lock_released"
             except Exception as e:
                 logger.error(f"Error in perfumery audit v2 handler: {e}")
                 await meta_client.send_text(
