@@ -77,6 +77,12 @@ COMERCIAL_ACCION_LABELS = {
 # libera dentro de este tiempo, pase lo que pase adentro.
 LOCK_HOLD_TIMEOUT_SECONDS = 90
 
+# Techo para ESPERAR a que se libere el lock de un teléfono. Va aparte del de arriba
+# a proposito: aquel acota cuanto se puede tardar TENIENDO el lock, este acota cuanto
+# se espera para TOMARLO. Sin este, un mensaje que llega mientras otro del mismo
+# numero esta trabado se cuelga sin techo (el `async with lock` no admite timeout).
+LOCK_ACQUIRE_TIMEOUT_SECONDS = 15
+
 # Checklist fijo del Tour de Farmacias (Modulo 3, v5/v6) — mismo set que el wizard web.
 TOUR_ACCIONES_DEFAULT = [
     ("vidriera", "Vidriera"),
@@ -191,62 +197,97 @@ class ConversationRouter:
 
         # Acquire conversation lock to prevent concurrent processing for same auditor
 
+        if not await self._acquire_lock(payload, meta_client):
+            return "lock_acquire_timeout"
+
         lock = await self._get_conversation_lock(payload.telefono)
+        try:
+            return await asyncio.wait_for(
+                self._handle_message_locked(payload, meta_client),
+                timeout=LOCK_HOLD_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                f"Procesamiento de mensaje de {payload.telefono} superó "
+                f"{LOCK_HOLD_TIMEOUT_SECONDS}s — se cortó para no dejar el lock "
+                "tomado para siempre. Revisar qué llamada externa se colgó."
+            )
+            await meta_client.send_text(
+                payload.telefono,
+                "⏱️ Esto tardó más de la cuenta. Escribime de nuevo, por favor.",
+            )
+            return "timeout_lock_released"
+        finally:
+            lock.release()
 
-        async with lock:
-            try:
-                return await asyncio.wait_for(
-                    self._handle_message_locked(payload, meta_client),
-                    timeout=LOCK_HOLD_TIMEOUT_SECONDS,
-                )
-            except asyncio.TimeoutError:
-                logger.error(
-                    f"Procesamiento de mensaje de {payload.telefono} superó "
-                    f"{LOCK_HOLD_TIMEOUT_SECONDS}s — se cortó para no dejar el lock "
-                    "tomado para siempre. Revisar qué llamada externa se colgó."
-                )
-                await meta_client.send_text(
-                    payload.telefono,
-                    "⏱️ Esto tardó más de la cuenta. Escribime de nuevo, por favor.",
-                )
-                return "timeout_lock_released"
-
+    async def _acquire_lock(self, payload: WhatsAppPayload, meta_client: MetaClient) -> bool:
+        """Toma el lock del teléfono CON timeout. Sin esto, un mensaje que llega
+        mientras otro del mismo número está trabado espera indefinidamente: el
+        `async with lock` no tiene techo (bug de producción 2026-08-26)."""
+        lock = await self._get_conversation_lock(payload.telefono)
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=LOCK_ACQUIRE_TIMEOUT_SECONDS)
+            return True
+        except asyncio.TimeoutError:
+            logger.error(
+                f"No se pudo tomar el lock de {payload.telefono} en "
+                f"{LOCK_ACQUIRE_TIMEOUT_SECONDS}s (locked={lock.locked()}) — "
+                "hay otro mensaje del mismo número trabado."
+            )
+            await meta_client.send_text(
+                payload.telefono,
+                "Estoy terminando de procesar tu mensaje anterior. Probá de nuevo en unos segundos.",
+            )
+            return False
 
     async def handle_perfumeria_audit(
         self,
         payload: WhatsAppPayload,
         meta_client: MetaClient,
     ) -> str:
-        """Handle perfumery audit v2 (structured conversational flow)."""
+        """Entrypoint del flujo de auditoría v2 desde `main.py` — toma el lock del
+        teléfono y delega. OJO: si ya estás corriendo bajo el lock (todo lo que
+        cuelga de `_handle_message_locked`), llamá a `_handle_perfumeria_locked`
+        directamente. `asyncio.Lock` NO es reentrante: volver a tomarlo acá deja la
+        conversación muerta para siempre (bug de producción 2026-08-26)."""
+        if not await self._acquire_lock(payload, meta_client):
+            return "lock_acquire_timeout"
 
-        # Acquire lock for this phone
         lock = await self._get_conversation_lock(payload.telefono)
+        try:
+            return await asyncio.wait_for(
+                self._handle_perfumeria_locked(payload, meta_client),
+                timeout=LOCK_HOLD_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                f"Procesamiento de auditoría v2 de {payload.telefono} superó "
+                f"{LOCK_HOLD_TIMEOUT_SECONDS}s — se cortó para no dejar el lock "
+                "tomado para siempre. Revisar qué llamada externa se colgó."
+            )
+            await meta_client.send_text(
+                payload.telefono,
+                "⏱️ Esto tardó más de la cuenta. Escribime de nuevo, por favor.",
+            )
+            return "timeout_lock_released"
+        finally:
+            lock.release()
 
-        async with lock:
-            try:
-                result = await asyncio.wait_for(
-                    AuditConversationHandler.handle_message(payload, meta_client),
-                    timeout=LOCK_HOLD_TIMEOUT_SECONDS,
-                )
-                return result
-            except asyncio.TimeoutError:
-                logger.error(
-                    f"Procesamiento de auditoría v2 de {payload.telefono} superó "
-                    f"{LOCK_HOLD_TIMEOUT_SECONDS}s — se cortó para no dejar el lock "
-                    "tomado para siempre. Revisar qué llamada externa se colgó."
-                )
-                await meta_client.send_text(
-                    payload.telefono,
-                    "⏱️ Esto tardó más de la cuenta. Escribime de nuevo, por favor.",
-                )
-                return "timeout_lock_released"
-            except Exception as e:
-                logger.error(f"Error in perfumery audit v2 handler: {e}")
-                await meta_client.send_text(
-                    payload.telefono,
-                    "❌ Error en la auditoría. Por favor intenta de nuevo."
-                )
-                return "error"
+    async def _handle_perfumeria_locked(
+        self,
+        payload: WhatsAppPayload,
+        meta_client: MetaClient,
+    ) -> str:
+        """Cuerpo real del flujo v2, SIN tomar el lock — asume que el caller ya lo tiene."""
+        try:
+            return await AuditConversationHandler.handle_message(payload, meta_client)
+        except Exception as e:
+            logger.error(f"Error in perfumery audit v2 handler: {e}", exc_info=True)
+            await meta_client.send_text(
+                payload.telefono,
+                "❌ Error en la auditoría. Por favor intenta de nuevo."
+            )
+            return "error"
 
 
     async def _handle_message_locked(
@@ -292,15 +333,19 @@ class ConversationRouter:
             # If user has active v2 session OR explicitly triggers it, use new handlers
             session = get_session(payload.telefono)
             if session and session.estado != AuditState.DONE:
-                # User has active audit session: route to v2 handlers
-                return await self.handle_perfumeria_audit(payload, meta_client)
+                # User has active audit session: route to v2 handlers.
+                # `_handle_perfumeria_locked` y NO `handle_perfumeria_audit`: acá ya
+                # estamos corriendo bajo el lock del teléfono, y volver a tomarlo
+                # deadlockea (asyncio.Lock no es reentrante).
+                return await self._handle_perfumeria_locked(payload, meta_client)
 
             # Check if message triggers v2 audit
             if payload.tipo == "text" and payload.contenido:
                 trigger = payload.contenido.lower().strip()
                 V2_TRIGGERS = {"auditoria", "auditoría", "audit", "auditar", "perfumeria", "perfumería"}
                 if trigger in V2_TRIGGERS or any(w in trigger for w in ["auditar perfume", "auditoria perfumeria", "perfumeria v2", "audit v2"]):
-                    return await self.handle_perfumeria_audit(payload, meta_client)
+                    # Ya corremos bajo el lock — ver comentario de arriba.
+                    return await self._handle_perfumeria_locked(payload, meta_client)
                 if trigger in {"desvios", "desvíos", "gestionar desvios", "gestionar desvíos"}:
                     return await AuditConversationHandler.start_desvio_management(
                         payload, meta_client, auditor_nombre=auditor.nombre
@@ -1139,9 +1184,15 @@ class ConversationRouter:
             payload.telefono,
             "¿Qué querés hacer?",
             buttons=[
-                {"id": "auditar", "title": "🔍 Auditar"},
-                {"id": "campania", "title": "📣 Campaña"},
-                {"id": "tour", "title": "🚶 Tour"},
+                # Los ids van prefijados a proposito: WhatsApp manda el ID del boton
+                # como si fuera texto escrito (main.py), y el dispatcher chequea
+                # palabras clave ANTES de rutear por estado. Un id "pelado" como
+                # "auditar" choca con V2_TRIGGERS y secuestra el flujo (bug de
+                # produccion 2026-08-26). Ningun id puede ser una palabra que el
+                # dispatcher mire como texto libre.
+                {"id": "menu_auditar", "title": "🔍 Auditar"},
+                {"id": "menu_campania", "title": "📣 Campaña"},
+                {"id": "menu_tour", "title": "🚶 Tour"},
             ],
         )
         return "auditor_menu_enviado"
@@ -1150,11 +1201,13 @@ class ConversationRouter:
         self, payload: WhatsAppPayload, conv: Conversacion, meta_client: MetaClient
     ) -> str:
         choice = (payload.contenido or "").strip().lower()
-        if choice == "auditar":
+        # Se aceptan tambien los ids viejos sin prefijo por si quedo algun menu ya
+        # entregado en el celular de alguien cuando se despliega este cambio.
+        if choice in {"menu_auditar", "auditar"}:
             return await self._iniciar_seleccion_sucursal(payload, meta_client)
-        if choice == "campania":
+        if choice in {"menu_campania", "campania"}:
             return await self._iniciar_creacion_campania(payload, meta_client, tipo="comercial")
-        if choice == "tour":
+        if choice in {"menu_tour", "tour"}:
             return await self._iniciar_creacion_campania(payload, meta_client, tipo="tour_interno")
         await meta_client.send_text(payload.telefono, "Elegí una opción del menú.")
         return "auditor_menu_invalido"
@@ -1454,12 +1507,14 @@ class ConversationRouter:
             footer="",
             button_text="Elegir",
             options=[
-                {"id": "todas", "title": "Todas las sucursales"},
-                {"id": "cat_a", "title": "Categoría A"},
-                {"id": "cat_b", "title": "Categoría B"},
-                {"id": "cat_c", "title": "Categoría C"},
-                {"id": "perfumeria", "title": "Con perfumería"},
-                {"id": "elegir", "title": "Elegir por nombre"},
+                # Prefijo alcance_ obligatorio: "perfumeria" pelado choca con
+                # V2_TRIGGERS y deadlockea (ver comentario en _mostrar_menu_auditor).
+                {"id": "alcance_todas", "title": "Todas las sucursales"},
+                {"id": "alcance_cat_a", "title": "Categoría A"},
+                {"id": "alcance_cat_b", "title": "Categoría B"},
+                {"id": "alcance_cat_c", "title": "Categoría C"},
+                {"id": "alcance_perfumeria", "title": "Con perfumería"},
+                {"id": "alcance_elegir", "title": "Elegir por nombre"},
             ],
         )
         return "auditor_campania_pidiendo_alcance"
@@ -1552,12 +1607,12 @@ class ConversationRouter:
         choice = texto.lower()
         sucursales = self.sheets.get_sucursales_activas()
 
-        if choice == "todas":
+        if choice in {"alcance_todas", "todas"}:
             return await self._confirmar_alcance_resuelto(
                 payload, meta_client, context, [s["id"] for s in sucursales], [s["nombre"] for s in sucursales]
             )
-        if choice in {"cat_a", "cat_b", "cat_c"}:
-            categoria = choice.split("_")[1].upper()
+        if choice in {"alcance_cat_a", "alcance_cat_b", "alcance_cat_c", "cat_a", "cat_b", "cat_c"}:
+            categoria = choice.split("_")[-1].upper()
             filtradas = [s for s in sucursales if (s.get("categoria") or "").upper() == categoria]
             if not filtradas:
                 await meta_client.send_text(payload.telefono, f"No hay sucursales cargadas con categoría {categoria}.")
@@ -1565,7 +1620,7 @@ class ConversationRouter:
             return await self._confirmar_alcance_resuelto(
                 payload, meta_client, context, [s["id"] for s in filtradas], [s["nombre"] for s in filtradas]
             )
-        if choice == "perfumeria":
+        if choice in {"alcance_perfumeria", "perfumeria"}:
             filtradas = [s for s in sucursales if s.get("tiene_perfumeria")]
             if not filtradas:
                 await meta_client.send_text(payload.telefono, "No hay sucursales marcadas con perfumería.")
@@ -1573,7 +1628,7 @@ class ConversationRouter:
             return await self._confirmar_alcance_resuelto(
                 payload, meta_client, context, [s["id"] for s in filtradas], [s["nombre"] for s in filtradas]
             )
-        if choice == "elegir":
+        if choice in {"alcance_elegir", "elegir"}:
             context["substep_alcance"] = "esperando_nombres"
             self.sheets.update_conversacion(
                 telefono=payload.telefono,
