@@ -34,7 +34,7 @@ from models import (
 
 from supabase_manager import SupabaseManager
 
-from identity import resolve_responsable_by_sucursal
+from identity import resolve_responsable_by_sucursal, resolve_whatsapp_user, ventana_abierta
 
 from parser import AuditParser
 
@@ -51,7 +51,9 @@ from audit_session import (
 from audit_handlers import AuditConversationHandler
 from informes_respuesta import generar_informe_inmediato_sucursal
 from campanias_service import activar_campania_core, CampaniaActivarError
+from audit_pdf_generator import generate_tour_briefing_pdf, generate_tour_sucursal_pdf
 import difflib
+import re
 
 
 logger = logging.getLogger(__name__)
@@ -100,6 +102,26 @@ TOUR_ACCIONES_DEFAULT = [
     ("limpieza", "Limpieza"),
     ("heladera_cadena_frio", "Cadena de frío"),
 ]
+
+
+# Comentario que se guarda cuando el encargado manda la foto SIN escribir nada. No es
+# una observación suya: es relleno del sistema, y contarlo como observación infla el
+# "N puntos con observación" del PDF y del aviso con ruido.
+COMENTARIO_EVIDENCIA_AUTO = "Foto de evidencia enviada por WhatsApp."
+
+# Palabras que delatan que un punto del tour cubre cadena de frío. A diferencia del resto
+# del checklist (estético), la cadena de frío es compliance regulatorio — ver §3.1 de
+# ARQUITECTURA_DESVIOS_CAMPANIAS.md. Con el tour de texto libre se puede omitir sin que
+# nada avise, así que el bot pregunta una vez antes de lanzar.
+FRIO_KEYWORDS = ("frio", "frío", "heladera", "refriger", "vacuna", "insulina", "cadena de frio")
+
+
+def _slug_archivo(nombre: str) -> str:
+    """Nombre de archivo seguro para el PDF que se manda por WhatsApp: el nombre del
+    tour lo escribe la auditora a mano y suele traer acentos, comas y guiones largos."""
+    base = unicodedata.normalize("NFKD", nombre).encode("ascii", "ignore").decode("ascii")
+    base = re.sub(r"[^A-Za-z0-9]+", "-", base).strip("-").lower()
+    return (base or "tour")[:60]
 
 
 
@@ -397,6 +419,8 @@ class ConversationRouter:
                     return await self._iniciar_creacion_campania(payload, meta_client, tipo=None)
                 if trigger in {"tour", "tour de farmacias", "tour farmacias"}:
                     return await self._iniciar_creacion_campania(payload, meta_client, tipo="tour_interno")
+                if trigger in {"seguimiento", "estado", "como viene", "cómo viene", "avance"}:
+                    return await self._iniciar_seguimiento(payload, meta_client)
 
 
             # Get conversation state
@@ -558,6 +582,22 @@ class ConversationRouter:
             elif conv.estado_actual == ConversationState.AUDITOR_CAMPANIA_CONFIRMANDO:
 
                 return await self._handle_auditor_campania_confirmando(payload, conv, meta_client)
+
+            elif conv.estado_actual == ConversationState.AUDITOR_SEGUIMIENTO_ELIGIENDO:
+
+                return await self._handle_auditor_seguimiento_eligiendo(payload, conv, meta_client)
+
+            elif conv.estado_actual == ConversationState.AUDITOR_SEGUIMIENTO_ACCION:
+
+                return await self._handle_auditor_seguimiento_accion(payload, conv, meta_client)
+
+            elif conv.estado_actual == ConversationState.AUDITOR_SEGUIMIENTO_DETALLE_SUCURSAL:
+
+                return await self._handle_auditor_seguimiento_detalle_sucursal(payload, conv, meta_client)
+
+            elif conv.estado_actual == ConversationState.AUDITOR_SEGUIMIENTO_SUMANDO_SUCURSALES:
+
+                return await self._handle_auditor_seguimiento_sumando_sucursales(payload, conv, meta_client)
 
             else:
 
@@ -1104,7 +1144,7 @@ class ConversationRouter:
             self.sheets.save_campania_evento(
                 tarea_id=str(tarea_id),
                 tipo="evidencia",
-                comentario=(payload.contenido or "").strip() or "Foto de evidencia enviada por WhatsApp.",
+                comentario=(payload.contenido or "").strip() or COMENTARIO_EVIDENCIA_AUTO,
                 actor_nombre=actor_nombre,
                 metadata={
                     "canal": "whatsapp",
@@ -1115,11 +1155,103 @@ class ConversationRouter:
                 },
             )
             await meta_client.send_text(payload.telefono, "Listo, marcada como completada.")
-            return await self._continue_campania_flow(payload, meta_client, encargado)
+            await self._reenviar_punto_a_auditor(
+                meta_client, tarea, path, (payload.contenido or "").strip(), actor_nombre
+            )
+            # El encargado se atiende primero: el aviso de cierre arma un PDF y no tiene
+            # por qué demorar su próxima tarea.
+            resultado = await self._continue_campania_flow(payload, meta_client, encargado)
+            await self._avisar_si_sucursal_completa(meta_client, tarea)
+            return resultado
         except Exception as e:
             logger.error(f"Error saving campania evidencia for {tarea_id}: {e}", exc_info=True)
             await meta_client.send_text(payload.telefono, "No pude guardar la foto. Intentá nuevamente.")
             return "campania_evidencia_error"
+
+    def _tiene_ventana_abierta(self, telefono: str) -> bool:
+        """Meta no entrega mensajes libres (ni fotos ni PDFs) a alguien que no le escribió
+        al bot en las últimas 24h. Sin este chequeo, los avisos que el bot INICIA hacia la
+        auditora fallan y solo queda un log — y ella lee el silencio como "no contestó
+        nadie", que es peor que no tener la función. Mismo helper y mismo criterio que
+        `informes_respuesta.py` usa para mandarle el informe de desvíos.
+
+        Solo se saltea el envío cuando se sabe POSITIVAMENTE que la ventana está cerrada.
+        Si el usuario no se puede resolver o la consulta falla, se intenta igual: el peor
+        caso de intentar es un envío fallido logueado, y el de no intentar es perderle un
+        aviso real a la auditora."""
+        try:
+            usuario = resolve_whatsapp_user(telefono)
+            if not usuario:
+                return True
+            if ventana_abierta(usuario):
+                return True
+            logger.info(
+                f"Aviso de tour para {telefono} omitido: ventana de 24h cerrada. "
+                "Lo va a ver igual en 📊 Seguimiento."
+            )
+            return False
+        except Exception as e:
+            logger.warning(f"No pude verificar la ventana de {telefono}: {e}")
+            return True
+
+    async def _reenviar_punto_a_auditor(
+        self,
+        meta_client: MetaClient,
+        tarea: Dict[str, Any],
+        foto_path: str,
+        comentario: str,
+        actor_nombre: str,
+    ) -> None:
+        """Le reenvia al auditor que lanzo el tour cada punto apenas lo completa un
+        encargado, con la foto y lo que haya escrito.
+
+        Solo aplica a `tour_interno`: un tour es un recorrido que la auditora sigue en
+        vivo. En una campania comercial el mismo comportamiento la inundaria (N marcas x
+        N acciones x N sucursales) y el tablero web ya alcanza para ese caso.
+
+        Best-effort: el encargado ya recibio su confirmacion y la evidencia ya esta
+        guardada antes de llegar aca — si el reenvio falla se loguea y nada mas, nunca
+        rompe el flujo del encargado."""
+        campania = tarea.get("campanias") or {}
+        if campania.get("tipo") != "tour_interno":
+            return
+        destino = str(campania.get("creado_por_telefono") or "").strip()
+        if not destino:
+            # Tours creados desde el wizard web no tienen telefono de origen: ahi la
+            # auditora sigue el recorrido por el tablero, como hasta ahora.
+            return
+        if not self._tiene_ventana_abierta(destino):
+            return
+
+        try:
+            accion = tarea.get("campania_acciones") or {}
+            punto = accion.get("descripcion") or accion.get("tipo") or "Punto"
+            sucursal = self.sheets.get_sucursal(str(tarea.get("id_sucursal") or ""))
+            sucursal_nombre = sucursal.nombre if sucursal else str(tarea.get("id_sucursal") or "—")
+
+            lineas = [
+                f"🚶 {campania.get('nombre') or 'Tour'} · {sucursal_nombre}",
+                f"📍 {punto}",
+                f"👤 {actor_nombre}",
+            ]
+            if comentario:
+                # Se recorta SOLO el comentario, no el mensaje entero: el tope de caption
+                # de Meta es 1024 y truncar por la cola cortaría justo lo que el encargado
+                # escribió, que es el contenido de valor.
+                encabezado = len("\n".join(lineas)) + 3
+                margen = 1000 - encabezado
+                if len(comentario) > margen:
+                    comentario = comentario[: max(margen - 1, 0)] + "…"
+                lineas.append(f"💬 {comentario}")
+            caption = "\n".join(lineas)[:1000]
+
+            url = self.sheets.create_signed_evidencia_url(foto_path)
+            if url:
+                await meta_client.send_image_by_url(destino, url, caption=caption)
+            else:
+                await meta_client.send_text(destino, caption)
+        except Exception as e:
+            logger.warning(f"No se pudo reenviar el punto de tour al auditor {destino}: {e}")
 
     async def _handle_campania_solicitando_insumo_detalle(
         self,
@@ -1236,9 +1368,15 @@ class ConversationRouter:
                 # "auditar" choca con V2_TRIGGERS y secuestra el flujo (bug de
                 # produccion 2026-08-26). Ningun id puede ser una palabra que el
                 # dispatcher mire como texto libre.
+                # Meta permite 3 botones y ni uno mas (send_quick_reply trunca en
+                # silencio), asi que "Campaña"/"Tour" se fusionaron en "➕ Crear" —
+                # que cae en AUDITOR_CAMPANIA_ELIGIENDO_TIPO, un estado que ya existia.
+                # Se paga un tap extra en la ruta esporadica (crear) para que la ruta
+                # diaria (auditar) y la nueva de consulta (seguimiento) queden a un
+                # solo tap.
                 {"id": "menu_auditar", "title": "🔍 Auditar"},
-                {"id": "menu_campania", "title": "📣 Campaña"},
-                {"id": "menu_tour", "title": "🚶 Tour"},
+                {"id": "menu_seguimiento", "title": "📊 Seguimiento"},
+                {"id": "menu_crear", "title": "➕ Crear"},
             ],
         )
         return "auditor_menu_enviado"
@@ -1251,6 +1389,12 @@ class ConversationRouter:
         # entregado en el celular de alguien cuando se despliega este cambio.
         if choice in {"menu_auditar", "auditar"}:
             return await self._iniciar_seleccion_sucursal(payload, meta_client)
+        if choice == "menu_seguimiento":
+            return await self._iniciar_seguimiento(payload, meta_client)
+        if choice == "menu_crear":
+            return await self._iniciar_creacion_campania(payload, meta_client, tipo=None)
+        # Ids del menu viejo (3 botones Auditar/Campaña/Tour): un celular puede tener
+        # ese menu ya entregado en pantalla cuando se despliega este cambio.
         if choice in {"menu_campania", "campania"}:
             return await self._iniciar_creacion_campania(payload, meta_client, tipo="comercial")
         if choice in {"menu_tour", "tour"}:
@@ -1332,13 +1476,12 @@ class ConversationRouter:
             )
             return "auditor_campania_eligiendo_marca"
 
-        # Tour de Farmacias: sin marca, checklist fijo precargado (Módulo 3, §3.1).
+        # Tour de Farmacias: sin marca. Los puntos ya NO vienen precargados — la auditora
+        # los arma libremente (texto + foto de ejemplo) despues del nombre; el checklist
+        # de TOUR_ACCIONES_DEFAULT quedo como atajo opcional, no como contenido fijo.
         context["marca_id"] = None
         context["marca_nombre"] = None
-        context["acciones"] = [
-            {"tipo": tipo_accion, "descripcion": descripcion, "imagen_referencia_path": None}
-            for tipo_accion, descripcion in TOUR_ACCIONES_DEFAULT
-        ]
+        context["acciones"] = []
         ahora = datetime.now(timezone.utc)
         sugerido = f"Tour de Farmacias — {MESES_ES[ahora.month - 1]} {ahora.year}"
         context["nombre_sugerido"] = sugerido
@@ -1395,8 +1538,25 @@ class ConversationRouter:
             context["nombre"] = texto[:120]
 
         if context.get("tipo") == "tour_interno":
-            # Checklist ya seedeado en _continuar_tras_tipo — directo a alcance.
-            return await self._pedir_alcance_campania(payload, meta_client, context)
+            context["accion_actual"] = {}
+            context["substep"] = "tour_base"
+            self.sheets.update_conversacion(
+                telefono=payload.telefono,
+                estado=ConversationState.AUDITOR_CAMPANIA_AGREGANDO_ACCION,
+                ultimo_mensaje=json.dumps(context),
+            )
+            await meta_client.send_quick_reply(
+                payload.telefono,
+                f'"{context["nombre"]}".\n¿Armamos los puntos desde cero, o arrancamos del checklist '
+                f'clásico ({", ".join(d for _, d in TOUR_ACCIONES_DEFAULT)}) y lo editás?',
+                buttons=[
+                    # Ids prefijados: ningun id de boton puede ser una palabra que el
+                    # dispatcher mire como texto libre (ver _mostrar_menu_auditor).
+                    {"id": "tour_desde_cero", "title": "✏️ Desde cero"},
+                    {"id": "tour_checklist", "title": "📋 Usar checklist"},
+                ],
+            )
+            return "auditor_campania_tour_base"
 
         context["accion_actual"] = {}
         context["substep"] = "tipo"
@@ -1418,6 +1578,27 @@ class ConversationRouter:
         )
         return "auditor_campania_pidiendo_tipo_accion"
 
+    async def _pedir_punto_tour(
+        self, payload: WhatsAppPayload, meta_client: MetaClient, context: Dict[str, Any]
+    ) -> str:
+        """Arranca la carga de UN punto del tour. A diferencia del flujo comercial no hay
+        paso de "tipo": los puntos que arma la auditora son texto libre (`custom`), asi
+        que se va directo a pedir la descripcion."""
+        context["accion_actual"] = {"tipo": "custom"}
+        context["substep"] = "descripcion"
+        self.sheets.update_conversacion(
+            telefono=payload.telefono,
+            estado=ConversationState.AUDITOR_CAMPANIA_AGREGANDO_ACCION,
+            ultimo_mensaje=json.dumps(context),
+        )
+        numero = len(context.get("acciones") or []) + 1
+        await meta_client.send_text(
+            payload.telefono,
+            f"Punto {numero}: escribí qué tienen que controlar y registrar.\n"
+            "Ej: \"Góndolas de dermocosmética: ordenadas, sin huecos y con precio visible\".",
+        )
+        return "auditor_campania_pidiendo_descripcion_accion"
+
     async def _guardar_accion_y_preguntar_otra(
         self, payload: WhatsAppPayload, meta_client: MetaClient, context: Dict[str, Any]
     ) -> str:
@@ -1434,10 +1615,19 @@ class ConversationRouter:
             estado=ConversationState.AUDITOR_CAMPANIA_AGREGANDO_ACCION,
             ultimo_mensaje=json.dumps(context),
         )
+        es_tour = context.get("tipo") == "tour_interno"
+        unidad = "punto(s)" if es_tour else "acción(es)"
+        botones = [{"id": "si", "title": "Sí"}, {"id": "no", "title": "No, seguir"}]
+        if context.get("acciones"):
+            # Un typo en un punto se replica a las 23 sucursales y queda en el PDF que la
+            # auditora reenvía. No hay edición, pero deshacer lo último cubre el caso real
+            # (arrepentirse de lo que acabás de escribir) y es un pop() — todavía no se
+            # lanzó nada, así que no toca evidencia de nadie.
+            botones.append({"id": "borrar_ultimo", "title": "↩️ Borrar último"})
         await meta_client.send_quick_reply(
             payload.telefono,
-            f"Listo, agregada. Llevás {len(context.get('acciones') or [])} acción(es). ¿Agregás otra?",
-            buttons=[{"id": "si", "title": "Sí"}, {"id": "no", "title": "No, seguir"}],
+            f"Listo, agregado. Llevás {len(context.get('acciones') or [])} {unidad}. ¿Agregás otro?",
+            buttons=botones,
         )
         return "auditor_campania_accion_guardada"
 
@@ -1450,6 +1640,25 @@ class ConversationRouter:
         context = self._safe_json_loads(conv.ultimo_mensaje)
         substep = context.get("substep") or "tipo"
         texto = (payload.contenido or "").strip()
+        es_tour = context.get("tipo") == "tour_interno"
+
+        if substep == "tour_base":
+            choice = texto.lower()
+            if choice in {"tour_checklist", "checklist"}:
+                context["acciones"] = [
+                    {"tipo": tipo_accion, "descripcion": descripcion, "imagen_referencia_path": None}
+                    for tipo_accion, descripcion in TOUR_ACCIONES_DEFAULT
+                ]
+                await meta_client.send_text(
+                    payload.telefono,
+                    "Cargué el checklist clásico. Podés sumarle los puntos que quieras, "
+                    "con su foto de ejemplo.",
+                )
+                return await self._guardar_accion_y_preguntar_otra(payload, meta_client, context)
+            if choice in {"tour_desde_cero", "desde_cero"}:
+                return await self._pedir_punto_tour(payload, meta_client, context)
+            await meta_client.send_text(payload.telefono, 'Elegí "Desde cero" o "Usar checklist".')
+            return "auditor_campania_tour_base_invalido"
 
         if substep == "tipo":
             tipo_accion = texto.lower()
@@ -1485,7 +1694,8 @@ class ConversationRouter:
             )
             await meta_client.send_quick_reply(
                 payload.telefono,
-                "¿Le mandamos una foto de referencia (así debe quedar)?",
+                "¿Le sumás una foto de ejemplo a este punto?" if es_tour
+                else "¿Le mandamos una foto de referencia (así debe quedar)?",
                 buttons=[{"id": "si", "title": "Sí"}, {"id": "no", "title": "No"}],
             )
             return "auditor_campania_pidiendo_referencia"
@@ -1497,12 +1707,28 @@ class ConversationRouter:
                     estado=ConversationState.AUDITOR_CAMPANIA_ESPERANDO_REFERENCIA,
                     ultimo_mensaje=json.dumps(context),
                 )
-                await meta_client.send_text(payload.telefono, "Mandame la foto de referencia.")
+                await meta_client.send_text(
+                    payload.telefono,
+                    "Mandame la foto de ejemplo." if es_tour else "Mandame la foto de referencia.",
+                )
                 return "auditor_campania_esperando_referencia"
             return await self._guardar_accion_y_preguntar_otra(payload, meta_client, context)
 
         if substep == "otra":
+            if texto.lower() == "borrar_ultimo":
+                acciones = context.get("acciones") or []
+                if acciones:
+                    borrado = acciones.pop()
+                    context["acciones"] = acciones
+                    await meta_client.send_text(
+                        payload.telefono,
+                        f"Borré: \"{borrado.get('descripcion') or borrado.get('tipo')}\".",
+                    )
+                return await self._guardar_accion_y_preguntar_otra(payload, meta_client, context)
+
             if texto.lower() in {"si", "sí"}:
+                if es_tour:
+                    return await self._pedir_punto_tour(payload, meta_client, context)
                 context["accion_actual"] = {}
                 context["substep"] = "tipo"
                 self.sheets.update_conversacion(
@@ -1511,6 +1737,62 @@ class ConversationRouter:
                     ultimo_mensaje=json.dumps(context),
                 )
                 return await self._pedir_tipo_accion(payload, meta_client)
+            if not (context.get("acciones") or []):
+                # Sin acciones la activacion falla despues (CampaniaSinAccionesError) y se
+                # pierde todo lo cargado — se corta aca, con el borrador todavia vivo.
+                await meta_client.send_text(
+                    payload.telefono,
+                    "Necesito al menos un punto para poder mandarlo. Escribime el primero.",
+                )
+                if es_tour:
+                    return await self._pedir_punto_tour(payload, meta_client, context)
+                context["accion_actual"] = {}
+                context["substep"] = "tipo"
+                self.sheets.update_conversacion(
+                    telefono=payload.telefono,
+                    estado=ConversationState.AUDITOR_CAMPANIA_AGREGANDO_ACCION,
+                    ultimo_mensaje=json.dumps(context),
+                )
+                return await self._pedir_tipo_accion(payload, meta_client)
+
+            if es_tour and not context.get("frio_preguntado"):
+                # La cadena de frío es lo único del checklist que es compliance
+                # regulatorio y no estética (§3.1). Con el tour de texto libre se puede
+                # omitir sin que nada avise, y la omisión es silenciosa y progresiva: los
+                # primeros tours salen con el checklist, y meses después deja de aparecer
+                # sin que nadie lo note. Se pregunta UNA vez, y "no aplica" es una
+                # respuesta válida (hay sucursales sin refrigerados).
+                descripciones = " ".join(
+                    str(a.get("descripcion") or "") for a in (context.get("acciones") or [])
+                ).lower()
+                if not any(k in descripciones for k in FRIO_KEYWORDS):
+                    context["frio_preguntado"] = True
+                    context["substep"] = "frio"
+                    self.sheets.update_conversacion(
+                        telefono=payload.telefono,
+                        estado=ConversationState.AUDITOR_CAMPANIA_AGREGANDO_ACCION,
+                        ultimo_mensaje=json.dumps(context),
+                    )
+                    await meta_client.send_quick_reply(
+                        payload.telefono,
+                        "No cargaste ningún punto de cadena de frío (heladeras con "
+                        "refrigerados, vacunas o insulina). ¿Lo sumo?",
+                        buttons=[
+                            {"id": "frio_si", "title": "Sí, sumalo"},
+                            {"id": "frio_no", "title": "No aplica"},
+                        ],
+                    )
+                    return "auditor_campania_preguntando_frio"
+
+            return await self._pedir_alcance_campania(payload, meta_client, context)
+
+        if substep == "frio":
+            if texto.lower() in {"frio_si", "si", "sí"}:
+                context.setdefault("acciones", []).append({
+                    "tipo": "heladera_cadena_frio",
+                    "descripcion": "Cadena de frío: heladeras con termómetro visible y temperatura en rango",
+                    "imagen_referencia_path": None,
+                })
             return await self._pedir_alcance_campania(payload, meta_client, context)
 
         # Substep desconocido (no debería pasar) — reinicia al menú en vez de romper.
@@ -1714,23 +1996,39 @@ class ConversationRouter:
             ultimo_mensaje=json.dumps(context),
         )
         tipo = context.get("tipo")
+        es_tour = tipo == "tour_interno"
         acciones = context.get("acciones") or []
         sucursal_nombres = context.get("sucursal_nombres") or []
-        acciones_desc = ", ".join(a.get("descripcion") or a.get("tipo") or "" for a in acciones)
+
+        # El resumen va como TEXTO (tope 4096) y no dentro del quick_reply (tope 1024,
+        # que Meta trunca en silencio): con puntos de texto libre + la lista completa de
+        # sucursales se pasa facil de 1024, y lo primero que se perderia seria justo la
+        # lista de sucursales — el dato de mayor blast radius del flujo (hallazgo UX v5).
+        # El alcance va ARRIBA y la lista de puntos abajo, acotada: los puntos son texto
+        # libre sin tope de cantidad, y si el mensaje se pasa de 4096 `send_text` trunca
+        # por la cola — con el orden inverso, lo primero que se perdía era justo la lista
+        # de sucursales, el dato de mayor blast radius del flujo.
         lineas = [
-            f"{'📣' if tipo == 'comercial' else '🚶'} {context.get('nombre')}",
-            f"Marca: {context.get('marca_nombre')}" if tipo == "comercial" else "Tour de Farmacias (sin marca)",
-            f"{len(acciones)} acción(es): {acciones_desc}",
+            f"{'🚶' if es_tour else '📣'} {context.get('nombre')}",
+            "Tour de Farmacias (sin marca)" if es_tour else f"Marca: {context.get('marca_nombre')}",
             f"Plazo: {context.get('plazo_dias')} días",
-            # Se listan los nombres explícitos, no solo el conteo (hallazgo de UX v5) —
-            # es el paso de mayor blast radius del flujo (dispara WhatsApp real).
             f"Sucursales ({len(sucursal_nombres)}): {', '.join(sucursal_nombres)}",
             "",
-            "¿Lanzamos?",
+            f"{len(acciones)} {'punto(s) a registrar' if es_tour else 'acción(es)'}:",
         ]
+        TOPE_LISTADO = 20
+        for i, accion in enumerate(acciones[:TOPE_LISTADO], start=1):
+            marca_foto = " 📷" if accion.get("imagen_referencia_path") else ""
+            desc = str(accion.get("descripcion") or accion.get("tipo") or "—")
+            if len(desc) > 90:
+                desc = desc[:87] + "…"
+            lineas.append(f"{i}. {desc}{marca_foto}")
+        if len(acciones) > TOPE_LISTADO:
+            lineas.append(f"…y {len(acciones) - TOPE_LISTADO} punto(s) más.")
+        await meta_client.send_text(payload.telefono, "\n".join(lineas))
         await meta_client.send_quick_reply(
             payload.telefono,
-            "\n".join(lineas),
+            f"¿Lo lanzamos a {len(sucursal_nombres)} sucursal(es)?",
             buttons=[{"id": "lanzar", "title": "🚀 Lanzar ahora"}, {"id": "cancelar", "title": "Cancelar"}],
         )
         return "auditor_campania_confirmando"
@@ -1785,7 +2083,578 @@ class ConversationRouter:
             f"✅ Listo. Se creó \"{context.get('nombre')}\" con {resultado['tareas_creadas']} tareas en "
             f"{len(context.get('sucursal_ids') or [])} sucursales.",
         )
+        await self._enviar_briefing_pdf(payload, meta_client, context, campania_id)
         return "auditor_campania_lanzada"
+
+    async def _enviar_briefing_pdf(
+        self,
+        payload: WhatsAppPayload,
+        meta_client: MetaClient,
+        context: Dict[str, Any],
+        campania_id: str,
+    ) -> None:
+        """Arma el instructivo en PDF de la campania/tour recien lanzada y se lo manda al
+        auditor que la creo, para que lo reenvie a las sucursales por su cuenta.
+
+        Best-effort a proposito: la campania ya quedo creada y activada antes de llegar
+        aca, asi que un fallo del PDF se avisa pero NO se propaga (mismo criterio que el
+        fan-out de WhatsApp en campanias_service). El armado corre en un thread porque
+        reportlab + PIL son CPU-bound y sincronicos: en el event loop congelan a TODOS
+        los usuarios del bot mientras dura (ver PLAN_DEBUG_BOT.md, seccion PENDIENTE)."""
+        acciones = context.get("acciones") or []
+        nombre = context.get("nombre") or "Campaña"
+        try:
+            # Mismo criterio que _armar_puntos_revision: en paralelo, porque esto corre
+            # dentro del lock del teléfono y son N round-trips a Storage.
+            paths = list(dict.fromkeys(
+                str(a["imagen_referencia_path"]) for a in acciones if a.get("imagen_referencia_path")
+            ))
+            referencia_bytes: Dict[str, bytes] = {}
+            if paths:
+                descargas = await asyncio.gather(
+                    *[asyncio.to_thread(self.sheets.download_evidencia_bytes, p) for p in paths],
+                    return_exceptions=True,
+                )
+                for path, raw in zip(paths, descargas):
+                    if isinstance(raw, BaseException):
+                        logger.warning(f"No se pudo bajar la foto de referencia {path}: {raw}")
+                    elif raw:
+                        referencia_bytes[path] = raw
+
+            auditor = self.sheets.get_auditor(payload.telefono)
+            pdf_bytes = await asyncio.to_thread(
+                generate_tour_briefing_pdf,
+                nombre,
+                acciones,
+                context.get("sucursal_nombres") or [],
+                context.get("plazo_dias") or 14,
+                auditor.nombre if auditor else None,
+                referencia_bytes,
+                context.get("tipo") or "tour_interno",
+                context.get("marca_nombre"),
+            )
+            path_pdf = await asyncio.to_thread(
+                self.sheets.upload_campania_briefing_pdf, campania_id, pdf_bytes
+            )
+            url = self.sheets.create_signed_ficha_url(path_pdf)
+            if not url:
+                raise RuntimeError("no se pudo firmar la URL del briefing")
+
+            filename = f"{_slug_archivo(nombre)}.pdf"
+            enviado = await meta_client.send_document(
+                payload.telefono,
+                url,
+                filename,
+                caption="Instructivo para reenviar a las sucursales.",
+            )
+            if not enviado:
+                await meta_client.send_text(
+                    payload.telefono,
+                    f"No pude adjuntarte el PDF acá. Lo podés bajar de este link (vence en 24hs):\n{url}",
+                )
+        except Exception as e:
+            logger.error(f"Error generando/enviando briefing PDF de campania {campania_id}: {e}", exc_info=True)
+            await meta_client.send_text(
+                payload.telefono,
+                "No pude armarte el PDF del recorrido, pero las tareas ya salieron a las sucursales.",
+            )
+
+    # ============================================================
+    # Fase 10 — seguimiento de un tour/campaña ya lanzada, desde el chat del auditor:
+    # quién ya terminó, quién falta, la revisión de una sucursal, y sumar sucursales.
+    # ============================================================
+
+    TAREA_ESTADOS_HECHOS = ("Completada", "Verificada")
+
+    def _agrupar_tareas_por_sucursal(self, tareas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Arma el avance por sucursal a partir de las tareas crudas de una campaña.
+        Devuelve las listas primero y las pendientes después, cada grupo por nombre."""
+        nombres = {s["id"]: s["nombre"] for s in self.sheets.get_sucursales_activas()}
+        grupos: Dict[str, Dict[str, Any]] = {}
+        for tarea in tareas:
+            sid = str(tarea.get("id_sucursal") or "")
+            grupo = grupos.setdefault(sid, {
+                "id_sucursal": sid,
+                "nombre": nombres.get(sid, sid or "—"),
+                "tareas": [],
+                "hechas": 0,
+            })
+            grupo["tareas"].append(tarea)
+            if tarea.get("estado") in self.TAREA_ESTADOS_HECHOS:
+                grupo["hechas"] += 1
+        for grupo in grupos.values():
+            grupo["total"] = len(grupo["tareas"])
+            grupo["completa"] = grupo["total"] > 0 and grupo["hechas"] == grupo["total"]
+        return sorted(grupos.values(), key=lambda g: (not g["completa"], g["nombre"]))
+
+    async def _iniciar_seguimiento(self, payload: WhatsAppPayload, meta_client: MetaClient) -> str:
+        campanias = self.sheets.get_campanias_activas_por_telefono(payload.telefono)
+        if not campanias:
+            self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
+            await meta_client.send_text(
+                payload.telefono,
+                "No tenés tours ni campañas en curso lanzados desde acá. "
+                'Escribime "hola" para el menú.',
+            )
+            return "auditor_seguimiento_sin_campanias"
+
+        context: Dict[str, Any] = {"flujo": "auditor_seguimiento"}
+        if len(campanias) == 1:
+            # Con una sola en curso, preguntar cuál es puro ruido.
+            return await self._mostrar_estado_campania(
+                payload, meta_client, context, str(campanias[0]["id"])
+            )
+
+        opciones = {str(c["id"]): str(c["nombre"]) for c in campanias[:10]}
+        context["campanias_opciones"] = opciones
+        self.sheets.update_conversacion(
+            telefono=payload.telefono,
+            estado=ConversationState.AUDITOR_SEGUIMIENTO_ELIGIENDO,
+            ultimo_mensaje=json.dumps(context),
+        )
+        # Meta no acepta más de 10 filas por lista. Las que sobran quedan además fuera de
+        # `campanias_opciones`, o sea inalcanzables — así que al menos se avisa en vez de
+        # que desaparezcan en silencio.
+        cuerpo = "¿Cuál querés ver?"
+        if len(campanias) > 10:
+            cuerpo = f"Tenés {len(campanias)} en curso; te muestro las 10 más recientes."
+        await meta_client.send_list_message(
+            payload.telefono,
+            header="Seguimiento",
+            body=cuerpo,
+            footer="",
+            button_text="Elegir",
+            options=[
+                {"id": str(c["id"]), "title": f"{'🚶' if c.get('tipo') == 'tour_interno' else '📣'} {c['nombre']}"[:24]}
+                for c in campanias[:10]
+            ],
+        )
+        return "auditor_seguimiento_eligiendo"
+
+    async def _handle_auditor_seguimiento_eligiendo(
+        self, payload: WhatsAppPayload, conv: Conversacion, meta_client: MetaClient
+    ) -> str:
+        cancel = await self._chequear_cancelacion_auditor_campania(payload, meta_client)
+        if cancel:
+            return cancel
+        context = self._safe_json_loads(conv.ultimo_mensaje)
+        campania_id = (payload.contenido or "").strip()
+        if campania_id not in (context.get("campanias_opciones") or {}):
+            await meta_client.send_text(payload.telefono, "Elegí una de la lista que te mandé.")
+            return "auditor_seguimiento_eleccion_invalida"
+        return await self._mostrar_estado_campania(payload, meta_client, context, campania_id)
+
+    async def _mostrar_estado_campania(
+        self,
+        payload: WhatsAppPayload,
+        meta_client: MetaClient,
+        context: Dict[str, Any],
+        campania_id: str,
+    ) -> str:
+        campania = self.sheets.get_campania_by_id(campania_id)
+        if not campania:
+            self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
+            await meta_client.send_text(payload.telefono, "No encontré esa campaña.")
+            return "auditor_seguimiento_campania_no_encontrada"
+
+        tareas = self.sheets.get_campania_tareas(campania_id)
+        grupos = self._agrupar_tareas_por_sucursal(tareas)
+        listas = [g for g in grupos if g["completa"]]
+        pendientes = [g for g in grupos if not g["completa"]]
+        es_tour = campania.get("tipo") == "tour_interno"
+
+        lineas = [
+            f"{'🚶' if es_tour else '📣'} {campania.get('nombre')}",
+            f"{len(listas)} de {len(grupos)} sucursales terminadas",
+            "",
+        ]
+        if listas:
+            lineas.append(f"✅ Listas ({len(listas)}):")
+            lineas += [f"   {g['nombre']}" for g in listas]
+            lineas.append("")
+        if pendientes:
+            lineas.append(f"⏳ Pendientes ({len(pendientes)}):")
+            lineas += [f"   {g['nombre']} — {g['hechas']}/{g['total']}" for g in pendientes]
+        if not grupos:
+            lineas.append("Todavía no tiene sucursales asignadas.")
+
+        context["campania_id"] = campania_id
+        context["campania_nombre"] = campania.get("nombre")
+        context["es_tour"] = es_tour
+        # Se excluyen los grupos sin id_sucursal: una fila con id "" hace que Meta rechace
+        # el mensaje de lista ENTERO, no solo esa fila.
+        context["sucursales_opciones"] = {
+            g["id_sucursal"]: g["nombre"] for g in grupos if g["id_sucursal"]
+        }
+        # Fecha de corte real del tour, para que una sucursal sumada mas tarde herede el
+        # MISMO vencimiento que el resto en vez de un plazo inventado (ver _dias_hasta).
+        plazos = [t.get("plazo_fecha") for t in tareas if t.get("plazo_fecha")]
+        context["plazo_fecha"] = max(plazos) if plazos else None
+        self.sheets.update_conversacion(
+            telefono=payload.telefono,
+            estado=ConversationState.AUDITOR_SEGUIMIENTO_ACCION,
+            ultimo_mensaje=json.dumps(context),
+        )
+        # Resumen como texto (tope 4096) y no dentro del quick_reply (tope 1024): con
+        # ~23 sucursales listadas se pasa, y Meta trunca en silencio.
+        await meta_client.send_text(payload.telefono, "\n".join(lineas))
+        await meta_client.send_quick_reply(
+            payload.telefono,
+            "¿Querés ver el detalle de una sucursal o sumar sucursales?",
+            buttons=[
+                {"id": "seg_ver", "title": "📄 Ver sucursal"},
+                {"id": "seg_sumar", "title": "➕ Sumar sucursal"},
+                {"id": "seg_salir", "title": "Listo"},
+            ],
+        )
+        return "auditor_seguimiento_accion"
+
+    async def _handle_auditor_seguimiento_accion(
+        self, payload: WhatsAppPayload, conv: Conversacion, meta_client: MetaClient
+    ) -> str:
+        cancel = await self._chequear_cancelacion_auditor_campania(payload, meta_client)
+        if cancel:
+            return cancel
+        context = self._safe_json_loads(conv.ultimo_mensaje)
+        choice = (payload.contenido or "").strip().lower()
+        opciones = context.get("sucursales_opciones") or {}
+
+        if choice == "seg_salir":
+            self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
+            await meta_client.send_text(payload.telefono, 'Listo. Escribime "hola" cuando quieras el menú.')
+            return "auditor_seguimiento_fin"
+
+        if choice == "seg_ver":
+            if not opciones:
+                await meta_client.send_text(payload.telefono, "Esa campaña todavía no tiene sucursales.")
+                return "auditor_seguimiento_sin_sucursales"
+            self.sheets.update_conversacion(
+                telefono=payload.telefono,
+                estado=ConversationState.AUDITOR_SEGUIMIENTO_DETALLE_SUCURSAL,
+                ultimo_mensaje=json.dumps(context),
+            )
+            if len(opciones) <= 10:
+                await meta_client.send_list_message(
+                    payload.telefono,
+                    header="Sucursales",
+                    body="¿De cuál querés la revisión?",
+                    footer="",
+                    button_text="Elegir",
+                    options=[{"id": sid, "title": str(nombre)[:24]} for sid, nombre in opciones.items()],
+                )
+            else:
+                # Mas de 10 no entran en una lista de Meta (MAX_LIST_ROWS_TOTAL).
+                await meta_client.send_text(
+                    payload.telefono,
+                    "Escribime el nombre de la sucursal que querés revisar.",
+                )
+            return "auditor_seguimiento_pidiendo_sucursal"
+
+        if choice == "seg_sumar":
+            self.sheets.update_conversacion(
+                telefono=payload.telefono,
+                estado=ConversationState.AUDITOR_SEGUIMIENTO_SUMANDO_SUCURSALES,
+                ultimo_mensaje=json.dumps(context),
+            )
+            await meta_client.send_text(
+                payload.telefono,
+                "Escribime los nombres de las sucursales que querés sumar, separados por coma. "
+                "Les van a llegar los mismos puntos que al resto.",
+            )
+            return "auditor_seguimiento_pidiendo_sucursales_nuevas"
+
+        await meta_client.send_text(payload.telefono, 'Elegí una opción, o escribí "cancelar".')
+        return "auditor_seguimiento_accion_invalida"
+
+    def _resolver_una_sucursal(
+        self, texto: str, opciones: Dict[str, str]
+    ) -> Tuple[Optional[str], List[str]]:
+        """Resuelve UN nombre contra las sucursales de la campaña. Devuelve
+        (id_resuelto, candidatos_si_es_ambiguo) — mismo criterio de matching que el paso
+        de alcance (`_resolver_sucursales_por_nombre`), pero para un solo nombre."""
+        texto = (texto or "").strip()
+        if texto in opciones:
+            return texto, []
+        por_nombre = {nombre: sid for sid, nombre in opciones.items()}
+        nombres = list(por_nombre.keys())
+        if texto in por_nombre:
+            return por_nombre[texto], []
+        substr = [n for n in nombres if texto.lower() in n.lower()]
+        cercanos = difflib.get_close_matches(texto, nombres, n=3, cutoff=0.6)
+        candidatos = list(dict.fromkeys(substr + cercanos))
+        if len(candidatos) == 1:
+            return por_nombre[candidatos[0]], []
+        return None, candidatos[:5]
+
+    async def _handle_auditor_seguimiento_detalle_sucursal(
+        self, payload: WhatsAppPayload, conv: Conversacion, meta_client: MetaClient
+    ) -> str:
+        cancel = await self._chequear_cancelacion_auditor_campania(payload, meta_client)
+        if cancel:
+            return cancel
+        context = self._safe_json_loads(conv.ultimo_mensaje)
+        opciones = context.get("sucursales_opciones") or {}
+        sucursal_id, candidatos = self._resolver_una_sucursal(payload.contenido or "", opciones)
+
+        if not sucursal_id:
+            if candidatos:
+                await meta_client.send_text(
+                    payload.telefono, "¿Cuál de estas? " + ", ".join(candidatos)
+                )
+            else:
+                await meta_client.send_text(
+                    payload.telefono, "No la encontré entre las sucursales de esta campaña. Probá de nuevo."
+                )
+            return "auditor_seguimiento_sucursal_no_resuelta"
+
+        await meta_client.send_text(payload.telefono, "Armando la revisión, dame unos segundos…")
+        await self._enviar_revision_sucursal(
+            meta_client,
+            payload.telefono,
+            str(context.get("campania_id")),
+            sucursal_id,
+            str(opciones.get(sucursal_id) or "—"),
+            str(context.get("campania_nombre") or "Tour"),
+            bool(context.get("es_tour", True)),
+        )
+        return await self._mostrar_estado_campania(
+            payload, meta_client, context, str(context.get("campania_id"))
+        )
+
+    async def _handle_auditor_seguimiento_sumando_sucursales(
+        self, payload: WhatsAppPayload, conv: Conversacion, meta_client: MetaClient
+    ) -> str:
+        cancel = await self._chequear_cancelacion_auditor_campania(payload, meta_client)
+        if cancel:
+            return cancel
+        context = self._safe_json_loads(conv.ultimo_mensaje)
+        campania_id = str(context.get("campania_id") or "")
+        ya_estan = set((context.get("sucursales_opciones") or {}).keys())
+
+        sucursales = self.sheets.get_sucursales_activas()
+        por_nombre = {s["nombre"]: s for s in sucursales}
+        nombres = list(por_nombre.keys())
+
+        nuevas: List[Dict[str, Any]] = []
+        repetidas: List[str] = []
+        no_resueltos: List[str] = []
+        for parte in [p.strip() for p in (payload.contenido or "").split(",") if p.strip()]:
+            if parte in por_nombre:
+                candidato = por_nombre[parte]
+            else:
+                substr = [n for n in nombres if parte.lower() in n.lower()]
+                cercanos = difflib.get_close_matches(parte, nombres, n=3, cutoff=0.6)
+                candidatos = list(dict.fromkeys(substr + cercanos))
+                if len(candidatos) != 1:
+                    no_resueltos.append(parte)
+                    continue
+                candidato = por_nombre[candidatos[0]]
+            if candidato["id"] in ya_estan:
+                repetidas.append(candidato["nombre"])
+            elif candidato["id"] not in {n["id"] for n in nuevas}:
+                nuevas.append(candidato)
+
+        if no_resueltos:
+            await meta_client.send_text(
+                payload.telefono,
+                "No pude resolver: " + ", ".join(no_resueltos) + ". Escribilas de nuevo o \"cancelar\".",
+            )
+            return "auditor_seguimiento_sumar_no_resuelto"
+
+        if not nuevas:
+            detalle = f" ({', '.join(repetidas)} ya estaban)" if repetidas else ""
+            await meta_client.send_text(payload.telefono, f"No quedó ninguna sucursal nueva para sumar{detalle}.")
+            return await self._mostrar_estado_campania(payload, meta_client, context, campania_id)
+
+        plazo_dias, vence = self._dias_hasta(context.get("plazo_fecha"))
+        try:
+            resultado = await activar_campania_core(
+                self.sheets.client,
+                meta_client,
+                campania_id,
+                [s["id"] for s in nuevas],
+                plazo_dias,
+            )
+        except CampaniaActivarError as e:
+            logger.error(f"Error sumando sucursales a campania {campania_id}: {e}", exc_info=True)
+            await meta_client.send_text(payload.telefono, "No pude sumarlas. Probá desde el panel web.")
+            return "auditor_seguimiento_sumar_error"
+
+        aviso = f"✅ Sumé {len(nuevas)} sucursal(es): {', '.join(s['nombre'] for s in nuevas)} " \
+                f"({resultado['tareas_creadas']} tareas nuevas). Vencen el {vence}."
+        if repetidas:
+            aviso += f"\n{', '.join(repetidas)} ya estaban, no las dupliqué."
+        await meta_client.send_text(payload.telefono, aviso)
+        return await self._mostrar_estado_campania(payload, meta_client, context, campania_id)
+
+    def _dias_hasta(self, plazo_fecha: Optional[str], fallback_dias: int = 7) -> Tuple[int, str]:
+        """Días que faltan hasta la fecha de corte del tour, para que las sucursales sumadas
+        más tarde venzan el MISMO día que el resto (un tour es un corte, no un plazo
+        personal). Devuelve (dias, fecha_legible).
+
+        `activar_campania_core` recibe días y calcula `hoy + días`, así que hay que hacer
+        la resta acá. Si la fecha ya pasó o no se pudo leer, se cae a `fallback_dias`: darle
+        cero o un plazo negativo a una sucursal recién sumada la dejaría vencida al instante."""
+        hoy = datetime.now(timezone.utc).date()
+        if plazo_fecha:
+            try:
+                fecha = datetime.fromisoformat(str(plazo_fecha)[:10]).date()
+                dias = (fecha - hoy).days
+                if dias >= 1:
+                    return dias, fecha.strftime("%d/%m/%Y")
+            except ValueError:
+                logger.warning(f"plazo_fecha ilegible en el seguimiento: {plazo_fecha!r}")
+        return fallback_dias, (hoy + timedelta(days=fallback_dias)).strftime("%d/%m/%Y")
+
+    async def _armar_puntos_revision(
+        self, campania_id: str, sucursal_id: str
+    ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        """Junta, para una sucursal, cada punto del tour con lo que contestó el encargado
+        (foto + comentario + quién + cuándo). Devuelve (puntos, nombre_del_responsable)."""
+        tareas = [
+            t for t in self.sheets.get_campania_tareas(campania_id)
+            if str(t.get("id_sucursal")) == sucursal_id
+        ]
+        eventos_por_tarea = self.sheets.get_campania_eventos_por_tareas([str(t["id"]) for t in tareas])
+
+        puntos: List[Dict[str, Any]] = []
+        responsable: Optional[str] = None
+        a_descargar: List[Tuple[int, str]] = []
+        for tarea in tareas:
+            responsable = responsable or tarea.get("responsable")
+            accion = tarea.get("campania_acciones") or {}
+            completado = tarea.get("estado") in self.TAREA_ESTADOS_HECHOS
+
+            # El último evento de carga es el que refleja la respuesta vigente (una tarea
+            # reabierta y vuelta a completar tiene más de uno).
+            evento = None
+            for candidato in eventos_por_tarea.get(str(tarea["id"]), []):
+                if candidato.get("tipo") in ("evidencia", "completada"):
+                    evento = candidato
+
+            if completado and tarea.get("evidencia_path"):
+                a_descargar.append((len(puntos), str(tarea["evidencia_path"])))
+
+            # El relleno automático no es una observación del encargado: se descarta acá,
+            # así el PDF y el conteo "N con observación" cuentan solo lo que él escribió.
+            comentario = ((evento or {}).get("comentario") or "").strip()
+            if comentario == COMENTARIO_EVIDENCIA_AUTO:
+                comentario = ""
+
+            puntos.append({
+                "descripcion": accion.get("descripcion") or accion.get("tipo") or "—",
+                "completado": completado,
+                "comentario": comentario or None,
+                "actor_nombre": (evento or {}).get("actor_nombre"),
+                "completado_at": (evento or {}).get("created_at") or tarea.get("updated_at"),
+                "foto_bytes": None,
+            })
+
+        # Las fotos se bajan EN PARALELO, no una por una: esto corre dentro del lock del
+        # teléfono (LOCK_HOLD_TIMEOUT_SECONDS = 90s) y un tour de 8-10 puntos con la red
+        # lenta puede pasarse de ese techo en secuencial, cortándole la conversación a un
+        # encargado que no hizo nada malo. Una foto que falla sale sin imagen, no rompe.
+        if a_descargar:
+            descargas = await asyncio.gather(
+                *[asyncio.to_thread(self.sheets.download_evidencia_bytes, path) for _, path in a_descargar],
+                return_exceptions=True,
+            )
+            for (indice, path), raw in zip(a_descargar, descargas):
+                if isinstance(raw, BaseException):
+                    logger.warning(f"No se pudo bajar la evidencia {path}: {raw}")
+                    continue
+                puntos[indice]["foto_bytes"] = raw
+
+        return puntos, responsable
+
+    async def _enviar_revision_sucursal(
+        self,
+        meta_client: MetaClient,
+        destino: str,
+        campania_id: str,
+        sucursal_id: str,
+        sucursal_nombre: str,
+        tour_nombre: str,
+        es_tour: bool = True,
+    ) -> None:
+        """Arma y manda el PDF con la revisión de una sucursal. Best-effort: se usa tanto
+        en el aviso automático de sucursal terminada como en el pedido manual desde el
+        seguimiento, y en ninguno de los dos casos vale la pena romper el flujo si falla."""
+        try:
+            puntos, responsable = await self._armar_puntos_revision(campania_id, sucursal_id)
+            if not puntos:
+                await meta_client.send_text(destino, f"{sucursal_nombre} no tiene puntos cargados.")
+                return
+
+            pdf_bytes = await asyncio.to_thread(
+                generate_tour_sucursal_pdf, tour_nombre, sucursal_nombre, puntos, responsable, es_tour
+            )
+            path_pdf = await asyncio.to_thread(
+                self.sheets.upload_campania_briefing_pdf, campania_id, pdf_bytes
+            )
+            url = self.sheets.create_signed_ficha_url(path_pdf)
+            if not url:
+                raise RuntimeError("no se pudo firmar la URL de la revisión")
+
+            hechos = sum(1 for p in puntos if p["completado"])
+            observaciones = sum(1 for p in puntos if p["completado"] and (p.get("comentario") or "").strip())
+            filename = f"{_slug_archivo(tour_nombre)}-{_slug_archivo(sucursal_nombre)}.pdf"
+            enviado = await meta_client.send_document(
+                destino,
+                url,
+                filename,
+                caption=f"{sucursal_nombre}: {hechos}/{len(puntos)} puntos · {observaciones} con observación.",
+            )
+            if not enviado:
+                await meta_client.send_text(destino, f"Revisión de {sucursal_nombre} (vence en 24hs):\n{url}")
+        except Exception as e:
+            logger.error(
+                f"Error armando la revisión de {sucursal_nombre} (campania {campania_id}): {e}",
+                exc_info=True,
+            )
+            await meta_client.send_text(destino, f"No pude armar la revisión de {sucursal_nombre}.")
+
+    async def _avisar_si_sucursal_completa(
+        self, meta_client: MetaClient, tarea: Dict[str, Any]
+    ) -> None:
+        """Cuando una sucursal termina TODOS los puntos de un tour, le avisa al auditor que
+        lo lanzó y le manda la revisión completa. Mismas restricciones que el reenvío punto
+        por punto: solo tours, solo si se creó por WhatsApp, y best-effort."""
+        campania = tarea.get("campanias") or {}
+        if campania.get("tipo") != "tour_interno":
+            return
+        destino = str(campania.get("creado_por_telefono") or "").strip()
+        if not destino:
+            return
+        if not self._tiene_ventana_abierta(destino):
+            return
+
+        try:
+            campania_id = str(tarea.get("campania_id") or "")
+            sucursal_id = str(tarea.get("id_sucursal") or "")
+            # Una sola lectura de las tareas de la campaña: sirve para saber si esta
+            # sucursal terminó Y para contar cuántas van en total.
+            todas = self.sheets.get_campania_tareas(campania_id)
+            tareas = [t for t in todas if str(t.get("id_sucursal")) == sucursal_id]
+            if not tareas or any(t.get("estado") not in self.TAREA_ESTADOS_HECHOS for t in tareas):
+                return
+
+            sucursal = self.sheets.get_sucursal(sucursal_id)
+            sucursal_nombre = sucursal.nombre if sucursal else sucursal_id
+            tour_nombre = str(campania.get("nombre") or "Tour")
+
+            grupos = self._agrupar_tareas_por_sucursal(todas)
+            listas = sum(1 for g in grupos if g["completa"])
+            await meta_client.send_text(
+                destino,
+                f"🏁 {sucursal_nombre} terminó los {len(tareas)} puntos de \"{tour_nombre}\".\n"
+                f"Van {listas} de {len(grupos)} sucursales.",
+            )
+            await self._enviar_revision_sucursal(
+                meta_client, destino, campania_id, sucursal_id, sucursal_nombre, tour_nombre
+            )
+        except Exception as e:
+            logger.warning(f"No se pudo avisar que la sucursal completó el tour: {e}")
 
     async def _handle_encargado_respuesta(
         self,

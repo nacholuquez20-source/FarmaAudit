@@ -1030,3 +1030,414 @@ def generate_resumen_sucursales_pdf(resumen: List[Dict[str, Any]]) -> bytes:
     result = buf.getvalue()
     buf.close()
     return result
+
+
+def generate_tour_sucursal_pdf(
+    tour_nombre: str,
+    sucursal_nombre: str,
+    puntos: List[Dict[str, Any]],
+    responsable: Optional[str] = None,
+    es_tour: bool = True,
+) -> bytes:
+    """Revisión de lo que contestó UNA sucursal en un tour: punto por punto, con la foto
+    que mandó el encargado y lo que escribió.
+
+    Es la contracara de `generate_tour_briefing_pdf` (que describe lo que hay que hacer):
+    acá ya están las respuestas. Se genera en dos momentos — cuando la sucursal termina
+    todos sus puntos (aviso automático a la auditora) y cuando ella la pide a mano desde
+    el seguimiento, aunque esté a medio camino.
+
+    Cada punto de `puntos`:
+        descripcion: str
+        completado: bool
+        comentario: str o None      — lo que escribió el encargado junto a la foto
+        actor_nombre: str o None
+        completado_at: str ISO o None
+        foto_bytes: bytes o None
+    """
+    buf = BytesIO()
+    page_w, page_h = A4
+    margin = 1.5 * cm
+    usable_w = page_w - 2 * margin
+
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        rightMargin=margin,
+        leftMargin=margin,
+        topMargin=margin,
+        bottomMargin=margin,
+    )
+
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("H1", parent=styles["Normal"],
+                        fontSize=18, fontName="Helvetica-Bold",
+                        textColor=NAVY, alignment=TA_CENTER, spaceAfter=2)
+    sub = ParagraphStyle("Sub", parent=styles["Normal"],
+                         fontSize=10, textColor=GREY, alignment=TA_CENTER, spaceAfter=8)
+    section = ParagraphStyle("Section", parent=styles["Normal"],
+                             fontSize=11, fontName="Helvetica-Bold",
+                             textColor=NAVY, spaceBefore=12, spaceAfter=4)
+    body = ParagraphStyle("Body", parent=styles["Normal"], fontSize=9, leading=13, textColor=colors.black)
+    label = ParagraphStyle("Label", parent=styles["Normal"], fontSize=8, fontName="Helvetica-Bold", textColor=GREY)
+    small = ParagraphStyle("Small", parent=styles["Normal"], fontSize=8, textColor=GREY)
+
+    completados = [p for p in puntos if p.get("completado")]
+    con_observacion = [p for p in completados if (p.get("comentario") or "").strip()]
+
+    story = []
+    story.append(Paragraph("FarmaAudit", h1))
+    story.append(Paragraph(
+        "Tour de Farmacias — revisión de sucursal" if es_tour
+        else "Campaña — cumplimiento por sucursal",
+        sub,
+    ))
+
+    bar = Table([[""]], colWidths=[usable_w], rowHeights=[4])
+    bar.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), NAVY)]))
+    story.append(bar)
+    story.append(Spacer(1, 10))
+
+    col1 = 4.2 * cm
+    col2 = usable_w - col1
+    info_table = Table(
+        [
+            ["Tour" if es_tour else "Campaña", tour_nombre],
+            ["Sucursal", sucursal_nombre],
+            ["Responsable", responsable or "—"],
+            ["Generado", datetime.now().strftime("%d/%m/%Y %H:%M")],
+            ["Avance", f"{len(completados)} de {len(puntos)} puntos"],
+            ["Puntos con observación", str(len(con_observacion))],
+        ],
+        colWidths=[col1, col2],
+    )
+    info_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, -1), LIGHT_BLUE),
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.5, LINE),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    story.append(info_table)
+
+    if con_observacion:
+        story.append(Spacer(1, 8))
+        story.append(Paragraph("Puntos con observación del encargado", section))
+        obs_rows = [[Paragraph(f"<b>{h}</b>", body) for h in ["Punto", "Observación"]]]
+        for punto in con_observacion:
+            obs_rows.append([
+                Paragraph(str(punto.get("descripcion") or "—"), body),
+                Paragraph(str(punto.get("comentario") or ""), body),
+            ])
+        obs_table = Table(obs_rows, colWidths=[usable_w * 0.38, usable_w * 0.62], repeatRows=1)
+        obs_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), AMBER),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.5, LINE),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [LIGHT_AMB, colors.white]),
+        ]))
+        story.append(obs_table)
+
+    story.append(Paragraph(f"Detalle punto por punto ({len(puntos)})", section))
+
+    max_img_w = usable_w * 0.55
+    max_img_h = 8 * cm
+
+    for idx, punto in enumerate(puntos, start=1):
+        completado = bool(punto.get("completado"))
+        sc = GREEN if completado else AMBER
+        bg = LIGHT_GRN if completado else LIGHT_AMB
+        estado_txt = "Registrado" if completado else "Pendiente"
+
+        item_flowables = []
+
+        hdr = Table(
+            [[Paragraph(
+                f'<font color="white"><b>#{idx} — {punto.get("descripcion") or "—"}</b>  ·  {estado_txt}</font>',
+                ParagraphStyle("PH", parent=styles["Normal"], fontSize=9,
+                               fontName="Helvetica-Bold", textColor=colors.white),
+            )]],
+            colWidths=[usable_w],
+        )
+        hdr.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), sc),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ]))
+        item_flowables.append(hdr)
+
+        cuerpo = []
+        if completado:
+            quien = punto.get("actor_nombre") or "Encargado"
+            cuando = _fmt_fecha(punto.get("completado_at"))
+            cuerpo.append(Paragraph(f"{quien} · {cuando}", small))
+            comentario = (punto.get("comentario") or "").strip()
+            if comentario:
+                cuerpo.append(Spacer(1, 4))
+                cuerpo.append(Paragraph("OBSERVACIÓN", label))
+                cuerpo.append(Paragraph(comentario, body))
+            img = _rl_image(punto["foto_bytes"], max_img_w, max_img_h) if punto.get("foto_bytes") else None
+            if img:
+                cuerpo.append(Spacer(1, 6))
+                cuerpo.append(img)
+        else:
+            cuerpo.append(Paragraph("Todavía sin registrar.", body))
+
+        cuerpo_table = Table([[cuerpo]], colWidths=[usable_w])
+        cuerpo_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), bg),
+            ("TOPPADDING", (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ]))
+        item_flowables.append(cuerpo_table)
+        item_flowables.append(Spacer(1, 10))
+
+        story.append(KeepTogether(item_flowables))
+
+    doc.build(story)
+    result = buf.getvalue()
+    buf.close()
+    return result
+
+
+def generate_tour_briefing_pdf(
+    nombre: str,
+    acciones: List[Dict[str, Any]],
+    sucursal_nombres: List[str],
+    plazo_dias: int,
+    auditor_nombre: Optional[str] = None,
+    referencia_bytes: Optional[Dict[str, bytes]] = None,
+    tipo: str = "tour_interno",
+    marca_nombre: Optional[str] = None,
+) -> bytes:
+    """Instructivo del tour/campaña recién lanzada, para que la auditora lo reenvíe
+    a las sucursales por WhatsApp.
+
+    A diferencia del resto de los generadores de este módulo, este PDF se arma ANTES
+    de que exista un solo dato de cumplimiento: no reporta lo que pasó, describe lo
+    que hay que hacer. Cada punto sale con su descripción y su foto de ejemplo (la
+    misma `imagen_referencia_path` que el bot le manda al encargado como "Así debería
+    quedar"), en el orden en que la auditora los cargó por chat.
+
+    `acciones`: [{descripcion, tipo, imagen_referencia_path}] — el shape que arma el
+    flujo conversacional (`_handle_auditor_campania_*` en router.py).
+    `referencia_bytes`: {imagen_referencia_path: bytes} ya descargados de Storage;
+    los paths que falten simplemente salen sin foto.
+    """
+    es_tour = tipo == "tour_interno"
+    referencia_bytes = referencia_bytes or {}
+
+    buf = BytesIO()
+    page_w, page_h = A4
+    margin = 1.5 * cm
+    usable_w = page_w - 2 * margin
+
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        rightMargin=margin,
+        leftMargin=margin,
+        topMargin=margin,
+        bottomMargin=margin,
+    )
+
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("H1", parent=styles["Normal"],
+                        fontSize=18, fontName="Helvetica-Bold",
+                        textColor=NAVY, alignment=TA_CENTER, spaceAfter=2)
+    sub = ParagraphStyle("Sub", parent=styles["Normal"],
+                         fontSize=10, textColor=GREY, alignment=TA_CENTER, spaceAfter=8)
+    section = ParagraphStyle("Section", parent=styles["Normal"],
+                             fontSize=11, fontName="Helvetica-Bold",
+                             textColor=NAVY, spaceBefore=12, spaceAfter=4)
+    body = ParagraphStyle("Body", parent=styles["Normal"], fontSize=9, leading=13, textColor=colors.black)
+    small = ParagraphStyle("Small", parent=styles["Normal"], fontSize=8, textColor=GREY)
+    caption = ParagraphStyle("Caption", parent=styles["Normal"], fontSize=8, alignment=TA_CENTER, textColor=GREY)
+
+    story = []
+    story.append(Paragraph("FarmaAudit", h1))
+    story.append(Paragraph(
+        "Tour de Farmacias — guía de recorrido" if es_tour else "Campaña — guía de acciones",
+        sub,
+    ))
+
+    bar = Table([[""]], colWidths=[usable_w], rowHeights=[4])
+    bar.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), NAVY)]))
+    story.append(bar)
+    story.append(Spacer(1, 10))
+
+    col1 = 4.2 * cm
+    col2 = usable_w - col1
+    info_rows = [
+        ["Tour" if es_tour else "Campaña", nombre],
+    ]
+    if not es_tour and marca_nombre:
+        info_rows.append(["Marca", marca_nombre])
+    info_rows += [
+        ["Responsable del control", auditor_nombre or "—"],
+        ["Generado", datetime.now().strftime("%d/%m/%Y %H:%M")],
+        ["Plazo para completarlo", f"{plazo_dias} días"],
+        ["Puntos a registrar" if es_tour else "Acciones", str(len(acciones))],
+        ["Sucursales alcanzadas", str(len(sucursal_nombres))],
+    ]
+    info_table = Table(info_rows, colWidths=[col1, col2])
+    info_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, -1), LIGHT_BLUE),
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.5, LINE),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    story.append(info_table)
+    story.append(Spacer(1, 12))
+
+    # ── Cómo se completa ───────────────────────────────────────────────────────
+    story.append(Paragraph("Cómo completarlo", section))
+    pasos = (
+        [
+            "1. Escribile <b>\"hola\"</b> al bot de FarmaAudit desde el WhatsApp de la sucursal.",
+            "2. Elegí el tour en la lista de tareas pendientes y tocá cada punto.",
+            "3. Sacá la foto del sector tal como está en ese momento (sin acomodar antes de la foto).",
+            "4. Si encontrás algo para reportar, <b>escribilo junto con la foto</b> — ese texto queda como observación.",
+        ]
+        if es_tour else
+        [
+            "1. Escribile <b>\"hola\"</b> al bot de FarmaAudit desde el WhatsApp de la sucursal.",
+            "2. Elegí la campaña en la lista de tareas pendientes y tocá cada acción.",
+            "3. Marcá <b>Completada</b> y mandá la foto, o <b>Falta insumo</b> si no podés hacerla.",
+            "4. Podés escribir un comentario junto con la foto si hace falta aclarar algo.",
+        ]
+    )
+    pasos_table = Table([[Paragraph(p, body)] for p in pasos], colWidths=[usable_w])
+    pasos_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), LIGHT_BLUE),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("BOX", (0, 0), (-1, -1), 0.5, LINE),
+    ]))
+    story.append(pasos_table)
+    story.append(Spacer(1, 6))
+
+    # ── Detalle punto por punto ────────────────────────────────────────────────
+    story.append(Paragraph(
+        f"Puntos a registrar ({len(acciones)})" if es_tour else f"Acciones ({len(acciones)})",
+        section,
+    ))
+
+    max_img_w = usable_w * 0.55
+    max_img_h = 7 * cm
+
+    if not acciones:
+        story.append(Paragraph("No se cargó ningún punto.", body))
+
+    for idx, accion in enumerate(acciones, start=1):
+        descripcion = str(accion.get("descripcion") or accion.get("tipo") or "—")
+
+        # Mismo criterio que el resto del módulo: cada ítem va con KeepTogether para
+        # que ReportLab no corte el encabezado de su foto de ejemplo en el salto de página.
+        item_flowables = []
+
+        hdr = Table(
+            [[Paragraph(
+                f'<font color="white"><b>#{idx} — {descripcion}</b></font>',
+                ParagraphStyle("PH", parent=styles["Normal"], fontSize=9,
+                               fontName="Helvetica-Bold", textColor=colors.white),
+            )]],
+            colWidths=[usable_w],
+        )
+        hdr.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), NAVY),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ]))
+        item_flowables.append(hdr)
+
+        cuerpo = [Paragraph(
+            "Registrá una foto de este punto y sumá un comentario si hay algo para reportar."
+            if es_tour else
+            "Registrá una foto que muestre la acción hecha.",
+            body,
+        )]
+
+        raw = referencia_bytes.get(accion.get("imagen_referencia_path") or "")
+        if raw:
+            img = _rl_image(raw, max_img_w, max_img_h)
+            if img:
+                cuerpo.append(Spacer(1, 6))
+                cuerpo.append(img)
+                cuerpo.append(Spacer(1, 2))
+                cuerpo.append(Paragraph("Foto de ejemplo — así debería quedar", caption))
+
+        cuerpo_table = Table([[cuerpo]], colWidths=[usable_w])
+        cuerpo_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
+            ("TOPPADDING", (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ("BOX", (0, 0), (-1, -1), 0.5, LINE),
+        ]))
+        item_flowables.append(cuerpo_table)
+        item_flowables.append(Spacer(1, 10))
+
+        story.append(KeepTogether(item_flowables))
+
+    # ── Planilla de control (para imprimir y recorrer con el papel en la mano) ──
+    if acciones:
+        story.append(PageBreak())
+        story.append(Paragraph("Planilla de control", section))
+        story.append(Paragraph(
+            "Opcional: imprimila y usala durante el recorrido. La carga oficial es la del WhatsApp.",
+            small,
+        ))
+        story.append(Spacer(1, 4))
+
+        plan_rows = [[Paragraph(f"<b>{h}</b>", body) for h in ["#", "Punto", "OK", "Observaciones"]]]
+        for idx, accion in enumerate(acciones, start=1):
+            plan_rows.append([
+                Paragraph(str(idx), body),
+                Paragraph(str(accion.get("descripcion") or accion.get("tipo") or "—"), body),
+                "",
+                "",
+            ])
+        plan_table = Table(
+            plan_rows,
+            colWidths=[usable_w * 0.07, usable_w * 0.43, usable_w * 0.1, usable_w * 0.4],
+            rowHeights=[None] + [1.1 * cm] * len(acciones),
+            repeatRows=1,
+        )
+        plan_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.5, LINE),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ]))
+        story.append(plan_table)
+
+    # ── Sucursales alcanzadas ──────────────────────────────────────────────────
+    story.append(Paragraph(f"Sucursales alcanzadas ({len(sucursal_nombres)})", section))
+    story.append(Paragraph(", ".join(sucursal_nombres) if sucursal_nombres else "—", body))
+
+    doc.build(story)
+    result = buf.getvalue()
+    buf.close()
+    return result

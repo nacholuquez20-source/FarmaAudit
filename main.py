@@ -1463,6 +1463,14 @@ AUDITOR_CAMPANIA_ESTADOS_FLUJO = [
     ConversationState.AUDITOR_CAMPANIA_ALCANCE,
     ConversationState.AUDITOR_CAMPANIA_PLAZO,
     ConversationState.AUDITOR_CAMPANIA_CONFIRMANDO,
+    # El menú de entrada también cuenta: un auditor que lo abrió y no eligió nada queda
+    # en AUDITOR_ELIGIENDO_MODULO para siempre (faltante señalado en PLAN_DEBUG_BOT.md).
+    ConversationState.AUDITOR_ELIGIENDO_MODULO,
+    # Seguimiento (Fase 10): mismo riesgo, misma salida.
+    ConversationState.AUDITOR_SEGUIMIENTO_ELIGIENDO,
+    ConversationState.AUDITOR_SEGUIMIENTO_ACCION,
+    ConversationState.AUDITOR_SEGUIMIENTO_DETALLE_SUCURSAL,
+    ConversationState.AUDITOR_SEGUIMIENTO_SUMANDO_SUCURSALES,
 ]
 
 

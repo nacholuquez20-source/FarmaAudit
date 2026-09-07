@@ -1465,7 +1465,10 @@ class SupabaseManager:
         try:
             response = (
                 self.client.table("campania_tareas")
-                .select("*, campania_acciones(*), campanias(nombre, estado, tipo)")
+                # creado_por_telefono: para reenviarle al auditor que lanzó el tour cada
+                # punto que un encargado completa, apenas llega (ver
+                # _handle_campania_esperando_evidencia en router.py).
+                .select("*, campania_acciones(*), campanias(nombre, estado, tipo, creado_por_telefono)")
                 .eq("id", tarea_id)
                 .execute()
             )
@@ -1550,6 +1553,98 @@ class SupabaseManager:
         except Exception as e:
             logger.warning(f"Failed to create signed campania referencia URL for {path}: {e}")
             return ""
+
+    def get_campanias_activas_por_telefono(self, telefono: str) -> List[Dict[str, Any]]:
+        """Campanias/tours lanzados por este auditor desde WhatsApp y todavia en curso,
+        para el menu de seguimiento (Fase 10). Se filtra por `creado_por_telefono` y no
+        por `creado_por`: el bot identifica al auditor por telefono, nunca por auth.uid()
+        (mismo criterio que create_campania_bot)."""
+        try:
+            response = (
+                self.client.table("campanias")
+                .select("id, nombre, tipo, estado, created_at")
+                .eq("creado_por_telefono", telefono)
+                .in_("estado", ["Activa", "En_seguimiento"])
+                .order("created_at", desc=True)
+                .execute()
+            )
+            return response.data or []
+        except Exception as e:
+            logger.error(f"Failed to get campanias activas de {telefono}: {e}")
+            return []
+
+    def get_campania_by_id(self, campania_id: str) -> Optional[Dict[str, Any]]:
+        """Una campania/tour puntual (seguimiento por WhatsApp)."""
+        try:
+            response = self.client.table("campanias").select("*").eq("id", campania_id).execute()
+            data = response.data or []
+            return data[0] if data else None
+        except Exception as e:
+            logger.error(f"Failed to get campania {campania_id}: {e}")
+            return None
+
+    def get_campania_tareas(self, campania_id: str) -> List[Dict[str, Any]]:
+        """TODAS las tareas de una campania (no solo las pendientes de una sucursal, como
+        get_campania_tareas_pendientes_sucursal), con su accion embebida. Es la base del
+        seguimiento: quien ya termino, quien falta y que contesto cada uno.
+
+        El nombre de la sucursal NO se embebe por PostgREST a proposito — se resuelve en
+        Python contra get_sucursales_activas(), mismo criterio que el paso de alcance, para
+        no depender de como este declarada la FK id_sucursal -> sucursales."""
+        try:
+            response = (
+                self.client.table("campania_tareas")
+                .select("*, campania_acciones(*)")
+                .eq("campania_id", campania_id)
+                .order("created_at")
+                .execute()
+            )
+            return response.data or []
+        except Exception as e:
+            logger.error(f"Failed to get tareas de campania {campania_id}: {e}")
+            return []
+
+    def get_campania_eventos_por_tareas(self, tarea_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+        """Eventos de un conjunto de tareas, agrupados por tarea_id. Se usa para armar la
+        revision de una sucursal (que escribio el encargado en cada punto)."""
+        if not tarea_ids:
+            return {}
+        try:
+            response = (
+                self.client.table("campania_eventos")
+                .select("*")
+                .in_("tarea_id", tarea_ids)
+                .order("created_at")
+                .execute()
+            )
+            agrupados: Dict[str, List[Dict[str, Any]]] = {}
+            for evento in response.data or []:
+                agrupados.setdefault(str(evento.get("tarea_id")), []).append(evento)
+            return agrupados
+        except Exception as e:
+            logger.error(f"Failed to get eventos de campania: {e}")
+            return {}
+
+    def download_evidencia_bytes(self, path: str) -> Optional[bytes]:
+        """Baja un objeto del bucket privado desvio-evidencias. Se usa para embeber las
+        fotos de ejemplo de cada punto dentro del PDF del tour (el PDF necesita los
+        bytes, no una URL firmada como el bot)."""
+        try:
+            return self.client.storage.from_("desvio-evidencias").download(path)
+        except Exception as e:
+            logger.warning(f"Failed to download evidencia {path}: {e}")
+            return None
+
+    def upload_campania_briefing_pdf(self, campania_id: str, content: bytes) -> str:
+        """Sube el instructivo en PDF de una campania/tour recien lanzada, para poder
+        firmarlo y mandarselo al auditor por WhatsApp (Meta necesita una URL, no bytes)."""
+        path = f"campania-briefings/{campania_id}/{uuid.uuid4().hex}.pdf"
+        self.client.storage.from_("desvio-evidencias").upload(
+            path,
+            content,
+            {"content-type": "application/pdf", "upsert": "false"},
+        )
+        return path
 
     def get_marcas_activas(self) -> List[Dict[str, Any]]:
         """Catalogo de marcas para el paso 'elegir marca' del flujo de creacion de

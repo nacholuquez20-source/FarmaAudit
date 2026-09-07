@@ -76,6 +76,17 @@
 > `check_auditor_campania_timeout` (24h, reusa `conversaciones.timestamp`, sin tabla nueva). Ambos validados
 > con smoke tests nuevos, incluyendo uno que ejercita `activar_campania_core` contra un fake client con la
 > forma real de supabase-py (no solo un stub). **Fases 6-8 quedan 100% completas, sin deuda pendiente.**
+>
+> **v10 — 2026-09-06 (pedido del dueño, Fase 9).** El Tour dejó de ser un checklist cerrado. El dueño pidió que
+> la auditora **arme cada punto libremente desde el chat** (texto + foto de ejemplo), que al terminar reciba
+> **un PDF detallado y ordenado listo para reenviar a las sucursales**, y que **cada punto que completa un
+> encargado le llegue al toque**. Los tres eran trabajo nuevo: el tour por WhatsApp seedeaba las 6 acciones
+> fijas de §3.1 y saltaba directo a "alcance" (el loop de carga de acciones existía, pero era exclusivo de
+> campañas comerciales y obligaba a elegir de una lista cerrada de 5 tipos); no había ningún generador de PDF
+> de campañas/tour; y la evidencia del encargado quedaba solo en la base y el tablero web. Ver **Fase 9** en
+> §7. Decisiones del dueño en esta sesión: checklist clásico degradado a **atajo opcional** (no contenido
+> fijo), PDF **solo a la auditora** (ella lo reenvía; el bot no dispara un PDF a 23 sucursales por su cuenta),
+> y reenvío **punto por punto, en el momento**.
 
 ---
 
@@ -684,3 +695,169 @@ flujo, alcance por nombre con ambigüedad y no-encontrado) — todos pasan sin D
   de sucursales resueltas — así se cubre en un solo paso tanto el refuerzo de UX de v5 ("mostrar sucursales
   explícitas antes de lanzar, no solo un conteo") como la confirmación del matching difuso del paso "elegir
   por nombre", en vez de agregar un paso intermedio extra solo para ese caso.
+
+**Fase 9 — Tour libre + PDF + devolución en vivo (v10)** ✅ **implementado 2026-09-06**. Tres cambios sobre el
+Tour ya existente, sin tablas ni columnas nuevas (los puntos libres se guardan con `campania_acciones.tipo =
+'custom'`, valor que el CHECK ya aceptaba desde §2.1; el frontend ya prioriza `descripcion` sobre `tipo` en
+`CampaniaDetail.tsx:109` y `MisCampaniaDetail.tsx:187`, así que se ven bien sin tocar nada):
+
+1. **Puntos libres** (`router.py`). `_continuar_tras_tipo` ya no seedea `TOUR_ACCIONES_DEFAULT`: el tour entra
+   al loop de carga de acciones igual que una campaña comercial, pero sin el paso "tipo" (los puntos de la
+   auditora son texto libre, `custom`) — helper nuevo `_pedir_punto_tour`, substep nuevo `tour_base`. El
+   checklist de 6 ítems de §3.1 **sobrevive como atajo**: un `quick_reply` "✏️ Desde cero" / "📋 Usar
+   checklist" al empezar, y si elige el checklist lo precarga y le deja sumar los suyos encima. Guarda nueva:
+   cerrar la carga con **cero** puntos ya no avanza a "alcance" (antes reventaba después, en
+   `CampaniaSinAccionesError`, perdiendo todo el borrador).
+2. **PDF del recorrido** (`audit_pdf_generator.generate_tour_briefing_pdf` + `_enviar_briefing_pdf`). Al
+   confirmar, la auditora recibe por WhatsApp un instructivo con un bloque por punto (descripción + foto de
+   ejemplo embebida), los pasos de cómo completarlo, una planilla imprimible y las sucursales alcanzadas —
+   para que ella lo reenvíe. **Best-effort**: la campaña ya quedó creada y activada antes, así que un fallo
+   del PDF se avisa pero no se propaga (mismo criterio que el fan-out de `campanias_service`); si Meta rechaza
+   el adjunto, cae a mandar la URL firmada. Corre en `asyncio.to_thread` — reportlab y PIL son sincrónicos y
+   CPU-bound, y en el event loop congelan a **todos** los usuarios del bot mientras dura (ver
+   `PLAN_DEBUG_BOT.md`, sección PENDIENTE: es el primer call site del repo que no comete ese error).
+3. **Reenvío en vivo** (`_reenviar_punto_a_auditor`). Cada foto que manda un encargado se le reenvía al
+   instante a `campanias.creado_por_telefono` con sucursal + punto + quién + comentario. **Solo para
+   `tour_interno`**: en una campaña comercial el mismo comportamiento inundaría a la auditora (N marcas × N
+   acciones × N sucursales) y para ese caso el tablero web ya alcanza. Tours creados desde el wizard web no
+   tienen teléfono de origen y siguen como hasta ahora, por tablero.
+
+**Consideración de volumen (anotada, no resuelta)**: un tour de 6 puntos × 23 sucursales son ~138 mensajes al
+teléfono de la auditora. Es exactamente lo que el dueño pidió ("que se vaya enviando"), pero si en la práctica
+resulta ruidoso, la variante natural es reenviar al instante **solo los puntos con comentario** (o sea, los
+que reportan un problema) y dejar el resto para el tablero — es un `if comentario:` en
+`_reenviar_punto_a_auditor`, no un rediseño.
+
+Validado: `python -m py_compile` limpio; smoke test manual con 4 casos (tour armado punto por punto con foto
+de ejemplo + PDF generado y adjuntado, checklist como atajo editable 6+1, guarda de tour sin puntos, y reenvío
+que dispara para tour pero no para campaña comercial ni para tour creado desde la web). El caso del PDF
+verifica que la foto de ejemplo quede **realmente** embebida (`/DCTDecode` presente en el PDF), no que
+`_rl_image` haya fallado en silencio y seguido de largo.
+
+**Fase 10 — Seguimiento del tour desde el chat (v10)** ✅ **implementado 2026-09-06**. Con la Fase 9 la
+auditora podía *lanzar* un tour por WhatsApp pero no *seguirlo*: para saber quién había contestado tenía que
+entrar al panel web. Cierra ese hueco, sin tablas ni columnas nuevas.
+
+**Menú de entrada, rediseñado**: `send_quick_reply` admite 3 botones y ni uno más (`meta_client.py` los trunca
+en silencio), así que entrar "Seguimiento" obligaba a sacar algo. Quedó `🔍 Auditar` / `📊 Seguimiento` /
+`➕ Crear`: "Campaña"/"Tour" se fusionaron en "Crear", que cae en `AUDITOR_CAMPANIA_ELIGIENDO_TIPO` — un estado
+que **ya existía** y hasta ahora solo era alcanzable por el trigger de texto ambiguo `"campaña"`. El criterio:
+se paga un tap extra en la ruta esporádica (crear una campaña, que la propia spec describe como esporádica en
+§Módulo 4) para que la ruta diaria (auditar) y la nueva de consulta queden a un tap. Los ids viejos
+(`menu_campania`/`menu_tour`) se siguen aceptando: un celular puede tener el menú anterior ya entregado en
+pantalla al momento del deploy. Trigger de texto nuevo: `"seguimiento"`/`"estado"`/`"avance"`.
+
+**4 estados nuevos** `AUDITOR_SEGUIMIENTO_*` (`models.py`, cableados en el dispatcher de `router.py` y sumados
+al job `check_auditor_campania_timeout` de `main.py`):
+
+1. `AUDITOR_SEGUIMIENTO_ELIGIENDO` — cuál tour/campaña, salteado cuando hay una sola en curso.
+2. `AUDITOR_SEGUIMIENTO_ACCION` — el tablero: `✅ Listas (N)` con los nombres y `⏳ Pendientes (N)` con el
+   avance de cada una (`Norte — 1/2`). Va como **texto** (tope 4096) y no dentro del `quick_reply` (tope 1024
+   que Meta trunca callado): con ~23 sucursales listadas se pasa, y lo primero que se perdería sería la lista.
+3. `AUDITOR_SEGUIMIENTO_DETALLE_SUCURSAL` — la revisión de una sucursal como PDF
+   (`generate_tour_sucursal_pdf`): resumen de puntos con observación arriba, y después cada punto con su foto,
+   su comentario, quién y cuándo. Lista de Meta si son ≤10 sucursales, matching difuso por nombre si son más.
+4. `AUDITOR_SEGUIMIENTO_SUMANDO_SUCURSALES` — sumar sucursales a un tour ya lanzado, reusando
+   `activar_campania_core` con **solo los ids nuevos**; las que ya estaban se detectan y se avisan en vez de
+   duplicarles las tareas. **Deliberadamente no se implementó sacar una sucursal**: borrar tareas de un tour en
+   curso destruye evidencia ya cargada, y no hay un caso de uso pedido que lo justifique.
+
+**Aviso automático de sucursal terminada** (`_avisar_si_sucursal_completa`): cuando la última tarea de una
+sucursal pasa a `Completada`, la auditora recibe `🏁 {sucursal} terminó los N puntos` + `Van X de Y sucursales`
++ el PDF de revisión. Mismas restricciones que el reenvío punto por punto de la Fase 9 (solo `tour_interno`,
+solo si `creado_por_telefono` está seteado, best-effort). Corre **después** de `_continue_campania_flow`: el
+encargado recibe su próxima tarea primero, el PDF de cierre no le agrega espera.
+
+Validado: `python -m py_compile` limpio; el smoke test de la Fase 9 pasó a 8 casos, los 4 nuevos cubren el
+menú (incluida la compatibilidad con el menú viejo y el tope de 3 botones), listas/pendientes + revisión en
+PDF con la foto realmente embebida, sumar sucursales sin duplicar, y el aviso de cierre disparando solo cuando
+**todos** los puntos están hechos.
+
+### Auditoría de las Fases 9-10 (2026-09-06) y correcciones aplicadas
+
+Revisión por especialistas independientes, mismo criterio que la auditoría de 4 agentes de la v5. Dos
+lentes completaron (Meta/WhatsApp y operaciones de farmacia); las de backend/concurrencia y UX conversacional
+se cayeron por un problema de infraestructura del entorno de agentes, **no llegaron a correr** — quedan
+pendientes y sus temas (bloqueo del event loop, idempotencia, callejones sin salida) están cubiertos solo
+parcialmente por lo de abajo. **9 correcciones aplicadas**, todas con caso de smoke test propio (13 casos):
+
+1. **Ventana de 24h de Meta (bloqueante, hallado por las dos lentes).** `_reenviar_punto_a_auditor` y
+   `_avisar_si_sucursal_completa` los dispara el mensaje de un **encargado**, no de la auditora — así que fuera
+   de la ventana de 24h Meta rechaza el envío y solo quedaba un warning en el log. La auditora leía el silencio
+   como "no contestó nadie", que es peor que no tener la función. Se agregó `_tiene_ventana_abierta()`, que reusa
+   `identity.ventana_abierta()` — el helper ya existía y `informes_respuesta.py:278` ya lo usaba para este
+   mismo destinatario. Solo se saltea el envío cuando se sabe **positivamente** que está cerrada: si el usuario
+   no resuelve o la consulta falla, se intenta igual (el peor caso de intentar es un log; el de no intentar es
+   perder un aviso real). **Pendiente**: no hay template UTILITY para recuperar los avisos perdidos fuera de
+   ventana; hoy la auditora los ve entrando a 📊 Seguimiento.
+2. **Plazo de las sucursales sumadas (bloqueante).** `int(context.get("plazo_dias") or 14)` — pero el contexto
+   del seguimiento **nunca** setea `plazo_dias`, así que el `or 14` no era un default defensivo: era el único
+   valor posible. Una sucursal sumada a un tour de 5 días recibía 14 (el tour no cerraba nunca); en uno de 30,
+   recibía 14 (más apretado que el resto). Ahora hereda el `plazo_fecha` real del tour vía `_dias_hasta()`, con
+   fallback a 7 días si ya venció, y el bot informa la fecha de vencimiento.
+3. **Cadena de frío omitible en silencio (bloqueante de negocio).** Al sacar el checklist fijo, un tour armado
+   desde cero puede no incluir cadena de frío — que es el único punto de **compliance regulatorio** del set, no
+   estético. La degradación era silenciosa y progresiva. Ahora, al cerrar la carga de puntos, si ninguna
+   descripción matchea `FRIO_KEYWORDS` el bot pregunta **una vez**; "No aplica" es respuesta válida (hay
+   sucursales sin refrigerados). Mismo patrón de guarda que el de "cero puntos".
+4. **El PDF de revisión rotulaba "Tour de Farmacias" a campañas comerciales.** El seguimiento lista tours y
+   campañas juntas, y `generate_tour_sucursal_pdf` hardcodeaba el subtítulo. Un reporte de cumplimiento por
+   sucursal con fotos —justo el artefacto que pide un laboratorio— salía etiquetado con el nombre del módulo
+   interno. Ahora ramifica por `es_tour`.
+5. **El comentario automático contaba como observación.** Cuando el encargado manda la foto sin escribir nada
+   se guarda `"Foto de evidencia enviada por WhatsApp."`; ese relleno hacía que el "N puntos con observación"
+   del PDF y del caption contara todos los puntos. Se extrajo a `COMENTARIO_EVIDENCIA_AUTO` y se descarta al
+   armar la revisión. **Además desbloquea** la mitigación de volumen anotada en la Fase 9 (`if comentario:`
+   para reenviar solo los puntos con problema), que con el placeholder no habría filtrado nada.
+6. **Descargas de fotos secuenciales dentro del lock del teléfono.** `_armar_puntos_revision` y
+   `_enviar_briefing_pdf` bajaban una foto por vez; con 8-10 puntos y red lenta eso se acerca al
+   `LOCK_HOLD_TIMEOUT_SECONDS` de 90s, que le cortaría la conversación a un encargado que no hizo nada malo.
+   Ahora van con `asyncio.gather`, y una foto que falla sale sin imagen en vez de romper el PDF.
+7. **El resumen de confirmación podía truncarse perdiendo justo las sucursales.** Los puntos son texto libre sin
+   tope de cantidad; con ~20 el mensaje se pasaba de 4096 y `send_text` trunca por la cola — o sea, se perdía la
+   línea de sucursales, el dato de mayor blast radius, que era lo que el orden anterior decía proteger. Se movió
+   el alcance ARRIBA y se acotó el listado de puntos (20 máx., descripciones a 90 caracteres).
+8. **`campanias[:10]` cortaba sin aviso ni ruta alternativa.** Con 11+ campañas en curso, las que sobraban
+   quedaban fuera de la lista **y** de `campanias_opciones`, o sea inalcanzables. Ahora se avisa; el caso de
+   sucursales ya degradaba bien a texto libre.
+9. **Menores de robustez**: se excluyen del list message los grupos con `id_sucursal` vacío (una fila con id ""
+   hace que Meta rechace el mensaje **entero**); el caption del reenvío recorta solo el comentario y no el
+   mensaje completo; `_avisar_si_sucursal_completa` dejó de consultar `get_campania_tareas` dos veces.
+10. **Botón "↩️ Borrar último"** en el loop de carga (hallazgo de UX de la lente de operaciones): un typo en un
+    punto se replica a las 23 sucursales y queda en el PDF que la auditora reenvía. No hay edición, pero
+    deshacer lo último cubre el caso real y es un `pop()` pre-lanzamiento, sin tocar evidencia.
+
+**Verificado y sin cambios**: los 7 ids de botón nuevos no colisionan con ningún trigger de texto del
+dispatcher (la clase de bug de PLAN_DEBUG_BOT §1); los títulos de botón entran en el tope de 20 contando los
+emojis como 2 unidades UTF-16 (el peor caso del contador de Meta); `send_document` con URL firmada de Supabase
+funciona porque Meta descarga y cachea el archivo al enviarlo, así que el vencimiento a 24h no rompe el adjunto.
+
+**Hallazgos aceptados y NO corregidos**, por orden de importancia:
+- **El plazo del tour es decorativo**: ningún job de `main.py` vence ni recuerda tareas de campaña (los de
+  vencimiento son todos de `gestion`). Una sucursal que ignora el tour no recibe nada. Con el reenvío en vivo
+  esto se vuelve más visible, porque el silencio de una sucursal ahora se lee como un fallo del sistema.
+- **`PhotoValidator` no se aplica en el camino de campaña/tour** (sí en la auditoría de la auditora): una foto
+  borrosa o de 200×200 se acepta como evidencia. Es el canal donde el evaluado saca su propia foto — el que más
+  lo necesitaría. Es el cambio de mejor relación esfuerzo/valor que queda pendiente.
+- **Nada impide reusar una foto vieja**: no se lee EXIF ni se hashean los bytes, así que la foto de septiembre
+  puede ser la de agosto. Limita el valor probatorio del PDF ante una discusión con una sucursal.
+- **El aviso de cierre no es idempotente**: una tarea reabierta y recompletada dispara otro aviso y sube otro
+  PDF, sin versión visible.
+- **No se puede sacar una sucursal de un tour**: una sucursal cerrada por refacción queda en "⏳ Pendientes"
+  para siempre y el tour nunca llega a 23/23. La salida sugerida es un estado `Anulada` excluido del conteo, no
+  borrar tareas.
+- **Los puntos libres quedan todos como `tipo='custom'`**: se puede comparar entre sucursales de un mismo tour,
+  pero no una sucursal contra sí misma mes a mes. Mitigación sugerida sin schema nuevo: un atajo "repetir el
+  tour anterior" que copie las `campania_acciones` del último, para que las descripciones se estabilicen por
+  costumbre.
+- **Volumen**: sigue en pie lo anotado en la Fase 9 (~184 mensajes entre reenvíos, avisos y PDFs). La
+  recomendación de las dos lentes coincide: preguntarle a la auditora al lanzar si quiere cada foto o solo las
+  que reporten un problema, con "solo problemas" por defecto. El punto 5 de arriba es el prerequisito técnico.
+- **El trigger de texto `"estado"`/`"avance"`/`"seguimiento"` puede secuestrar un flujo en curso** si la
+  auditora lo escribe como nombre de tour o descripción de punto: el dispatcher chequea triggers ANTES de rutear
+  por estado. Es la misma clase de bug ya documentada en PLAN_DEBUG_BOT (texto libre secuestrado), ensanchada
+  por estos tres términos nuevos. Probabilidad baja, consecuencia total (se pierde el borrador).
+- **El digest del encargado sigue truncando a `tareas[:9]`**: antes el tour tenía techo de 6 puntos, ahora el
+  texto libre no tiene límite. Se auto-recupera tanda a tanda, pero muestra "12 tarea(s)" y solo 9 filas.
+- **Carga sobre el encargado**: 6 puntos con foto son ~12-18 minutos fragmentados en horario de atención, y el
+  tour compite con desvíos que **sí** vencen y escalan. El tour pierde siempre esa competencia.

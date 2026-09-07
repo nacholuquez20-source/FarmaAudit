@@ -58,6 +58,14 @@ class ConversationState(str, Enum):
     AUDITOR_CAMPANIA_PLAZO = "auditor_campania_plazo"
     AUDITOR_CAMPANIA_CONFIRMANDO = "auditor_campania_confirmando"
 
+    # Seguimiento de un tour/campania ya lanzada desde el chat del auditor (Fase 10):
+    # que sucursales ya estan listas, cuales faltan, la revision de una en particular,
+    # y sumar sucursales a un tour en curso.
+    AUDITOR_SEGUIMIENTO_ELIGIENDO = "auditor_seguimiento_eligiendo"
+    AUDITOR_SEGUIMIENTO_ACCION = "auditor_seguimiento_accion"
+    AUDITOR_SEGUIMIENTO_DETALLE_SUCURSAL = "auditor_seguimiento_detalle_sucursal"
+    AUDITOR_SEGUIMIENTO_SUMANDO_SUCURSALES = "auditor_seguimiento_sumando_sucursales"
+
 
 class Severidad(str, Enum):
     """Severity levels for findings."""
