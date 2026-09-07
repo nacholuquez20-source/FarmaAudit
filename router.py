@@ -1884,6 +1884,8 @@ class ConversationRouter:
         por_nombre = {s["nombre"]: s for s in sucursales}
         nombres_disponibles = list(por_nombre.keys())
 
+        nombres_normalizados = {n: self._normalize_intent_text(n) for n in nombres_disponibles}
+
         encontrados: List[Dict[str, Any]] = []
         ambiguos: List[Tuple[str, List[str]]] = []
         no_encontrados: List[str] = []
@@ -1892,9 +1894,18 @@ class ConversationRouter:
             if parte in por_nombre:
                 encontrados.append(por_nombre[parte])
                 continue
-            substr = [n for n in nombres_disponibles if parte.lower() in n.lower()]
-            cercanos = difflib.get_close_matches(parte, nombres_disponibles, n=3, cutoff=0.6)
-            candidatos = list(dict.fromkeys(substr + cercanos))
+            parte_norm = self._normalize_intent_text(parte)
+            substr = [n for n in nombres_disponibles if parte_norm in nombres_normalizados[n]]
+            if substr:
+                # Match por substring (con acentos normalizados) es una señal fuerte:
+                # no lo diluimos con matches difusos de difflib, que se confunden
+                # entre sucursales porque todas comparten el prefijo "Plazoleta ".
+                candidatos = substr
+            else:
+                cercanos_norm = difflib.get_close_matches(
+                    parte_norm, list(nombres_normalizados.values()), n=3, cutoff=0.6
+                )
+                candidatos = [n for n in nombres_disponibles if nombres_normalizados[n] in cercanos_norm]
             if len(candidatos) == 1:
                 encontrados.append(por_nombre[candidatos[0]])
             elif len(candidatos) > 1:
@@ -2379,9 +2390,16 @@ class ConversationRouter:
         nombres = list(por_nombre.keys())
         if texto in por_nombre:
             return por_nombre[texto], []
-        substr = [n for n in nombres if texto.lower() in n.lower()]
-        cercanos = difflib.get_close_matches(texto, nombres, n=3, cutoff=0.6)
-        candidatos = list(dict.fromkeys(substr + cercanos))
+        nombres_normalizados = {n: self._normalize_intent_text(n) for n in nombres}
+        texto_norm = self._normalize_intent_text(texto)
+        substr = [n for n in nombres if texto_norm in nombres_normalizados[n]]
+        if substr:
+            candidatos = substr
+        else:
+            cercanos_norm = difflib.get_close_matches(
+                texto_norm, list(nombres_normalizados.values()), n=3, cutoff=0.6
+            )
+            candidatos = [n for n in nombres if nombres_normalizados[n] in cercanos_norm]
         if len(candidatos) == 1:
             return por_nombre[candidatos[0]], []
         return None, candidatos[:5]
