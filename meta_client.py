@@ -545,8 +545,11 @@ Acción requerida inmediatamente."""
             url = f"{self.BASE_URL}/{self.phone_number_id}/messages"
 
             if len(buttons) > 3:
-                logger.warning(
-                    f"send_quick_reply got {len(buttons)} buttons, Meta allows max 3; extra ones dropped"
+                logger.error(
+                    f"send_quick_reply got {len(buttons)} buttons for {phone}, Meta allows max 3; "
+                    f"dropping {buttons[3:]} silently for the user — usá send_list_message si necesitás "
+                    f"más de 3 opciones",
+                    stack_info=True,
                 )
 
             # Build quick reply buttons

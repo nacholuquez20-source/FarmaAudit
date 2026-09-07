@@ -164,6 +164,13 @@ class AuditSession:
     verification_only: bool = False
     verification_menu: List[Dict[str, Any]] = field(default_factory=list)
 
+    # Rachas de fotos rechazadas seguidas (validate_media_bytes: borrosa, muy
+    # chica, muy pesada). Con mala señal el mismo mensaje genérico repetido
+    # se siente como que el bot no está "escuchando" el problema — a partir
+    # del segundo rechazo seguido se suma una sugerencia concreta. Se resetea
+    # al aceptar una foto válida o al cambiar de bloque.
+    fotos_rechazadas_racha: int = 0
+
     # Post-audit fields (persisted so they survive session reload between messages)
     pending_ficha_reporte_id: Optional[str] = None   # reporte_id deferred until responsable is known
     pending_ficha_gestion_ids: List[str] = field(default_factory=list)  # gestion ids to link once ficha_id exists

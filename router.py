@@ -400,9 +400,53 @@ class ConversationRouter:
                 # deadlockea (asyncio.Lock no es reentrante).
                 return await self._handle_perfumeria_locked(payload, meta_client)
 
-            # Check if message triggers v2 audit
-            if payload.tipo == "text" and payload.contenido:
+            # Get conversation state
+
+            conv = self.sheets.get_conversacion(payload.telefono)
+
+            if not conv:
+
+                conv = Conversacion(
+
+                    telefono=payload.telefono,
+
+                    estado_actual=ConversationState.IDLE,
+
+                )
+
+
+
+            logger.debug(f"Message from {payload.telefono}: state={conv.estado_actual.value}, content={payload.contenido[:50] if payload.contenido else 'N/A'}")
+
+            # Estados donde el bot está esperando específicamente un dato de
+            # texto libre (nombre de campaña, descripción de una acción, la
+            # referencia esperada) — acá las palabras-gatillo globales de abajo
+            # NO se evalúan. Sin este guard, nombrar una campaña "Tour" o
+            # "Perfumería" (el nombre más obvio para una campaña de perfumería)
+            # abandona el borrador a mitad de camino en vez de guardarlo como
+            # dato — pendiente documentado en PLAN_DEBUG_BOT.md, nunca cerrado.
+            # La cancelación explícita ("cancelar") sigue funcionando en estos
+            # estados vía `_chequear_cancelacion_auditor_campania`, aparte.
+            _ESTADOS_ESPERANDO_DATO_LIBRE_CAMPANIA = {
+                ConversationState.AUDITOR_CAMPANIA_NOMBRE,
+                ConversationState.AUDITOR_CAMPANIA_AGREGANDO_ACCION,
+                ConversationState.AUDITOR_CAMPANIA_ESPERANDO_REFERENCIA,
+            }
+            triggers_globales_habilitados = (
+                payload.tipo == "text"
+                and payload.contenido
+                # un toque de botón llega como tipo="text" con el id como
+                # contenido, y un id de botón nunca debe interpretarse como
+                # palabra-comando global — así deadlockeaba "Auditar" contra el
+                # trigger "auditar" antes de prefijar los ids (ver `_mostrar_menu_auditor`).
+                and not payload.es_interactive_reply
+                and conv.estado_actual not in _ESTADOS_ESPERANDO_DATO_LIBRE_CAMPANIA
+            )
+
+            if triggers_globales_habilitados:
                 trigger = payload.contenido.lower().strip()
+                if trigger in {"hola", "inicio", "empezar", "comenzar", "start"}:
+                    return await self._mostrar_menu_auditor(payload, meta_client)
                 V2_TRIGGERS = {"auditoria", "auditoría", "audit", "auditar", "perfumeria", "perfumería"}
                 if trigger in V2_TRIGGERS or any(w in trigger for w in ["auditar perfume", "auditoria perfumeria", "perfumeria v2", "audit v2"]):
                     # Ya corremos bajo el lock — ver comentario de arriba.
@@ -422,31 +466,6 @@ class ConversationRouter:
                 if trigger in {"seguimiento", "estado", "como viene", "cómo viene", "avance"}:
                     return await self._iniciar_seguimiento(payload, meta_client)
 
-
-            # Get conversation state
-
-            conv = self.sheets.get_conversacion(payload.telefono)
-
-            if not conv:
-
-                conv = Conversacion(
-
-                    telefono=payload.telefono,
-
-                    estado_actual=ConversationState.IDLE,
-
-                )
-
-
-
-            logger.debug(f"Message from {payload.telefono}: state={conv.estado_actual.value}, content={payload.contenido[:50] if payload.contenido else 'N/A'}")
-
-            # Check for audit trigger regardless of current state (allows restarting audit)
-            if payload.tipo == "text" and payload.contenido:
-                trigger = payload.contenido.lower().strip()
-                if trigger in {"hola", "inicio", "empezar", "comenzar", "start"}:
-                    return await self._mostrar_menu_auditor(payload, meta_client)
-
             if payload.context_message_id and conv.estado_actual != ConversationState.RECOLECTANDO_RESPUESTA:
                 quoted_context = self.sheets.get_whatsapp_bot_message(payload.context_message_id)
                 if quoted_context and quoted_context.get("tipo") == "perfumeria_block":
@@ -463,17 +482,10 @@ class ConversationRouter:
 
                 return await self._handle_idle_state(payload, auditor, conv, meta_client)
 
-            elif conv.estado_actual == ConversationState.SELECCIONANDO_ESCUADRON:
-
-                return await self._handle_seleccionando_escuadron(payload, auditor, conv, meta_client)
 
             elif conv.estado_actual == ConversationState.SELECCIONANDO_SUCURSAL_PERFUMERIA:
 
                 return await self._handle_seleccionando_sucursal_perfumeria(payload, conv, meta_client)
-
-            elif conv.estado_actual == ConversationState.SELECCIONANDO_SUCURSAL:
-
-                return await self._handle_seleccionando_sucursal(payload, conv, meta_client)
 
             elif conv.estado_actual == ConversationState.SELECCIONANDO_TIPO_AUDITORIA:
 
@@ -601,7 +613,10 @@ class ConversationRouter:
 
             else:
 
-                await meta_client.send_text(payload.telefono, "⚠️ Estado desconocido")
+                await meta_client.send_text(
+                    payload.telefono,
+                    "⚠️ Me perdí en dónde estabas. Escribí *hola* para el menú, o *ayuda* si no sabés cómo seguir.",
+                )
 
                 return "unknown_state"
 

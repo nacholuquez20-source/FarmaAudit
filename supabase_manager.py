@@ -1901,10 +1901,19 @@ class SupabaseManager:
             raise
 
     def get_sesion(self, id_sesion: str) -> Optional[SesionAuditoria]:
-        """Get audit session by ID with retry logic."""
+        """Get audit session by ID with retry logic.
+
+        max_retries bajó de 5 a 2 y retry_delay de 0.5s a 0.2s (2026-09-07):
+        esto es sincrónico y corre dentro de handlers async sin aislarse del
+        event loop (ver nota en `_initialize`), así que cada intento fallido
+        puede tardar hasta el timeout del cliente (15s) — con 5 reintentos el
+        peor caso eran ~77s de TODO el bot congelado por una sola sesión que
+        no aparece. Con 2 reintentos el peor caso baja a ~30s. La causa real
+        (falta de asyncio.to_thread alrededor de las llamadas a Supabase)
+        sigue sin resolver — esto solo acota el daño mientras tanto."""
         import time
-        max_retries = 5
-        retry_delay = 0.5  # seconds
+        max_retries = 2
+        retry_delay = 0.2  # seconds
         logger.info(f"get_sesion: Starting search for session {id_sesion}")
 
         for attempt in range(max_retries):

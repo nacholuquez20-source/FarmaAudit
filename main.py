@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 import json
 import asyncio
+import threading
 import time
 import uuid
 from collections import OrderedDict
@@ -57,6 +58,54 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# --- Watchdog del event loop --------------------------------------------
+# El watchdog viejo (`_avisar_mensaje_lento`, más abajo) corre como una tarea
+# de asyncio: si el event loop se traba por una llamada SINCRÓNICA colgada a
+# Supabase (bug real de produccion, 2026-08-26 — ver notas en
+# supabase_manager.py), esa tarea nunca llega a ejecutarse, porque comparte
+# el mismo loop que está trabado. Es una alarma sorda justo cuando más hace
+# falta.
+#
+# Este watchdog corre en un thread de SO aparte (no en el loop), así que
+# sigue latiendo y pudiendo loggear aunque el loop entero esté congelado. No
+# arregla el freeze, pero lo hace visible: la diferencia entre "un auditor
+# está trabado" (ve el watchdog viejo) y "TODO el proceso dejó de responder
+# a TODOS los usuarios" (solo lo ve este).
+_loop_heartbeat_lock = threading.Lock()
+_loop_heartbeat_ts = time.monotonic()
+LOOP_HEARTBEAT_INTERVAL_SECONDS = 2
+LOOP_WATCHDOG_STALL_THRESHOLD_SECONDS = 12
+
+
+async def _loop_heartbeat_task() -> None:
+    """Actualiza el heartbeat mientras el event loop está vivo y procesando
+    tareas normalmente. Si esto deja de correr, es porque el loop está
+    ocupado en otra cosa (una llamada sincrónica bloqueante)."""
+    global _loop_heartbeat_ts
+    while True:
+        with _loop_heartbeat_lock:
+            _loop_heartbeat_ts = time.monotonic()
+        await asyncio.sleep(LOOP_HEARTBEAT_INTERVAL_SECONDS)
+
+
+def _loop_watchdog_thread() -> None:
+    """Corre en un thread real del SO — nunca lo bloquea el event loop."""
+    already_warned = False
+    while True:
+        time.sleep(3)
+        with _loop_heartbeat_lock:
+            age = time.monotonic() - _loop_heartbeat_ts
+        if age > LOOP_WATCHDOG_STALL_THRESHOLD_SECONDS:
+            if not already_warned:
+                logger.error(
+                    f"🚨🚨 EVENT LOOP TRABADO hace {age:.1f}s — el proceso entero dejó de "
+                    f"responder a TODOS los mensajes, no solo a uno. Probablemente una "
+                    f"llamada sincrónica a Supabase colgada bloqueando el loop."
+                )
+                already_warned = True
+        else:
+            already_warned = False
 
 
 class GestionRevisionRequest(BaseModel):
@@ -389,6 +438,11 @@ async def startup_event():
     """Initialize background jobs on startup."""
     logger.info("Starting AuditBot...")
     init_supabase_schema()
+
+    # Watchdog del event loop: thread de SO aparte + tarea de heartbeat en el
+    # loop. Ver comentario junto a `_loop_watchdog_thread` más arriba.
+    threading.Thread(target=_loop_watchdog_thread, daemon=True, name="loop-watchdog").start()
+    asyncio.create_task(_loop_heartbeat_task())
 
     # Start scheduler
     scheduler.add_job(
@@ -1163,6 +1217,7 @@ async def webhook(request: Request):
         media_url = None
         media_id = None
         mime_type = None
+        es_interactive_reply = False
 
         if tipo == "text":
             contenido = msg.get("text", {}).get("body", "")
@@ -1191,10 +1246,12 @@ async def webhook(request: Request):
             if "list_reply" in interactive:
                 contenido = interactive["list_reply"].get("id", "")
                 tipo = "text"  # Treat as text for downstream handlers
+                es_interactive_reply = True
             # Button reply (from quick reply buttons)
             elif "button_reply" in interactive:
                 contenido = interactive["button_reply"].get("id", "")
                 tipo = "text"  # Treat as text for downstream handlers
+                es_interactive_reply = True
             else:
                 contenido = ""
                 tipo = "text"
@@ -1208,6 +1265,7 @@ async def webhook(request: Request):
             mime_type=mime_type,
             message_id=message_id,
             context_message_id=context_message_id,
+            es_interactive_reply=es_interactive_reply,
         )
 
         logger.info(
@@ -1222,7 +1280,14 @@ async def webhook(request: Request):
         # de esto, un teléfono con una fila vieja en sesiones_whatsapp
         # entraba directo al flujo v2 sin haberse verificado contra ninguna
         # tabla (bastaba con haber iniciado una auditoría alguna vez).
-        whatsapp_user = resolve_whatsapp_user(payload.telefono)
+        #
+        # `to_thread`: supabase-py es sincrónico y bloquea el event loop
+        # mientras espera respuesta (ver nota en supabase_manager.py). Esto
+        # corre en TODOS los mensajes, así que es el primer punto donde vale
+        # la pena sacarlo del loop — la resolución completa de este freeze
+        # (todas las llamadas a Supabase de todos los handlers) queda como
+        # trabajo pendiente más grande.
+        whatsapp_user = await asyncio.to_thread(resolve_whatsapp_user, payload.telefono)
         if not whatsapp_user or not whatsapp_user.activo:
             logger.warning(
                 f"[{correlation_id}] Telefono no registrado o inactivo: {payload.telefono}"
@@ -1237,7 +1302,9 @@ async def webhook(request: Request):
             # esto, pero un fallo acá no puede tirar abajo el procesamiento
             # del mensaje en sí.
             try:
-                SupabaseManager().update_ultimo_mensaje_entrante(whatsapp_user.id)
+                await asyncio.to_thread(
+                    SupabaseManager().update_ultimo_mensaje_entrante, whatsapp_user.id
+                )
             except Exception as exc:
                 logger.warning(f"[{correlation_id}] Failed to update ultimo_mensaje_entrante: {exc}")
 

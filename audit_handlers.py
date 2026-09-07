@@ -72,20 +72,28 @@ def _es_asentimiento(texto: str) -> bool:
     return bool(t) and t <= _ASENTIMIENTOS
 
 
-# Palabras que en el bloque OFERTAS son COMANDOS, nunca datos. Sin este guard,
-# escribir "siguiente" cuando el bot pregunta "¿que marca es?" registraba una
-# marca fantasma llamada "siguiente", con comentario "siguiente" (bug real de
-# produccion, 2026-08-26). El comando ya estaba contemplado en el paso de la
-# foto (handle_ofertas_marca_evidence) pero no en los dos pasos siguientes.
-_COMANDOS_OFERTAS = {
-    "siguiente", "next", "listo", "terminar", "fin", "seguir", "continuar",
+# Palabras de control que un auditor escribe por reflejo, y que NUNCA deben
+# guardarse como el dato de un campo libre (nombre de marca, nombre de
+# responsable, etc.) — el mismo patrón causó tres bugs reales de producción
+# el mismo día (marca fantasma "siguiente", hallazgos falsos por asentimientos,
+# nombre de responsable "Ch"). Un solo lugar, para que un campo de texto libre
+# nuevo no tenga que reinventar su propia lista.
+_PALABRAS_DE_CONTROL = _ASENTIMIENTOS | {
+    "siguiente", "next", "terminar", "fin", "seguir", "continuar",
 }
+
+
+def _es_palabra_de_control(texto: str) -> bool:
+    """True si el texto ENTERO es una palabra de control (comando/asentimiento),
+    no un dato. Match exacto de tokens, no subcadena."""
+    t = _tokens(texto)
+    return bool(t) and t <= _PALABRAS_DE_CONTROL
 
 
 def _es_comando_ofertas(texto: str) -> bool:
     """True si el texto es una orden de avanzar, no el nombre de una marca ni
     un comentario sobre ella."""
-    return (texto or "").strip().lower() in _COMANDOS_OFERTAS
+    return _es_palabra_de_control(texto)
 
 
 SCORE_OPTIONS = [
@@ -552,7 +560,7 @@ class AuditConversationHandler:
                         # Antes se guardaba cualquier cosa: así terminó un "Ch"
                         # como responsable en audit_fiches. Se valida que
                         # parezca un nombre y no un acuse de recibo.
-                        if len(nombre) < 3 or _es_asentimiento(texto) or nombre.isdigit():
+                        if len(nombre) < 3 or _es_palabra_de_control(texto) or nombre.isdigit():
                             await meta_client.send_text(
                                 payload.telefono,
                                 "Necesito el *nombre* de la persona responsable de los desvíos "
@@ -621,6 +629,26 @@ class AuditConversationHandler:
             "No entendí en qué punto quedamos. Escribí *cancelar* para empezar de cero."
         )
         return "unknown_state"
+
+    @staticmethod
+    def _foto_rechazo_sugerencia(session: AuditSession, validation: PhotoValidationResult) -> str:
+        """Consejo puntual a partir del segundo rechazo SEGUIDO en el mismo
+        bloque/marca. Con mala señal repetir el mismo cartel genérico varias
+        veces se siente como que el bot no está "escuchando" el problema,
+        aunque técnicamente sí lo está validando cada vez. No muta el
+        contador de bloque (`current_bloque_index`) ni lo persiste — quien
+        llama a esto ya guarda la sesión."""
+        session.fotos_rechazadas_racha += 1
+        if session.fotos_rechazadas_racha < 2:
+            return ""
+        msg = (validation.message or "").lower()
+        if "borrosa" in msg:
+            return "\n\n💡 Probá con más luz, o alejá un poco la cámara para que enfoque."
+        if "pequeña" in msg:
+            return "\n\n💡 Acercate más al punto que querés mostrar."
+        if "grande" in msg:
+            return "\n\n💡 Si tu cámara tiene una opción de calidad más baja, probá con esa."
+        return ""
 
     @staticmethod
     async def _send_scoring_list(meta_client: MetaClient, telefono: str, session: AuditSession, intro: str = "") -> None:
@@ -930,6 +958,7 @@ class AuditConversationHandler:
         # la foto ancla del bloque anterior para que un hallazgo de un bloque
         # nuevo nunca quede ligado a una foto de otro bloque.
         session.current_foto_id = None
+        session.fotos_rechazadas_racha = 0
 
         if intro_msg:
             await meta_client.send_text(telefono, intro_msg)
@@ -1604,6 +1633,7 @@ class AuditConversationHandler:
 
             await meta_client.send_text(
                 payload.telefono,
+                f"Bloque {session.current_bloque_index + 1}/4 · Ofertas\n"
                 f"✓ Ofertas: {score}/5\n\n"
                 f"📸 Ahora registremos Ofertas y Exhibición por marca.\n\n"
                 f"Marcas de referencia: {marcas_sugeridas} — pero podés reportar "
@@ -1641,6 +1671,7 @@ class AuditConversationHandler:
 
         await meta_client.send_text(
             payload.telefono,
+            f"Bloque {session.current_bloque_index + 1}/4 · {bloque_label}\n"
             f"✓ {bloque_label}: {score}/5{comparison}\n\n"
             f"📸 Enviá al menos UNA foto de este punto (esté bien o mal — la foto es obligatoria).\n"
             f"También podés sumar audios y notas 🎙️📝\n\n"
@@ -1838,9 +1869,13 @@ class AuditConversationHandler:
                 validation = PhotoValidator.validate_media_bytes(media_bytes, mime_type)
 
                 if not validation.is_valid:
+                    sugerencia = AuditConversationHandler._foto_rechazo_sugerencia(session, validation)
+                    save_session(session)
                     await meta_client.send_text(
                         payload.telefono,
-                        validation.message + "\n\nIntenta de nuevo — necesito al menos una foto válida de este bloque para poder continuar."
+                        validation.message
+                        + "\n\nIntenta de nuevo — necesito al menos una foto válida de este bloque para poder continuar."
+                        + sugerencia
                     )
                     return "photo_invalid"
 
@@ -1858,6 +1893,7 @@ class AuditConversationHandler:
                 # Esta foto pasa a ser el ancla: todo audio/texto que llegue
                 # despues (hasta la proxima foto) se liga a ella en Desvio.fotos.
                 session.current_foto_id = foto.id
+                session.fotos_rechazadas_racha = 0
                 save_session(session)
 
                 await meta_client.send_quick_reply(
@@ -1981,9 +2017,13 @@ class AuditConversationHandler:
                 validation = PhotoValidator.validate_media_bytes(media_bytes, mime_type)
 
                 if not validation.is_valid:
+                    sugerencia = AuditConversationHandler._foto_rechazo_sugerencia(session, validation)
+                    save_session(session)
                     await meta_client.send_text(
                         payload.telefono,
-                        validation.message + "\n\nIntenta de nuevo — necesito una foto válida de la marca."
+                        validation.message
+                        + "\n\nIntenta de nuevo — necesito una foto válida de la marca."
+                        + sugerencia
                     )
                     return "photo_invalid"
 
@@ -1999,6 +2039,7 @@ class AuditConversationHandler:
                 session.add_foto(foto)
                 session.current_foto_id = foto.id
                 session.pending_marca = None
+                session.fotos_rechazadas_racha = 0
                 session.estado = AuditState.SCORING_BRANDS_TAG
                 save_session(session)
 

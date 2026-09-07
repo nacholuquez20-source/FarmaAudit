@@ -16,9 +16,7 @@ class ConversationState(str, Enum):
     IDLE = "idle"
     ESPERANDO_CONFIRMACION = "esperando_confirmacion"
     ESPERANDO_EDICION = "esperando_edicion"
-    SELECCIONANDO_ESCUADRON = "seleccionando_escuadron"
     SELECCIONANDO_SUCURSAL_PERFUMERIA = "seleccionando_sucursal_perfumeria"
-    SELECCIONANDO_SUCURSAL = "seleccionando_sucursal"
     SELECCIONANDO_TIPO_AUDITORIA = "seleccionando_tipo_auditoria"
     EN_AUDITORIA = "en_auditoria"  # Guided point-by-point audit flow
     EN_BLOQUE = "en_bloque"
@@ -329,6 +327,11 @@ class WhatsAppPayload:
     message_id: Optional[str] = None
     context_message_id: Optional[str] = None
     timestamp: Optional[datetime] = field(default_factory=datetime.utcnow)
+    # True si `contenido` es el id de un botón/lista tocado por el usuario (no
+    # texto tipeado a mano). Meta entrega ambos como tipo="text", así que sin
+    # esta marca un id de botón puede colisionar con una palabra-comando del
+    # dispatcher global — causa raíz de un deadlock real ya corregido.
+    es_interactive_reply: bool = False
 
 
 @dataclass
