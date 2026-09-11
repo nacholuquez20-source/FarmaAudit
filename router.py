@@ -43,6 +43,7 @@ from parser import AuditParser
 from audio import AudioTranscriber
 
 from meta_client import MetaClient
+from photo_validator import PhotoValidator
 
 # NEW: Imports for perfumery audit v2 (structured flow)
 from audit_session import (
@@ -1153,6 +1154,19 @@ class ConversationRouter:
         actor_nombre = str(encargado.get("nombre") or "Encargado")
         try:
             content, mime_type = await meta_client.download_media_with_metadata(payload.media_id)
+
+            # Mismo validador que ya usa la auditoría clásica (audit_handlers.py):
+            # nitidez y tamaño mínimo. No estaba conectado acá, así que una foto
+            # borrosa o de 200x200 se aceptaba igual como evidencia de un punto
+            # del tour — la base de todo el PDF que después lee la auditora.
+            validation = PhotoValidator.validate_media_bytes(content, mime_type)
+            if not validation.is_valid:
+                await meta_client.send_text(
+                    payload.telefono,
+                    validation.message + "\n\nIntentá con otra foto.",
+                )
+                return "campania_evidencia_invalida_calidad"
+
             upload_result = self.sheets.upload_campania_evidencia(str(tarea_id), content, mime_type)
             path = upload_result["path"]
             thumb_path = upload_result.get("thumb_path")
@@ -2678,6 +2692,31 @@ class ConversationRouter:
             if not tareas or any(t.get("estado") not in self.TAREA_ESTADOS_HECHOS for t in tareas):
                 return
 
+            # Idempotencia: el panel admin puede reabrir una tarea ya avisada
+            # (CampaniaDetail.tsx, updateCampaniaTarea a estado='Pendiente'). Si
+            # se recompleta SIN que cambie ninguna evidencia (reintento de
+            # webhook, doble tap del encargado), esto evita mandar el aviso y el
+            # PDF de nuevo. El fingerprint es la foto de estado exacta que ya se
+            # avisó: cambia solo si alguna evidencia realmente cambió, así que un
+            # reabrir-y-recompletar con una foto nueva sí vuelve a avisar (es una
+            # revisión genuina, no un duplicado).
+            fingerprint = "|".join(
+                f"{t['id']}:{t.get('evidencia_path') or ''}"
+                for t in sorted(tareas, key=lambda t: str(t["id"]))
+            )
+            eventos_previos = self.sheets.get_campania_eventos_por_tareas(
+                [str(t["id"]) for t in tareas]
+            )
+            for eventos in eventos_previos.values():
+                for evento in eventos:
+                    metadata = evento.get("metadata") or {}
+                    if (
+                        evento.get("tipo") == "nota"
+                        and metadata.get("marca") == "sucursal_completa_notificada"
+                        and metadata.get("fingerprint") == fingerprint
+                    ):
+                        return
+
             sucursal = self.sheets.get_sucursal(sucursal_id)
             sucursal_nombre = sucursal.nombre if sucursal else sucursal_id
             tour_nombre = str(campania.get("nombre") or "Tour")
@@ -2691,6 +2730,16 @@ class ConversationRouter:
             )
             await self._enviar_revision_sucursal(
                 meta_client, destino, campania_id, sucursal_id, sucursal_nombre, tour_nombre
+            )
+            self.sheets.save_campania_evento(
+                tarea_id=str(tarea["id"]),
+                tipo="nota",
+                comentario="Aviso de sucursal completa enviado al auditor.",
+                actor_nombre="sistema",
+                metadata={
+                    "marca": "sucursal_completa_notificada",
+                    "fingerprint": fingerprint,
+                },
             )
         except Exception as e:
             logger.warning(f"No se pudo avisar que la sucursal completó el tour: {e}")
