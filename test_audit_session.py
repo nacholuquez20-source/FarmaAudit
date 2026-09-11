@@ -3,8 +3,9 @@
 import sys
 import io
 
-# Fix Windows console encoding
-if sys.platform == 'win32':
+# Fix Windows console encoding (se salta bajo pytest: reasignar sys.stdout acá
+# rompe la captura de pytest, ver audit_handlers.py para el detalle)
+if sys.platform == 'win32' and "pytest" not in sys.modules:
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 from audit_session import (

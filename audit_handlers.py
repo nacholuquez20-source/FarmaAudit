@@ -3,8 +3,15 @@
 import sys
 import io
 
-# Fix Windows console encoding
-if sys.platform == "win32":
+# Fix Windows console encoding para poder imprimir emojis en la consola real.
+# Se salta bajo pytest: reasignar sys.stdout acá rompe la captura de pytest en
+# CUALQUIER test que importe este módulo (directo o vía router), porque pytest
+# ya envolvió sys.stdout en su propio objeto y esto lo pisa con un wrapper que
+# el teardown de pytest no sabe cerrar (rompe con "I/O operation on closed file").
+# Chequeo "pytest" in sys.modules y no PYTEST_CURRENT_TEST: esto corre en el
+# import (fase de collection), y esa variable recién se setea al ejecutar un
+# test — para entonces ya es tarde, el import ya pisó sys.stdout.
+if sys.platform == "win32" and "pytest" not in sys.modules:
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 import logging
