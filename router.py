@@ -28,7 +28,9 @@ from models import (
 
     ItemBloque, ResultadoItem, StockItem, DesvioLibre, ChecklistPerfumeriaPunto, TipoRespuesta,
 
-    MensajeEnRespuesta, RespuestaPregunta, RespuestaPreguntaEstado, RESPUESTA_CONFIG, RESPUESTA_VALIDACION
+    MensajeEnRespuesta, RespuestaPregunta, RespuestaPreguntaEstado, RESPUESTA_CONFIG, RESPUESTA_VALIDACION,
+
+    espera_dato_libre
 
 )
 
@@ -418,20 +420,16 @@ class ConversationRouter:
 
             logger.debug(f"Message from {payload.telefono}: state={conv.estado_actual.value}, content={payload.contenido[:50] if payload.contenido else 'N/A'}")
 
-            # Estados donde el bot está esperando específicamente un dato de
-            # texto libre (nombre de campaña, descripción de una acción, la
-            # referencia esperada) — acá las palabras-gatillo globales de abajo
-            # NO se evalúan. Sin este guard, nombrar una campaña "Tour" o
-            # "Perfumería" (el nombre más obvio para una campaña de perfumería)
-            # abandona el borrador a mitad de camino en vez de guardarlo como
-            # dato — pendiente documentado en PLAN_DEBUG_BOT.md, nunca cerrado.
-            # La cancelación explícita ("cancelar") sigue funcionando en estos
-            # estados vía `_chequear_cancelacion_auditor_campania`, aparte.
-            _ESTADOS_ESPERANDO_DATO_LIBRE_CAMPANIA = {
-                ConversationState.AUDITOR_CAMPANIA_NOMBRE,
-                ConversationState.AUDITOR_CAMPANIA_AGREGANDO_ACCION,
-                ConversationState.AUDITOR_CAMPANIA_ESPERANDO_REFERENCIA,
-            }
+            # Las palabras-gatillo globales de abajo solo se evalúan si el estado
+            # actual espera comandos. Si espera un dato dictado por el usuario
+            # (nombre de campaña, comentario de un punto, nombres de sucursal),
+            # el texto es dato y nunca comando: sin esto, nombrar una campaña
+            # "Tour" abandona el borrador a mitad de camino en vez de guardarlo.
+            # El modo se declara por estado en `STATE_INPUT_MODE` (models.py) —
+            # una sola vez, en vez de excluir palabras caso por caso.
+            # La salida explícita sigue disponible siempre: `_universal_escape`
+            # corre antes de todo esto, y los flujos de campaña tienen además su
+            # propio `_chequear_cancelacion_auditor_campania`.
             triggers_globales_habilitados = (
                 payload.tipo == "text"
                 and payload.contenido
@@ -440,9 +438,17 @@ class ConversationRouter:
                 # palabra-comando global — así deadlockeaba "Auditar" contra el
                 # trigger "auditar" antes de prefijar los ids (ver `_mostrar_menu_auditor`).
                 and not payload.es_interactive_reply
-                and conv.estado_actual not in _ESTADOS_ESPERANDO_DATO_LIBRE_CAMPANIA
+                and not espera_dato_libre(conv.estado_actual)
             )
 
+            # Ojo al tocar esto: el saludo NO se exceptúa para que funcione
+            # también en estados FREE_TEXT. `_mostrar_menu_auditor` pisa
+            # `ultimo_mensaje` (supabase_manager.update_conversacion), así que
+            # abrir el menú a mitad de un borrador de campaña le borra los puntos
+            # ya cargados al usuario, sin preguntar. La salida sigue existiendo y
+            # es explícita: "salir"/"menú"/"cancelar" caen en `_universal_escape`
+            # (corre antes que esto, en cualquier estado) y dejan el teléfono en
+            # IDLE, donde "hola" vuelve a abrir el menú como siempre.
             if triggers_globales_habilitados:
                 trigger = payload.contenido.lower().strip()
                 if trigger in {"hola", "inicio", "empezar", "comenzar", "start"}:

@@ -65,6 +65,89 @@ class ConversationState(str, Enum):
     AUDITOR_SEGUIMIENTO_SUMANDO_SUCURSALES = "auditor_seguimiento_sumando_sucursales"
 
 
+class InputMode(str, Enum):
+    """Como debe interpretarse el texto que llega en un estado dado."""
+
+    # El texto puede ser una palabra-comando global (menu, "tour", "seguimiento").
+    COMMAND = "command"
+    # El texto es un dato que el usuario esta dictando: nombre, comentario,
+    # nombres de sucursal, cantidades. Las palabras-comando globales NO se
+    # evaluan; escribir "estado" acá significa la palabra "estado", no el menu.
+    FREE_TEXT = "free_text"
+
+
+# Modo de input declarado POR ESTADO. La regla que cierra la clase de bug
+# "palabra de control guardada como dato" (se repitio 3 veces en contextos
+# distintos): en vez de excluir palabras caso por caso dentro de cada handler,
+# el estado declara una sola vez si espera datos o comandos.
+#
+# Salir de un estado FREE_TEXT siempre es posible y explicito: `_universal_escape`
+# (ayuda/cancelar/reiniciar) corre ANTES que este chequeo en cualquier estado, y
+# los flujos de campania tienen ademas su propio `_chequear_cancelacion_*`.
+#
+# `test_input_modes.py` falla si un estado nuevo no aparece acá, para que la
+# proxima vez la decision se tome al escribir el estado y no despues del bug.
+STATE_INPUT_MODE = {
+    ConversationState.IDLE: InputMode.COMMAND,
+    ConversationState.ESPERANDO_CONFIRMACION: InputMode.COMMAND,
+    # El usuario re-dicta el valor que estaba mal: es dato, no comando.
+    ConversationState.ESPERANDO_EDICION: InputMode.FREE_TEXT,
+    ConversationState.SELECCIONANDO_SUCURSAL_PERFUMERIA: InputMode.COMMAND,
+    ConversationState.SELECCIONANDO_TIPO_AUDITORIA: InputMode.COMMAND,
+    # Auditoria punto por punto: la respuesta de cada punto es texto/audio libre.
+    ConversationState.EN_AUDITORIA: InputMode.FREE_TEXT,
+    ConversationState.EN_BLOQUE: InputMode.FREE_TEXT,
+    ConversationState.EN_BLOQUE_PERFUMERIA: InputMode.FREE_TEXT,
+    ConversationState.CONFIRMANDO_BLOQUE: InputMode.COMMAND,
+    ConversationState.STOCK_LOOP: InputMode.FREE_TEXT,
+    ConversationState.EN_STOCK_ITEM: InputMode.FREE_TEXT,
+    ConversationState.DESVIO_LIBRE: InputMode.FREE_TEXT,
+    ConversationState.COMPROMISOS: InputMode.COMMAND,
+    ConversationState.AUDITORIA_PAUSADA: InputMode.COMMAND,
+    ConversationState.RECOLECTANDO_RESPUESTA: InputMode.FREE_TEXT,
+    ConversationState.ENCARGADO_SELECCIONANDO_DESVIO: InputMode.COMMAND,
+    ConversationState.ENCARGADO_DESVIO_ACTIVO: InputMode.COMMAND,
+    ConversationState.ENCARGADO_ESPERANDO_RESPUESTA: InputMode.FREE_TEXT,
+    ConversationState.ENCARGADO_ELIGIENDO_MODULO: InputMode.COMMAND,
+    ConversationState.CAMPANIA_LISTANDO_TAREAS: InputMode.COMMAND,
+    ConversationState.CAMPANIA_TAREA_ACTIVA: InputMode.COMMAND,
+    # La foto viene con comentario escrito al lado: ese comentario es la observacion.
+    ConversationState.CAMPANIA_ESPERANDO_EVIDENCIA: InputMode.FREE_TEXT,
+    ConversationState.CAMPANIA_SOLICITANDO_INSUMO_DETALLE: InputMode.FREE_TEXT,
+    ConversationState.CAMPANIA_SOLICITANDO_INSUMO_PROVEEDOR: InputMode.FREE_TEXT,
+    ConversationState.AUDITORIA_PERFUMERIA_LIBRE: InputMode.FREE_TEXT,
+    ConversationState.PERFUMERIA_SELECCIONANDO_BLOQUE: InputMode.COMMAND,
+    ConversationState.PERFUMERIA_ESPERANDO_CALIFICACION: InputMode.COMMAND,
+    ConversationState.PERFUMERIA_CAPTURANDO_EVIDENCIA: InputMode.FREE_TEXT,
+    ConversationState.PERFUMERIA_DESCRIBIENDO_DESVIO: InputMode.FREE_TEXT,
+    ConversationState.AUDITOR_ELIGIENDO_MODULO: InputMode.COMMAND,
+    ConversationState.AUDITOR_CAMPANIA_ELIGIENDO_TIPO: InputMode.COMMAND,
+    ConversationState.AUDITOR_CAMPANIA_ELIGIENDO_MARCA: InputMode.COMMAND,
+    ConversationState.AUDITOR_CAMPANIA_NOMBRE: InputMode.FREE_TEXT,
+    ConversationState.AUDITOR_CAMPANIA_AGREGANDO_ACCION: InputMode.FREE_TEXT,
+    ConversationState.AUDITOR_CAMPANIA_ESPERANDO_REFERENCIA: InputMode.FREE_TEXT,
+    # Substep "esperando_nombres": la auditora tipea nombres de sucursal a mano.
+    ConversationState.AUDITOR_CAMPANIA_ALCANCE: InputMode.FREE_TEXT,
+    ConversationState.AUDITOR_CAMPANIA_PLAZO: InputMode.FREE_TEXT,
+    ConversationState.AUDITOR_CAMPANIA_CONFIRMANDO: InputMode.COMMAND,
+    ConversationState.AUDITOR_SEGUIMIENTO_ELIGIENDO: InputMode.COMMAND,
+    ConversationState.AUDITOR_SEGUIMIENTO_ACCION: InputMode.COMMAND,
+    ConversationState.AUDITOR_SEGUIMIENTO_DETALLE_SUCURSAL: InputMode.COMMAND,
+    # Nombres de sucursal separados por coma, tipeados a mano.
+    ConversationState.AUDITOR_SEGUIMIENTO_SUMANDO_SUCURSALES: InputMode.FREE_TEXT,
+}
+
+
+def espera_dato_libre(estado: ConversationState) -> bool:
+    """True si el estado espera un dato dictado por el usuario.
+
+    Default conservador: un estado no declarado se trata como FREE_TEXT para no
+    volver a comerse un dato como si fuera comando (el modo en que este bug
+    lastimo siempre). El test de exhaustividad evita que el default se use.
+    """
+    return STATE_INPUT_MODE.get(estado, InputMode.FREE_TEXT) == InputMode.FREE_TEXT
+
+
 class Severidad(str, Enum):
     """Severity levels for findings."""
 
