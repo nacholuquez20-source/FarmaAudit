@@ -55,6 +55,26 @@ class MockMetaClient:
         return b"fake-image-bytes", "image/jpeg"
 
 
+class _FakeSupabaseManager:
+    """`handle_init` y `handle_select_sucursal` usan SupabaseManager() directo
+    (no inyectado), así que sin este fake el test dependería de las
+    credenciales reales de .env y de la base de desarrollo estando arriba."""
+
+    def __init__(self, sucursales):
+        self.client = MagicMock()
+        response = MagicMock()
+        response.data = sucursales
+        # encadenado completo de get_auditor / _send_ficha_llegada (best-effort,
+        # con try/except propio: alcanza con no reventar el chain de Mock)
+        self.client.table.return_value = self.client
+        for metodo in ("select", "eq", "order", "not_", "in_", "limit"):
+            getattr(self.client, metodo).return_value = self.client
+        self.client.execute.return_value = response
+
+    def get_auditor(self, telefono):
+        return None
+
+
 async def test_complete_audit_flow():
     """Test complete audit flow from start to finish."""
 
@@ -69,22 +89,45 @@ async def test_complete_audit_flow():
     delete_session(telefono)
 
     meta_client = MockMetaClient()
+    fake_sucursales = [{"id": sucursal_id, "nombre": "Sucursal Centro"}]
 
-    # Step 1: Initialize audit
-    print("\n[1] Initializing audit with sucursal_id...")
+    # Step 1: Initialize audit — handle_init SIEMPRE manda el picker de
+    # sucursales (el contenido del mensaje que lo dispara ni se lee); el
+    # arranque real de la auditoría pasa por handle_select_sucursal, un paso
+    # que esta prueba no contemplaba.
+    print("\n[1] Initializing audit...")
     payload = WhatsAppPayload(
         telefono=telefono,
         tipo="text",
-        contenido=sucursal_id,
+        contenido="auditoria",
         media_id=None,
         media_url=None,
         context_message_id=None,
         timestamp=datetime.now(timezone.utc).isoformat()
     )
 
-    result = await AuditConversationHandler.handle_init(payload, meta_client)
-    print(f"    Result: {result}")
-    assert result == "audit_started", f"Expected 'audit_started', got '{result}'"
+    with patch("audit_handlers.SupabaseManager", lambda: _FakeSupabaseManager(fake_sucursales)):
+        result = await AuditConversationHandler.handle_init(payload, meta_client)
+        print(f"    Result: {result}")
+        assert result == "sucursal_menu_sent", f"Expected 'sucursal_menu_sent', got '{result}'"
+
+        session = get_session(telefono)
+        assert session is not None, "Session should be created"
+        assert session.estado == AuditState.SELECT_SUCURSAL, \
+            f"Should be in SELECT_SUCURSAL state, got {session.estado}"
+
+        # Step 1b: elegir la sucursal del picker — recién acá arranca la auditoría.
+        print("\n[1b] Selecting sucursal from picker...")
+        seleccion_payload = WhatsAppPayload(
+            telefono=telefono, tipo="text", contenido="1",
+            media_id=None, media_url=None, context_message_id=None,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        )
+        result = await AuditConversationHandler.handle_select_sucursal(
+            seleccion_payload, meta_client, session
+        )
+        print(f"    Result: {result}")
+        assert result == "audit_started", f"Expected 'audit_started', got '{result}'"
 
     # Verify session was created
     session = get_session(telefono)
@@ -168,7 +211,7 @@ async def test_complete_audit_flow():
         else:
             result = await AuditConversationHandler.handle_score(payload, meta_client, session)
             print(f"        Score received, transitioned to evidence collection")
-            assert result == "score_saved", f"Expected score_saved, got {result}"
+            assert result == "evidence_collection_started", f"Expected evidence_collection_started, got {result}"
             assert session.estado == AuditState.BLOQUE_EVIDENCE_COLLECTION
 
         # If not the last bloque, send SIGUIENTE to move to next
@@ -225,7 +268,14 @@ async def test_complete_audit_flow():
         timestamp=datetime.now(timezone.utc).isoformat()
     )
 
-    result = await AuditConversationHandler.handle_confirmation(confirm_payload, meta_client, session)
+    # save_audit_to_database pega contra Supabase real: se mockea para que la
+    # prueba no dependa de la base de desarrollo (mismo motivo por el que esta
+    # prueba estaba deshabilitada en __main__ desde siempre, ver abajo).
+    with patch(
+        "audit_handlers.save_audit_to_database",
+        new=AsyncMock(return_value={"id_reporte": "reporte-test", "gestion_ids": []}),
+    ):
+        result = await AuditConversationHandler.handle_confirmation(confirm_payload, meta_client, session)
     print(f"    Result: {result}")
 
     # Verify audit is marked as done
@@ -359,8 +409,9 @@ async def main():
     print("="*60)
 
     try:
-        # Note: Full flow test skipped because save_audit_to_database requires DB
-        # await test_complete_audit_flow()
+        # SupabaseManager y save_audit_to_database van mockeados dentro del
+        # propio test — ya no depende de la base de desarrollo.
+        await test_complete_audit_flow()
 
         # Run evidence collection test
         await test_evidence_collection()
