@@ -1709,7 +1709,9 @@ class SupabaseManager:
     def create_campania_acciones_bot(self, campania_id: str, acciones: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Crea las filas de `campania_acciones` desde el bot (Fase 8). `acciones` ya
         viene con `tipo`/`descripcion`/`imagen_referencia_path` resueltos por el flujo
-        conversacional (ver _handle_auditor_campania_*)."""
+        conversacional (ver _handle_auditor_campania_*). `plantilla_punto_id` (etapa-34)
+        es la identidad estable de un punto "desde cero" reusado desde una plantilla
+        guardada — nula para el resto (checklist clásico o custom sin guardar)."""
         rows = [
             {
                 "campania_id": campania_id,
@@ -1718,11 +1720,65 @@ class SupabaseManager:
                 "requiere_foto": accion.get("requiere_foto", True),
                 "verificable_por_foto": accion.get("verificable_por_foto", accion["tipo"] != "descuento_caja"),
                 "imagen_referencia_path": accion.get("imagen_referencia_path"),
+                "plantilla_punto_id": accion.get("plantilla_punto_id"),
             }
             for accion in acciones
         ]
         response = self.client.table("campania_acciones").insert(rows).execute()
         return response.data or []
+
+    def get_tour_plantillas(self) -> List[Dict[str, Any]]:
+        """Plantillas guardadas de puntos "desde cero" (etapa-34), para ofrecerlas al
+        lanzar un tour nuevo en vez de retipear. Compartidas entre auditores, igual
+        que el checklist clásico — no son personales."""
+        try:
+            response = (
+                self.client.table("tour_plantillas")
+                .select("id, nombre")
+                .order("nombre")
+                .execute()
+            )
+            return response.data or []
+        except Exception as e:
+            logger.error(f"Failed to get tour plantillas: {e}")
+            return []
+
+    def get_tour_plantilla_puntos(self, plantilla_id: str) -> List[Dict[str, Any]]:
+        """Puntos de una plantilla, en el orden en que se guardaron."""
+        try:
+            response = (
+                self.client.table("tour_plantilla_puntos")
+                .select("id, descripcion")
+                .eq("plantilla_id", plantilla_id)
+                .order("orden")
+                .execute()
+            )
+            return response.data or []
+        except Exception as e:
+            logger.error(f"Failed to get puntos de plantilla {plantilla_id}: {e}")
+            return []
+
+    def create_tour_plantilla_bot(
+        self, nombre: str, descripciones: List[str], creado_por_telefono: str
+    ) -> List[Dict[str, Any]]:
+        """Guarda un set de puntos "desde cero" como plantilla reutilizable (etapa-34).
+        Devuelve los puntos creados (con su id, para poder linkearlos de una en la
+        misma campania que se está lanzando — no hace falta releer)."""
+        plantilla_response = self.client.table("tour_plantillas").insert({
+            "nombre": nombre,
+            "creado_por_telefono": creado_por_telefono,
+        }).execute()
+        plantilla_data = plantilla_response.data or []
+        if not plantilla_data:
+            return []
+        plantilla_id = plantilla_data[0]["id"]
+
+        rows = [
+            {"plantilla_id": plantilla_id, "descripcion": descripcion, "orden": indice}
+            for indice, descripcion in enumerate(descripciones)
+        ]
+        puntos_response = self.client.table("tour_plantilla_puntos").insert(rows).execute()
+        return puntos_response.data or []
 
     def create_solicitud_insumo(
         self,

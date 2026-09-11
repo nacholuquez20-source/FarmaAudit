@@ -1580,16 +1580,22 @@ class ConversationRouter:
                 estado=ConversationState.AUDITOR_CAMPANIA_AGREGANDO_ACCION,
                 ultimo_mensaje=json.dumps(context),
             )
+            # Meta permite 3 botones y ni uno mas (send_quick_reply trunca en silencio):
+            # "Usar plantilla" solo se ofrece si hay alguna guardada, para no mostrarle
+            # a la primera auditora que arma un tour un boton que no lleva a nada.
+            botones_base = [
+                # Ids prefijados: ningun id de boton puede ser una palabra que el
+                # dispatcher mire como texto libre (ver _mostrar_menu_auditor).
+                {"id": "tour_desde_cero", "title": "✏️ Desde cero"},
+                {"id": "tour_checklist", "title": "📋 Usar checklist"},
+            ]
+            if self.sheets.get_tour_plantillas():
+                botones_base.append({"id": "tour_plantilla", "title": "📁 Usar plantilla"})
             await meta_client.send_quick_reply(
                 payload.telefono,
                 f'"{context["nombre"]}".\n¿Armamos los puntos desde cero, o arrancamos del checklist '
                 f'clásico ({", ".join(d for _, d in TOUR_ACCIONES_DEFAULT)}) y lo editás?',
-                buttons=[
-                    # Ids prefijados: ningun id de boton puede ser una palabra que el
-                    # dispatcher mire como texto libre (ver _mostrar_menu_auditor).
-                    {"id": "tour_desde_cero", "title": "✏️ Desde cero"},
-                    {"id": "tour_checklist", "title": "📋 Usar checklist"},
-                ],
+                buttons=botones_base,
             )
             return "auditor_campania_tour_base"
 
@@ -1692,8 +1698,49 @@ class ConversationRouter:
                 return await self._guardar_accion_y_preguntar_otra(payload, meta_client, context)
             if choice in {"tour_desde_cero", "desde_cero"}:
                 return await self._pedir_punto_tour(payload, meta_client, context)
-            await meta_client.send_text(payload.telefono, 'Elegí "Desde cero" o "Usar checklist".')
+            if choice in {"tour_plantilla", "usar_plantilla"}:
+                plantillas = self.sheets.get_tour_plantillas()
+                if not plantillas:
+                    await meta_client.send_text(payload.telefono, "No hay ninguna plantilla guardada todavía.")
+                    return await self._pedir_punto_tour(payload, meta_client, context)
+                context["substep"] = "elegir_plantilla"
+                context["plantillas_opciones"] = {str(i + 1): p["id"] for i, p in enumerate(plantillas)}
+                self.sheets.update_conversacion(
+                    telefono=payload.telefono,
+                    estado=ConversationState.AUDITOR_CAMPANIA_AGREGANDO_ACCION,
+                    ultimo_mensaje=json.dumps(context),
+                )
+                lista = "\n".join(f"{i + 1}. {p['nombre']}" for i, p in enumerate(plantillas))
+                await meta_client.send_text(payload.telefono, f"Elegí una plantilla:\n\n{lista}")
+                return "auditor_campania_pidiendo_plantilla"
+            await meta_client.send_text(payload.telefono, 'Elegí "Desde cero", "Usar checklist" o "Usar plantilla".')
             return "auditor_campania_tour_base_invalido"
+
+        if substep == "elegir_plantilla":
+            plantilla_id = (context.get("plantillas_opciones") or {}).get(texto.strip())
+            if not plantilla_id:
+                await meta_client.send_text(payload.telefono, "Elegí uno de los números de la lista.")
+                return "auditor_campania_plantilla_invalida"
+            puntos = self.sheets.get_tour_plantilla_puntos(plantilla_id)
+            if not puntos:
+                await meta_client.send_text(
+                    payload.telefono, "Esa plantilla no tiene puntos cargados. Elegí otra o armá los puntos a mano."
+                )
+                return await self._pedir_punto_tour(payload, meta_client, context)
+            context["acciones"] = [
+                {
+                    "tipo": "custom",
+                    "descripcion": punto["descripcion"],
+                    "imagen_referencia_path": None,
+                    "plantilla_punto_id": punto["id"],
+                }
+                for punto in puntos
+            ]
+            await meta_client.send_text(
+                payload.telefono,
+                f"Cargué los {len(puntos)} punto(s) de la plantilla. Podés sumar más antes de lanzar.",
+            )
+            return await self._guardar_accion_y_preguntar_otra(payload, meta_client, context)
 
         if substep == "tipo":
             tipo_accion = texto.lower()
@@ -1819,7 +1866,7 @@ class ConversationRouter:
                     )
                     return "auditor_campania_preguntando_frio"
 
-            return await self._pedir_alcance_campania(payload, meta_client, context)
+            return await self._preguntar_guardar_plantilla_o_continuar(payload, meta_client, context)
 
         if substep == "frio":
             if texto.lower() in {"frio_si", "si", "sí"}:
@@ -1828,11 +1875,87 @@ class ConversationRouter:
                     "descripcion": "Cadena de frío: heladeras con termómetro visible y temperatura en rango",
                     "imagen_referencia_path": None,
                 })
+            return await self._preguntar_guardar_plantilla_o_continuar(payload, meta_client, context)
+
+        if substep == "guardar_plantilla":
+            if texto.lower() in {"plantilla_si", "si", "sí"}:
+                context["substep"] = "nombre_plantilla"
+                self.sheets.update_conversacion(
+                    telefono=payload.telefono,
+                    estado=ConversationState.AUDITOR_CAMPANIA_AGREGANDO_ACCION,
+                    ultimo_mensaje=json.dumps(context),
+                )
+                await meta_client.send_text(payload.telefono, "¿Qué nombre le ponemos a la plantilla?")
+                return "auditor_campania_pidiendo_nombre_plantilla"
+            return await self._pedir_alcance_campania(payload, meta_client, context)
+
+        if substep == "nombre_plantilla":
+            nombre_plantilla = texto[:120]
+            if not nombre_plantilla:
+                await meta_client.send_text(payload.telefono, "Contame el nombre de la plantilla.")
+                return "auditor_campania_nombre_plantilla_vacio"
+            # Referencias a los MISMOS dicts que ya viven en context["acciones"]: al
+            # completar plantilla_punto_id abajo, el tour que se está armando queda
+            # con identidad estable de una, sin esperar al próximo lanzamiento.
+            puntos_nuevos = [
+                a for a in (context.get("acciones") or [])
+                if a.get("tipo") == "custom" and not a.get("plantilla_punto_id")
+            ]
+            try:
+                creados = self.sheets.create_tour_plantilla_bot(
+                    nombre_plantilla,
+                    [a.get("descripcion") or "" for a in puntos_nuevos],
+                    payload.telefono,
+                )
+                # Match por descripción, no por orden: no depender de que el insert
+                # bulk devuelva las filas en el mismo orden en que se mandaron.
+                creados_por_descripcion = {p["descripcion"]: p["id"] for p in creados}
+                for accion in puntos_nuevos:
+                    accion["plantilla_punto_id"] = creados_por_descripcion.get(accion.get("descripcion") or "")
+                await meta_client.send_text(payload.telefono, f'Guardé la plantilla "{nombre_plantilla}".')
+            except Exception as e:
+                logger.error(f"Error guardando plantilla de tour: {e}", exc_info=True)
+                await meta_client.send_text(
+                    payload.telefono, "No pude guardar la plantilla, pero seguimos con el tour igual."
+                )
             return await self._pedir_alcance_campania(payload, meta_client, context)
 
         # Substep desconocido (no debería pasar) — reinicia al menú en vez de romper.
         self.sheets.update_conversacion(payload.telefono, ConversationState.IDLE)
         return await self._mostrar_menu_auditor(payload, meta_client)
+
+    async def _preguntar_guardar_plantilla_o_continuar(
+        self, payload: WhatsAppPayload, meta_client: MetaClient, context: Dict[str, Any]
+    ) -> str:
+        """Antes de pasar a elegir sucursales: si el tour tiene puntos nuevos escritos
+        a mano (sin plantilla_punto_id — ni del checklist ni reusados de otra
+        plantilla), ofrece guardarlos para no retipearlos el próximo tour. Se
+        pregunta una sola vez por lanzamiento, igual que la pregunta de cadena de frío."""
+        es_tour = context.get("tipo") == "tour_interno"
+        puntos_nuevos = [
+            a for a in (context.get("acciones") or [])
+            if a.get("tipo") == "custom" and not a.get("plantilla_punto_id")
+        ]
+        if not es_tour or context.get("plantilla_preguntada") or not puntos_nuevos:
+            return await self._pedir_alcance_campania(payload, meta_client, context)
+
+        context["plantilla_preguntada"] = True
+        context["substep"] = "guardar_plantilla"
+        self.sheets.update_conversacion(
+            telefono=payload.telefono,
+            estado=ConversationState.AUDITOR_CAMPANIA_AGREGANDO_ACCION,
+            ultimo_mensaje=json.dumps(context),
+        )
+        await meta_client.send_quick_reply(
+            payload.telefono,
+            f"Cargaste {len(puntos_nuevos)} punto(s) nuevo(s). ¿Los guardo como plantilla "
+            "para no retipearlos el próximo tour?",
+            buttons=[
+                {"id": "plantilla_si", "title": "Sí, guardar"},
+                {"id": "plantilla_no", "title": "No hace falta"},
+            ],
+        )
+        return "auditor_campania_preguntando_guardar_plantilla"
 
     async def _handle_auditor_campania_esperando_referencia(
         self, payload: WhatsAppPayload, conv: Conversacion, meta_client: MetaClient
